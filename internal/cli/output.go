@@ -13,7 +13,6 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
-
 type Format string
 
 const (
@@ -106,4 +105,3 @@ func reportErr(stdout, stderr io.Writer, err error) error {
 	}
 	return err
 }
-

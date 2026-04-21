@@ -28,7 +28,7 @@ define LDFLAGS
 -X '$(PKG_BUILD).Date=$(DATE)'
 endef
 
-.PHONY: all build build-dev build-all run run-dev tidy test fmt vet clean help
+.PHONY: all build build-dev build-all run run-dev tidy test test-race check fmt fmt-check vet clean help
 
 all: build-all ## Build both binaries.
 
@@ -51,11 +51,22 @@ run: build ## Build and run the prod binary; pass args via ARGS=.
 tidy: ## go mod tidy.
 	go mod tidy
 
-test: ## Run tests.
+test: ## Run the full test suite.
 	go test ./...
+
+test-race: ## Run tests with the race detector (slower; use before releases).
+	go test -race ./...
+
+check: fmt-check vet test ## fmt-check + vet + test. Run before every commit.
 
 fmt: ## gofmt everything.
 	gofmt -w .
+
+fmt-check: ## Fail if anything is unformatted (CI-friendly; does not rewrite files).
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt needs to run on:"; echo "$$unformatted"; exit 1; \
+	fi
 
 vet: ## go vet.
 	go vet ./...

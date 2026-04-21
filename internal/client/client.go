@@ -113,6 +113,36 @@ func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/api/v1/health", nil, nil)
 }
 
+// Theme is the shape returned by /api/v1/settings/theme (both GET and PATCH).
+type Theme struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type themeEnvelope struct {
+	Theme Theme `json:"theme"`
+}
+
+func (c *Client) GetTheme(ctx context.Context) (*Theme, error) {
+	var env themeEnvelope
+	if err := c.do(ctx, http.MethodGet, "/api/v1/settings/theme", nil, &env); err != nil {
+		return nil, err
+	}
+	return &env.Theme, nil
+}
+
+// SetTheme PATCHes the active theme by name (server match is case-insensitive).
+// Unknown name → APIError with Status 404 and Code "theme_not_found".
+// Non-owner agent → APIError with Status 403 and Code "forbidden".
+func (c *Client) SetTheme(ctx context.Context, name string) (*Theme, error) {
+	body := map[string]string{"theme": name}
+	var env themeEnvelope
+	if err := c.do(ctx, http.MethodPatch, "/api/v1/settings/theme", body, &env); err != nil {
+		return nil, err
+	}
+	return &env.Theme, nil
+}
+
 // APIError represents a non-2xx response from the server.
 type APIError struct {
 	Status int

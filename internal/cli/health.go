@@ -5,8 +5,6 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
-
-	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
 func newHealthCmd() *cobra.Command {
@@ -23,19 +21,12 @@ func newHealthCmd() *cobra.Command {
 }
 
 func runHealth(ctx context.Context, stdout, stderr io.Writer) error {
-	token, err := resolveToken()
+	c, err := newAuthedClient()
 	if err != nil {
 		return reportErr(stdout, stderr, err)
 	}
-	secret, err := resolveAgentSecret()
-	if err != nil {
-		return reportErr(stdout, stderr, err)
-	}
-
-	c := client.NewAuthed(token, secret)
 	if err := c.Health(ctx); err != nil {
 		return reportErr(stdout, stderr, err)
 	}
-
 	return renderPayload(stdout, map[string]any{"status": "ok"}, "200 ok")
 }

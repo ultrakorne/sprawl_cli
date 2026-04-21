@@ -23,7 +23,7 @@ Override the prod URL at build time without editing the Makefile:
 make build PROD_URL=https://staging.example.com
 ```
 
-Other useful targets: `make test`, `make fmt`, `make vet`, `make tidy`, `make clean`.
+Other useful targets: `make check`, `make test`, `make fmt`, `make vet`, `make tidy`, `make clean`. See [Testing](#testing) for the day-to-day loop.
 
 ## Install
 
@@ -67,6 +67,8 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl version` | Prints the version and the baked-in API URL. |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
 | `sprawl health` | Calls `GET /api/v1/health` to verify the full auth pipeline. |
+| `sprawl theme get` | Fetches the currently active UI theme. |
+| `sprawl theme set <name>` | Sets the active theme by name (case-insensitive). Owner-only. |
 
 More commands land as the backend adds endpoints.
 
@@ -98,6 +100,20 @@ Per binary, an XDG-aware TOML file:
 - `sprawl_dev`: `~/.config/sprawl_dev/config.toml`
 
 The only field currently stored is `token`. File mode is `0600`; directory mode `0700`. Atomic writes mean an interrupted `login` won't truncate an existing file.
+
+## Testing
+
+The suite is pure-Go and needs no running backend — HTTP calls are mocked with `httptest`, so `make test` is safe on any machine.
+
+```sh
+make check        # fmt-check + vet + test. Run before every commit.
+make test         # tests only.
+make test-race    # with -race; slower, use before cutting a release.
+```
+
+The expectation is: **every change runs `make check` before it's considered done.** If `check` fails, the change isn't finished — fix it, don't skip it. Don't bypass pre-commit hooks (`--no-verify` is off-limits) if one ever gets added.
+
+Tests live next to the code they cover (`internal/client/*_test.go`, `internal/cli/*_test.go`, `internal/config/*_test.go`). The controller matrix — the set of server responses each endpoint must round-trip correctly (200, 401, 403, 404, 422, network errors) — is encoded in `internal/cli/*_test.go` and reused as new endpoints land.
 
 ## Uninstall
 

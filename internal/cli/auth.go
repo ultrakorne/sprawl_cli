@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
+	"github.com/ultrakorne/sprawl_cli/internal/client"
 	"github.com/ultrakorne/sprawl_cli/internal/config"
 )
 
@@ -35,4 +36,18 @@ func resolveAgentSecret() (string, error) {
 		return v, nil
 	}
 	return "", errors.New("agent secret not set — export SPRAWL_AGENT_SECRET or pass --agent-secret")
+}
+
+// newAuthedClient resolves both credentials (failing pre-HTTP if the agent
+// secret is missing) and returns a client ready for /api/v1/* calls.
+func newAuthedClient() (*client.Client, error) {
+	token, err := resolveToken()
+	if err != nil {
+		return nil, err
+	}
+	secret, err := resolveAgentSecret()
+	if err != nil {
+		return nil, err
+	}
+	return client.NewAuthed(token, secret), nil
 }
