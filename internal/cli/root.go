@@ -31,6 +31,9 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newHealthCmd())
 	root.AddCommand(newThemeCmd())
+	root.AddCommand(newTaskCmd())
+	root.AddCommand(newChecklistCmd())
+	root.AddCommand(newNoteCmd())
 	return root
 }
 

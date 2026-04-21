@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -194,29 +195,29 @@ func TestHealth_403InvalidAgentSecret(t *testing.T) {
 
 func TestGetTheme_Success(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"theme": map[string]string{"id": "tokyo-night", "name": "Tokyo Night"}})
+		writeJSON(w, 200, map[string]string{"theme": "tokyo-night"})
 	})
 	c := NewAuthed("tok", "sec")
-	theme, err := c.GetTheme(context.Background())
+	id, err := c.GetTheme(context.Background())
 	if err != nil {
 		t.Fatalf("GetTheme: %v", err)
 	}
-	if theme.ID != "tokyo-night" || theme.Name != "Tokyo Night" {
-		t.Fatalf("theme = %+v", theme)
+	if id != "tokyo-night" {
+		t.Fatalf("theme id = %q", id)
 	}
 }
 
 func TestSetTheme_Success(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"theme": map[string]string{"id": "kanagawa", "name": "Kanagawa"}})
+		writeJSON(w, 200, map[string]string{"theme": "kanagawa"})
 	})
 	c := NewAuthed("tok", "sec")
-	theme, err := c.SetTheme(context.Background(), "Kanagawa")
+	id, err := c.SetTheme(context.Background(), "kanagawa")
 	if err != nil {
 		t.Fatalf("SetTheme: %v", err)
 	}
-	if theme.ID != "kanagawa" {
-		t.Fatalf("theme = %+v", theme)
+	if id != "kanagawa" {
+		t.Fatalf("theme id = %q", id)
 	}
 	reqs := ts.Requests()
 	if len(reqs) != 1 {
@@ -235,8 +236,27 @@ func TestSetTheme_Success(t *testing.T) {
 	if err := json.Unmarshal(r.Body, &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Theme != "Kanagawa" {
+	// Client passes the arg through verbatim — no normalization.
+	if body.Theme != "kanagawa" {
 		t.Fatalf("body.theme = %q", body.Theme)
+	}
+}
+
+// TestSetTheme_PassesArgVerbatim guards the "no client-side normalization"
+// rule: an id with uppercase / spaces reaches the server exactly as typed
+// so the server is the only place id validation lives.
+func TestSetTheme_PassesArgVerbatim(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 404, "theme_not_found")
+	})
+	c := NewAuthed("tok", "sec")
+	_, _ = c.SetTheme(context.Background(), "Tokyo Night")
+	var body struct {
+		Theme string `json:"theme"`
+	}
+	_ = json.Unmarshal(ts.Requests()[0].Body, &body)
+	if body.Theme != "Tokyo Night" {
+		t.Fatalf("body.theme = %q, want verbatim 'Tokyo Night'", body.Theme)
 	}
 }
 
@@ -271,6 +291,252 @@ func TestSetTheme_ErrorMatrix(t *testing.T) {
 	}
 }
 
+// -- Phase 4: read endpoints -----------------------------------------------
+
+func TestListTasks_Success(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"tasks": []any{
+				map[string]any{
+					"id":                 1,
+					"title":              "First",
+					"description":        "",
+					"status":             "not_started",
+					"due_date":           nil,
+					"project":            nil,
+					"checklist_progress": map[string]any{"done": 0, "total": 0},
+					"created_by":         nil,
+					"last_actor":         nil,
+				},
+				map[string]any{
+					"id":          2,
+					"title":       "Second",
+					"description": "deets",
+					"status":      "in_progress",
+					"due_date":    "2026-04-25",
+					"project": map[string]any{
+						"id": 7, "name": "Engineering", "color": "#112233",
+					},
+					"checklist_progress": map[string]any{"done": 1, "total": 3},
+					"created_by":         map[string]any{"type": "user", "id": 42},
+					"last_actor":         map[string]any{"type": "agent", "id": 9},
+				},
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	tasks, err := c.ListTasks(context.Background())
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("got %d tasks", len(tasks))
+	}
+	if tasks[0].ID != 1 || tasks[0].Title != "First" || tasks[0].Project != nil || tasks[0].LastActor != nil {
+		t.Fatalf("tasks[0] = %+v", tasks[0])
+	}
+	if tasks[1].Project == nil || tasks[1].Project.Name != "Engineering" {
+		t.Fatalf("tasks[1].Project = %+v", tasks[1].Project)
+	}
+	if tasks[1].ChecklistProgress.Done != 1 || tasks[1].ChecklistProgress.Total != 3 {
+		t.Fatalf("tasks[1].ChecklistProgress = %+v", tasks[1].ChecklistProgress)
+	}
+	if tasks[1].LastActor == nil || tasks[1].LastActor.Type != "agent" || tasks[1].LastActor.ID != 9 {
+		t.Fatalf("tasks[1].LastActor = %+v", tasks[1].LastActor)
+	}
+	reqs := ts.Requests()
+	if len(reqs) != 1 || reqs[0].Method != "GET" || reqs[0].Path != "/api/v1/tasks" {
+		t.Fatalf("request = %+v", reqs[0])
+	}
+}
+
+func TestGetTask_Success(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"task": map[string]any{
+				"id": 42, "title": "one", "description": "", "status": "done",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"created_by":         nil, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	task, err := c.GetTask(context.Background(), "42")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.ID != 42 || task.Status != "done" {
+		t.Fatalf("task = %+v", task)
+	}
+	if ts.Requests()[0].Path != "/api/v1/tasks/42" {
+		t.Fatalf("path = %q", ts.Requests()[0].Path)
+	}
+}
+
+func TestGetTask_NotFound(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 404, "not_found")
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.GetTask(context.Background(), "999")
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want APIError, got %T", err)
+	}
+	if ae.Status != 404 || ae.Code != "not_found" {
+		t.Fatalf("APIError = %+v", ae)
+	}
+}
+
+func TestGetTask_Forbidden(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 403, "forbidden")
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.GetTask(context.Background(), "1")
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want APIError, got %T", err)
+	}
+	if ae.Status != 403 || ae.Code != "forbidden" {
+		t.Fatalf("APIError = %+v", ae)
+	}
+}
+
+func TestSearchTasks_EncodesQueryString(t *testing.T) {
+	// Regression guard: the query must reach the server as a real query string,
+	// not as a path-escaped segment. url.JoinPath would mangle this.
+	var gotQuery, gotPath string
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		writeJSON(w, 200, map[string]any{"tasks": []any{}})
+	})
+	c := NewAuthed("tok", "sec")
+	if _, err := c.SearchTasks(context.Background(), "hello world & friends"); err != nil {
+		t.Fatalf("SearchTasks: %v", err)
+	}
+	if gotPath != "/api/v1/tasks/search" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if got := url.QueryEscape("hello world & friends"); gotQuery != "q="+got {
+		t.Fatalf("raw query = %q, want q=%s", gotQuery, got)
+	}
+}
+
+func TestSearchTasks_EmptyQuery422(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// Server echoes the documented 422 for blank q. The client doesn't
+		// pre-validate; it surfaces the server's response unchanged.
+		if r.URL.Query().Get("q") != "" {
+			t.Errorf("expected empty q, got %q", r.URL.Query().Get("q"))
+		}
+		writeError(w, 422, "query_required")
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.SearchTasks(context.Background(), "")
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want APIError, got %T", err)
+	}
+	if ae.Status != 422 || ae.Code != "query_required" {
+		t.Fatalf("APIError = %+v", ae)
+	}
+}
+
+func TestListChecklistItems_Success(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"checklist_items": []any{
+				map[string]any{
+					"id": 5, "title": "a", "completed": false, "position": 0,
+					"has_notes": false, "last_actor": nil,
+				},
+				map[string]any{
+					"id": 6, "title": "b", "completed": true, "position": 1,
+					"has_notes":  true,
+					"last_actor": map[string]any{"type": "user", "id": 1},
+				},
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	items, err := c.ListChecklistItems(context.Background(), "77")
+	if err != nil {
+		t.Fatalf("ListChecklistItems: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d", len(items))
+	}
+	if items[1].ID != 6 || !items[1].Completed || !items[1].HasNotes {
+		t.Fatalf("items[1] = %+v", items[1])
+	}
+	if items[1].LastActor == nil || items[1].LastActor.Type != "user" {
+		t.Fatalf("items[1].LastActor = %+v", items[1].LastActor)
+	}
+	if ts.Requests()[0].Path != "/api/v1/tasks/77/checklist" {
+		t.Fatalf("path = %q", ts.Requests()[0].Path)
+	}
+}
+
+func TestListChecklistItems_Forbidden(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 403, "forbidden")
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.ListChecklistItems(context.Background(), "3")
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 403 || ae.Code != "forbidden" {
+		t.Fatalf("APIError = %+v err %v", ae, err)
+	}
+}
+
+func TestGetNotes_Success(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"notes": "hello\nworld"})
+	})
+	c := NewAuthed("tok", "sec")
+	notes, err := c.GetNotes(context.Background(), "9")
+	if err != nil {
+		t.Fatalf("GetNotes: %v", err)
+	}
+	if notes != "hello\nworld" {
+		t.Fatalf("notes = %q", notes)
+	}
+	if ts.Requests()[0].Path != "/api/v1/checklist_items/9/notes" {
+		t.Fatalf("path = %q", ts.Requests()[0].Path)
+	}
+}
+
+func TestGetNotes_EmptyStringIsValid(t *testing.T) {
+	// A checklist item with no notes returns {"notes": ""} — that's success,
+	// not an error.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"notes": ""})
+	})
+	c := NewAuthed("tok", "sec")
+	notes, err := c.GetNotes(context.Background(), "9")
+	if err != nil {
+		t.Fatalf("GetNotes: %v", err)
+	}
+	if notes != "" {
+		t.Fatalf("notes = %q, want empty", notes)
+	}
+}
+
+func TestGetNotes_NotFound(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 404, "not_found")
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.GetNotes(context.Background(), "999")
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 404 || ae.Code != "not_found" {
+		t.Fatalf("APIError = %+v err %v", ae, err)
+	}
+}
+
 // -- Header invariants ------------------------------------------------------
 
 // TestHeaderInvariants asserts the security-adjacent contract: every
@@ -278,18 +544,34 @@ func TestSetTheme_ErrorMatrix(t *testing.T) {
 // calls send neither; Content-Type is only set on requests with a body.
 func TestHeaderInvariants(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/auth/device":
+		p := r.URL.Path
+		switch {
+		case p == "/api/auth/device":
 			writeJSON(w, 200, map[string]any{
 				"device_code": "dc", "user_code": "UC", "verification_uri": "u",
 				"verification_uri_complete": "u", "expires_in": 600, "interval": 5,
 			})
-		case "/api/auth/device/token":
+		case p == "/api/auth/device/token":
 			writeJSON(w, 200, map[string]string{"token": "tok"})
-		case "/api/v1/health":
+		case p == "/api/v1/health":
 			writeJSON(w, 200, map[string]string{"status": "ok"})
-		case "/api/v1/settings/theme":
-			writeJSON(w, 200, map[string]any{"theme": map[string]string{"id": "x", "name": "X"}})
+		case p == "/api/v1/settings/theme":
+			writeJSON(w, 200, map[string]string{"theme": "tokyo-night"})
+		case p == "/api/v1/tasks":
+			writeJSON(w, 200, map[string]any{"tasks": []any{}})
+		case p == "/api/v1/tasks/search":
+			writeJSON(w, 200, map[string]any{"tasks": []any{}})
+		case strings.HasPrefix(p, "/api/v1/tasks/") && strings.HasSuffix(p, "/checklist"):
+			writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+		case strings.HasPrefix(p, "/api/v1/tasks/"):
+			writeJSON(w, 200, map[string]any{"task": map[string]any{
+				"id": 1, "title": "t", "description": "", "status": "done",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"created_by":         nil, "last_actor": nil,
+			}})
+		case strings.HasPrefix(p, "/api/v1/checklist_items/") && strings.HasSuffix(p, "/notes"):
+			writeJSON(w, 200, map[string]any{"notes": ""})
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
 			w.WriteHeader(500)
@@ -313,6 +595,21 @@ func TestHeaderInvariants(t *testing.T) {
 	}
 	if _, err := authed.SetTheme(context.Background(), "X"); err != nil {
 		t.Fatalf("SetTheme: %v", err)
+	}
+	if _, err := authed.ListTasks(context.Background()); err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if _, err := authed.SearchTasks(context.Background(), "x"); err != nil {
+		t.Fatalf("SearchTasks: %v", err)
+	}
+	if _, err := authed.GetTask(context.Background(), "1"); err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if _, err := authed.ListChecklistItems(context.Background(), "1"); err != nil {
+		t.Fatalf("ListChecklistItems: %v", err)
+	}
+	if _, err := authed.GetNotes(context.Background(), "9"); err != nil {
+		t.Fatalf("GetNotes: %v", err)
 	}
 
 	for _, r := range ts.Requests() {

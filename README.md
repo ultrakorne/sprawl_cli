@@ -67,8 +67,15 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl version` | Prints the version and the baked-in API URL. |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
 | `sprawl health` | Calls `GET /api/v1/health` to verify the full auth pipeline. |
-| `sprawl theme get` | Fetches the currently active UI theme. |
-| `sprawl theme set <name>` | Sets the active theme by name (case-insensitive). Owner-only. |
+| `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
+| `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only. |
+| `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read`/`:write` on. |
+| `sprawl task show <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. |
+| `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
+| `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. |
+| `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. Empty string is a legitimate success. |
+
+All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{checklist_items:[…]}`, `{notes:"…"}`).
 
 More commands land as the backend adds endpoints.
 

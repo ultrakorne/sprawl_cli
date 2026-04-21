@@ -9,13 +9,13 @@ Used by the human owner and by AI agents. This repo is the *client*;
 - **Backend phase plans** (source of truth for request/response shapes): `/home/ultra/Developer/task_manager/docs/plans/api/`
   - `02_device_flow.md` — login flow (✅ shipped on server)
   - `03_settings_and_pubsub.md` — theme get/set (✅ shipped on server)
-  - `04_read_endpoints.md` — tasks/checklist/notes reads (pending)
+  - `04_read_endpoints.md` — tasks/checklist/notes reads (✅ shipped on server)
   - `05_write_endpoints_and_audit.md` — writes + PubSub (pending)
   - `06_documentation_and_verify.md` — owner-secret UI (pending)
 
 ## Current server phase
 
-Phases 2–3 are live (`/api/auth/device`, `/api/auth/device/token`, `/api/v1/health`, `GET`/`PATCH /api/v1/settings/theme`). Phases 4–6 are still pending on the server. Implement CLI commands **as the server ships them** — don't build ahead. Verify against `sprawl_dev` targeting `http://localhost:4000` first, then the same code ships as the prod binary on the next release.
+Phases 2–4 are live. Phases 5–6 are still pending on the server. Implement CLI commands **as the server ships them** — don't build ahead. Verify against `sprawl_dev` targeting `http://localhost:4000` first, then the same code ships as the prod binary on the next release.
 
 ## Stack (don't change without updating the spec)
 
@@ -61,8 +61,8 @@ Every `/api/v1/*` call sends `Authorization: Bearer <token>` + `X-Agent-Secret: 
 ```
 cmd/sprawl/          main.go — thin entry point, wires signal.NotifyContext for ctrl+C
 internal/build/      ldflag-injected vars (APIURL, AppName, Version, Commit, Date)
-internal/cli/        cobra root + subcommands (root.go with version, login.go, health.go, theme.go; auth.go for credential resolution + newAuthedClient helper; output.go for text/json/toon rendering)
-internal/client/     stdlib net/http client — BaseURL resolution, CreateDeviceGrant, PollDeviceToken (typed DevicePollError), Health, GetTheme, SetTheme, APIError
+internal/cli/        cobra root + subcommands (root.go with version, login.go, health.go, theme.go, task.go, checklist.go, note.go; auth.go for credential resolution + newAuthedClient helper; output.go for text/json/toon rendering)
+internal/client/     stdlib net/http client — BaseURL resolution, CreateDeviceGrant, PollDeviceToken (typed DevicePollError), Health, GetTheme/SetTheme (flat `{theme:"<id>"}` envelope, no client-side id normalization), ListTasks, SearchTasks, GetTask, ListChecklistItems, GetNotes, APIError
 internal/config/     XDG-aware Load/Save for config.toml (atomic write, mode 0600, dir mode 0700)
 docs/plans/          specs and design notes
 Makefile             build / build-dev / build-all / run-dev / test / clean
@@ -105,14 +105,21 @@ do not commit to git
 - `version` — prints ldflag-injected values (APIURL, AppName, Version, Commit, Date).
 - `login` — RFC 8628 device flow. POSTs `/api/auth/device`, prints the verification URL + user code, polls `/api/auth/device/token` at the server's `interval` until approval / expiry / denial / `invalid_grant`. Saves the token to `config.toml` (0600) on success, prints the `SPRAWL_AGENT_SECRET` reminder. Ctrl+C cancels cleanly via the root context.
 - `health` — resolves token (env → config) and agent secret (flag → env), fails pre-HTTP if secret missing, calls `GET /api/v1/health`. Honours `--format=text|json|toon` (default toon, or `$SPRAWL_OUTPUT`) for both success (`{"status":"ok"}`) and error (`{"status":"error","error":"…","http_status":…}`). Exit 1 on any failure.
-- `theme get` — `GET /api/v1/settings/theme`. Renders `{theme:{id,name}}` in the resolved format; text fallback is `Name (id)`. Any authenticated agent (owner or not) can read.
-- `theme set <name>` — `PATCH /api/v1/settings/theme` body `{"theme":"<name>"}`. Case-insensitive match on the theme's display name (`"Tokyo Night"`, `"tokyo night"`, `"TOKYO NIGHT"` all match). Owner-only (non-owner → 403 `forbidden`); unknown name → 404 `theme_not_found`; missing body key → 422 `theme_required`. Same structured payload as `theme get` on success; text fallback is `Theme set to Name (id)`. Arg validation (`set` with zero/multi args) is performed inside `RunE` and routed through `reportErr` so the error renders in the chosen format instead of silently exiting.
+- `theme get` — `GET /api/v1/settings/theme`. Wire shape is flat: `{"theme":"<id>"}` (string, not an object — the server no longer returns the display name). Renders the same flat envelope in json/toon; text fallback is just the id. Any authenticated agent (owner or not) can read.
+- `theme set <id>` — `PATCH /api/v1/settings/theme` body `{"theme":"<id>"}`. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`). The CLI does **no client-side normalization** — the arg goes on the wire verbatim, so the server is the only place id validation lives (unknown / mis-cased id → 404 `theme_not_found`). Owner-only (non-owner → 403 `forbidden`); missing body key → 422 `theme_required`. Same flat `{theme:"<id>"}` payload as `theme get` on success; text fallback is `Theme set to <id>`. Arg validation (`set` with zero/multi args) is performed inside `RunE` and routed through `reportErr` so the error renders in the chosen format instead of silently exiting.
+- `task list` — `GET /api/v1/tasks`. Server-side per-agent permission filtering: non-owner agents only see tasks their key resolves to `:read`/`:write` on (task override → project override → `agent_keys.default_permission`). Renders `{tasks:[…]}` in the resolved format; text fallback is a tabwriter-aligned `ID STATUS DUE PROGRESS PROJECT TITLE` table, `(no tasks)` when empty.
+- `task show <id>` — `GET /api/v1/tasks/:id`. 404 `not_found` when the ID isn't visible to the caller; 403 `forbidden` when the caller can see it via scope but the permission resolver says no. Renders `{task:{…}}`; text fallback is the multi-line detail (id/title, status, due, project, progress, actors, description).
+- `task search <query>` — `GET /api/v1/tasks/search?q=<query>`. Case-insensitive substring match server-side; the CLI does not pre-validate the query, so empty/whitespace surfaces the server's 422 `query_required`. Same payload shape and text fallback as `task list`.
+- `checklist <task_id>` — `GET /api/v1/tasks/:task_id/checklist`. Both ownership and permission checks run on the *parent task* (permissions are task-scoped, not item-scoped), so 403/404 mirror `task show`. Renders `{checklist_items:[…]}`; text fallback is an aligned table with `[x]`/`[ ]` completion boxes and a `notes` marker when `has_notes` is true.
+- `note show <item_id>` — `GET /api/v1/checklist_items/:id/notes`. Permission check is on the parent task. Renders `{notes:"…"}`; text fallback is the raw notes blob so it pipes cleanly into `less`/`rg`. Empty notes is a valid success, not an error.
 
-E2E verified against the local server: token persisted, health round-trip returns 200, error paths (no login / missing secret / wrong secret) render cleanly in text, JSON, and TOON. Theme error paths (missing secret pre-HTTP, invalid secret → 403) verified in this session; success round-trip not re-run (owner secret is intentionally absent from the CLI's env).
+All phase 4 commands use `map[string]any` round-trips for json/toon rendering — typed `*client.Task` / `*client.ChecklistItem` structs feed `taskMap` / `checklistMaps` / `actorMap` / `projectMap` helpers in `internal/cli/task.go`, which emit literal `nil` for null-valued server fields (project/created_by/last_actor). `checklist <task_id>` is intentionally a top-level command rather than `checklist list <task_id>` per the spec in `docs/plans/sprawl_cli_evaluation.md`; when phase 5 adds `checklist add`/`checklist toggle`/etc., cobra's subcommand dispatch coexists with the parent's RunE fallthrough.
+
+E2E verified against the local server: token persisted, health round-trip returns 200, error paths (no login / missing secret / wrong secret) render cleanly in text, JSON, and TOON. Theme error paths (missing secret pre-HTTP, invalid secret → 403) verified in an earlier session. Phase 4 success round-trips were **not** verified in this session: the localhost Phoenix was returning a `CompileError` HTML 500 on every endpoint when we tested — need to re-run after the server compiles clean. The CLI's APIError path surfaced the truncated HTML body via `reportErr` as expected.
 
 ## Open TODOs
 
 - Repo lives at `git@github.com:ultrakorne/sprawl_cli.git`. Module path: `github.com/ultrakorne/sprawl_cli`.
 - `.goreleaser.yaml` `release:` and `brews:` stanzas are still commented out — uncomment and wire when cutting the first release (owner `ultrakorne`, tap repo TBD).
-- Next command work is **gated on server phase 4** landing: read endpoints (`sprawl task list|show|search`, `sprawl checklist <task_id>`, `sprawl note show <item_id>`). Don't build ahead.
-- **Automated tests pending.** The plan is documented in `docs/plans/test_plan.md`: pure unit tests for `config`, `client`, `cli/output`, `cli/auth`, plus `httptest`-driven integration tests that round-trip the server's controller matrix (200 / 401 / 403 `invalid_agent_secret` / 403 `forbidden` / 404 / 422 / network errors) for every endpoint. Must land before phase 4 so the read endpoints reuse the `httptest` helper.
+- Next command work is **gated on server phase 5** landing: task/checklist/note mutations (`task create|update`, `checklist add|toggle|update`, `note set`). Phase 5 also broadcasts per-user PubSub events the LiveView consumes, but the CLI itself just issues HTTP calls — no subscription yet.
+- Re-verify phase 4 success round-trips against a clean local Phoenix once the server's current CompileError is resolved. The CLI code is correct under `make check` + `make test-race`; only the live E2E handshake is unconfirmed.

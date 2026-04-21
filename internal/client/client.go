@@ -113,34 +113,148 @@ func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/api/v1/health", nil, nil)
 }
 
-// Theme is the shape returned by /api/v1/settings/theme (both GET and PATCH).
-type Theme struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
+// themeEnvelope matches the flat wire shape — `{"theme": "<id>"}` — used by
+// both GET and PATCH. IDs are lowercase kebab-case (e.g. `tokyo-night`).
 type themeEnvelope struct {
-	Theme Theme `json:"theme"`
+	Theme string `json:"theme"`
 }
 
-func (c *Client) GetTheme(ctx context.Context) (*Theme, error) {
+// GetTheme returns the current theme id (e.g. `tokyo-night`).
+func (c *Client) GetTheme(ctx context.Context) (string, error) {
 	var env themeEnvelope
 	if err := c.do(ctx, http.MethodGet, "/api/v1/settings/theme", nil, &env); err != nil {
-		return nil, err
+		return "", err
 	}
-	return &env.Theme, nil
+	return env.Theme, nil
 }
 
-// SetTheme PATCHes the active theme by name (server match is case-insensitive).
-// Unknown name → APIError with Status 404 and Code "theme_not_found".
-// Non-owner agent → APIError with Status 403 and Code "forbidden".
-func (c *Client) SetTheme(ctx context.Context, name string) (*Theme, error) {
-	body := map[string]string{"theme": name}
+// SetTheme PATCHes the active theme by id. The id must already be in
+// canonical kebab-case — the server does no normalization, so an unknown or
+// mis-cased id surfaces as APIError Status 404 Code "theme_not_found".
+// Non-owner agent → APIError Status 403 Code "forbidden".
+func (c *Client) SetTheme(ctx context.Context, id string) (string, error) {
+	body := map[string]string{"theme": id}
 	var env themeEnvelope
 	if err := c.do(ctx, http.MethodPatch, "/api/v1/settings/theme", body, &env); err != nil {
+		return "", err
+	}
+	return env.Theme, nil
+}
+
+// -- Phase 4: read endpoints -----------------------------------------------
+
+// Actor identifies the user or agent that created a record or was the last
+// to touch it. Null on any record created before phase 5 backfills started.
+type Actor struct {
+	Type string `json:"type"`
+	ID   int64  `json:"id"`
+}
+
+// Project is the nested project shape returned on a Task. Static colour only;
+// dynamic (theme-indexed) colours serialise as empty by the server.
+type Project struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// ChecklistProgress summarises a task's checklist without paginating items.
+type ChecklistProgress struct {
+	Done  int `json:"done"`
+	Total int `json:"total"`
+}
+
+// Task matches the shape documented in task_json.ex. Nullable fields are
+// pointers so encoders can emit `null` rather than a zero value.
+type Task struct {
+	ID                int64             `json:"id"`
+	Title             string            `json:"title"`
+	Description       string            `json:"description"`
+	Status            string            `json:"status"`
+	DueDate           string            `json:"due_date"`
+	Project           *Project          `json:"project"`
+	ChecklistProgress ChecklistProgress `json:"checklist_progress"`
+	CreatedBy         *Actor            `json:"created_by"`
+	LastActor         *Actor            `json:"last_actor"`
+}
+
+// ChecklistItem mirrors checklist_item_json.ex.
+type ChecklistItem struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Completed bool   `json:"completed"`
+	Position  int    `json:"position"`
+	HasNotes  bool   `json:"has_notes"`
+	LastActor *Actor `json:"last_actor"`
+}
+
+type tasksEnvelope struct {
+	Tasks []*Task `json:"tasks"`
+}
+
+type taskEnvelope struct {
+	Task *Task `json:"task"`
+}
+
+type checklistEnvelope struct {
+	Items []*ChecklistItem `json:"checklist_items"`
+}
+
+type notesEnvelope struct {
+	Notes string `json:"notes"`
+}
+
+func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
+	var env tasksEnvelope
+	if err := c.do(ctx, http.MethodGet, "/api/v1/tasks", nil, &env); err != nil {
 		return nil, err
 	}
-	return &env.Theme, nil
+	return env.Tasks, nil
+}
+
+// SearchTasks issues GET /api/v1/tasks/search?q=<query>. Empty/whitespace
+// queries surface as an APIError with Status 422 Code "query_required" from
+// the server — the CLI doesn't pre-validate so the server stays the single
+// source of truth for input rules.
+func (c *Client) SearchTasks(ctx context.Context, query string) ([]*Task, error) {
+	path := "/api/v1/tasks/search?" + url.Values{"q": []string{query}}.Encode()
+	var env tasksEnvelope
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Tasks, nil
+}
+
+// GetTask fetches a single task by ID. Server-side IDs are integers; we pass
+// the raw string through so the server produces the canonical 404 on a
+// malformed ID rather than duplicating the rule here.
+func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
+	var env taskEnvelope
+	if err := c.do(ctx, http.MethodGet, "/api/v1/tasks/"+url.PathEscape(id), nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Task, nil
+}
+
+func (c *Client) ListChecklistItems(ctx context.Context, taskID string) ([]*ChecklistItem, error) {
+	var env checklistEnvelope
+	path := "/api/v1/tasks/" + url.PathEscape(taskID) + "/checklist"
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Items, nil
+}
+
+// GetNotes returns the raw notes blob for a checklist item. An empty string
+// is a legitimate result (item exists, no notes). 404 / 403 surface as
+// APIError.
+func (c *Client) GetNotes(ctx context.Context, itemID string) (string, error) {
+	var env notesEnvelope
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return "", err
+	}
+	return env.Notes, nil
 }
 
 // APIError represents a non-2xx response from the server.
@@ -179,10 +293,14 @@ func (c *Client) doWithStatus(
 		}
 		reader = bytes.NewReader(b)
 	}
-	u, err := url.JoinPath(c.baseURL, path)
-	if err != nil {
-		return fmt.Errorf("join url: %w", err)
+	// Plain concat: baseURL has trailing slashes trimmed by BaseURL(), and
+	// callers always pass a path that starts with '/'. url.JoinPath is the
+	// wrong tool here — it percent-escapes '?' in the path, which breaks the
+	// search endpoint's query string.
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
 	}
+	u := c.baseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, u, reader)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)

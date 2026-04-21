@@ -22,7 +22,7 @@ Tests are pure-Go and require no running backend — all HTTP is mocked with `ne
 - Trailing-slash stripping on both sources.
 - `APIError.Error()` formatting with and without `Code`; body truncation at 200 chars.
 - `DevicePollError.Error()`.
-- JSON decode of `DeviceGrant`, `Theme` — tolerate extra fields, reject missing required fields gracefully (wrapped in the `decode response` error).
+- JSON decode of `DeviceGrant`, the flat `themeEnvelope`, and phase-4 task/checklist shapes — tolerate extra fields, reject missing required fields gracefully (wrapped in the `decode response` error).
 - `do`/`doWithStatus` respect the `accept` predicate: non-2xx with `accept(200,400)` for device token returns no error; unexpected status returns `APIError`.
 - Body size cap: response larger than 1 MiB is truncated, not streamed fully.
 
