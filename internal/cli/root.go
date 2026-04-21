@@ -8,21 +8,28 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/build"
 )
 
-var jsonOutput bool
+var (
+	formatFlag      string
+	agentSecretFlag string
+)
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   build.AppName,
-		Short: "CLI for the task_manager API",
-		Long: "sprawl — JSON-over-HTTP client for the task_manager API.\n\n" +
-			"The base URL is baked into the binary; the `sprawl_dev` binary targets a local server.\n" +
-			"Auth: token in ~/.config/" + build.AppName + "/config.toml, agent secret in $SPRAWL_AGENT_SECRET.",
+		Short: "CLI for the sprawl API",
+		Long: "sprawl — HTTP client for the sprawl API.\n\n" +
+			"Output: --format=text|json|toon (default toon; override session-wide with $SPRAWL_OUTPUT).",
 		SilenceUsage: true,
 	}
 
-	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "emit machine-readable JSON output")
+	root.PersistentFlags().StringVar(&formatFlag, "format", "",
+		"output format: text|json|toon (default: toon, or $SPRAWL_OUTPUT)")
+	root.PersistentFlags().StringVarP(&agentSecretFlag, "agent-secret", "s", "",
+		"agent secret value (overrides $SPRAWL_AGENT_SECRET)")
 
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newLoginCmd())
+	root.AddCommand(newHealthCmd())
 	return root
 }
 
@@ -32,8 +39,8 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print version and the baked-in API URL",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
-				"%s %s\n  api:    %s\n  commit: %s\n  date:   %s\n",
-				build.AppName, build.Version, build.APIURL, build.Commit, build.Date,
+				"%s %s\n  api:    %s\n  date:   %s\n",
+				build.AppName, build.Version, build.APIURL, build.Date,
 			)
 			return err
 		},

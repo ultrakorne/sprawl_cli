@@ -2,7 +2,11 @@ module github.com/ultrakorne/sprawl_cli
 
 go 1.26.2
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/BurntSushi/toml v1.6.0
+	github.com/alpkeskin/gotoon v0.1.1
+	github.com/spf13/cobra v1.10.2
+)
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

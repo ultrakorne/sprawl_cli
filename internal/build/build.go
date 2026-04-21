@@ -6,7 +6,7 @@
 package build
 
 var (
-	// APIURL is the base URL for the task_manager API. Overridden at build
+	// APIURL is the base URL for the sprawl API. Overridden at build
 	// time per the plan; never read from config.
 	APIURL = "http://localhost:4000"
 

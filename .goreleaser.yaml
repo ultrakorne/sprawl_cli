@@ -86,4 +86,4 @@ changelog:
 #       owner: ultrakorne
 #       name: homebrew-tap
 #     homepage: https://github.com/ultrakorne/sprawl_cli
-#     description: CLI for the task_manager API
+#     description: CLI for the sprawl API

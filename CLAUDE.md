@@ -1,8 +1,7 @@
-# sprawl — CLI for the task_manager API
+# sprawl — CLI for the sprawl API
 
-JSON-over-HTTP client. Single static Go binary, shipped via goreleaser.
+HTTP client (JSON on the wire; TOON/JSON/text on stdout). Single static Go binary, shipped via goreleaser.
 Used by the human owner and by AI agents. This repo is the *client*;
-the server lives at `/home/ultra/Developer/task_manager`.
 
 ## Start here
 
@@ -22,10 +21,10 @@ Phase 2 is live (`/api/auth/device`, `/api/auth/device/token`, `/api/v1/health`)
 
 - **CLI framework**: `github.com/spf13/cobra`
 - **HTTP**: stdlib `net/http` + `encoding/json` — no extra client deps
-- **Config**: TOML via `github.com/BurntSushi/toml` (added when config-read is implemented)
+- **Config**: TOML via `github.com/BurntSushi/toml`
+- **Output**: TOON via `github.com/alpkeskin/gotoon` (default), JSON via stdlib, plain text fallback
 - **Releases**: `goreleaser` (stub in `.goreleaser.yaml`)
 
-Rationale for Go: single static ~2.5 MB binary, trivial cross-compile, instant cold start, matches agents-as-users model. Elixir and Rust were considered and ruled out — see the spec.
 
 ## Two-binary build pattern (critical)
 
@@ -47,22 +46,24 @@ Makefile `build` / `build-dev` encode the ldflags. `.goreleaser.yaml` mirrors th
 | Credential | Storage |
 |---|---|
 | `token` (device-flow result) | Config file `config.toml`, mode **0600**. |
-| `agent_secret` | **`SPRAWL_AGENT_SECRET` env var only. Never on disk, never a flag.** |
+| `agent_secret` | `SPRAWL_AGENT_SECRET` env var or `--agent-secret` flag. **Never persisted to disk by sprawl.** |
 
-Why the agent secret is env-only: any process running as the user — including AI agents with shell access — can read `~/.config/…`. Writing the secret there defeats the per-agent permission system. AI agents get their *own* non-owner agent keys; the user exports that key's secret into the AI's shell env.
+The agent secret scopes per-agent permissions rather than authenticating a trust boundary, so flag convenience is acceptable; sprawl itself still never writes it to disk. Be aware that `--agent-secret <value>` leaves the literal in shell history and `ps auxe` — prefer `SPRAWL_AGENT_SECRET` for long-lived shells and reserve the flag for one-shots.
 
 Resolution order per request:
 1. `SPRAWL_TOKEN` env var → else `config.toml` `token`. Missing → "not logged in, run `sprawl login`".
-2. `SPRAWL_AGENT_SECRET` env var. Missing → **fail before the HTTP call** with a clear message.
+2. `--agent-secret` flag → else `SPRAWL_AGENT_SECRET` env var. Missing → **fail before the HTTP call** with a clear message.
 
 Every `/api/v1/*` call sends `Authorization: Bearer <token>` + `X-Agent-Secret: <secret>`.
 
 ## Repo layout
 
 ```
-cmd/sprawl/          main.go — thin entry point
+cmd/sprawl/          main.go — thin entry point, wires signal.NotifyContext for ctrl+C
 internal/build/      ldflag-injected vars (APIURL, AppName, Version, Commit, Date)
-internal/cli/        cobra root and subcommands
+internal/cli/        cobra root + subcommands (root.go with version, login.go, health.go; auth.go for credential resolution; output.go for text/json/toon rendering)
+internal/client/     stdlib net/http client — BaseURL resolution, CreateDeviceGrant, PollDeviceToken (typed DevicePollError), Health, APIError
+internal/config/     XDG-aware Load/Save for config.toml (atomic write, mode 0600, dir mode 0700)
 docs/plans/          specs and design notes
 Makefile             build / build-dev / build-all / run-dev / test / clean
 .goreleaser.yaml     release config (stub — needs owner/repo before first release)
@@ -85,14 +86,27 @@ To change the prod URL at build time without editing the Makefile:
 
 ## Invariants (don't break these)
 
-1. Every subcommand supports `--json` for agent consumption. Root has it as a persistent flag.
+1. Every structured-output subcommand honours `--format=text|json|toon` (persistent flag on root). Default is `toon`; session-wide override via `SPRAWL_OUTPUT`. Login is interactive and stays plain text regardless of `--format` — agents can't approve in a browser anyway.
 2. No command writes `agent_secret` to any file, log, or flag default.
 3. No command prints the `token` or `agent_secret` to stdout/stderr.
 4. URL is never read from config; only baked-in or `SPRAWL_API_URL` env override.
 5. Two binaries share 100% of the code; divergence happens only via `internal/build` vars.
 
+## Collaboration rules
+
+do not commit to git
+
+## Implemented commands
+
+- `version` — prints ldflag-injected values (APIURL, AppName, Version, Commit, Date).
+- `login` — RFC 8628 device flow. POSTs `/api/auth/device`, prints the verification URL + user code, polls `/api/auth/device/token` at the server's `interval` until approval / expiry / denial / `invalid_grant`. Saves the token to `config.toml` (0600) on success, prints the `SPRAWL_AGENT_SECRET` reminder. Ctrl+C cancels cleanly via the root context.
+- `health` — resolves token (env → config) and agent secret (flag → env), fails pre-HTTP if secret missing, calls `GET /api/v1/health`. Honours `--format=text|json|toon` (default toon, or `$SPRAWL_OUTPUT`) for both success (`{"status":"ok"}`) and error (`{"status":"error","error":"…","http_status":…}`). Exit 1 on any failure.
+
+E2E verified against the local server: token persisted, health round-trip returns 200, error paths (no login / missing secret / wrong secret) render cleanly in text, JSON, and TOON.
+
 ## Open TODOs
 
 - Repo lives at `git@github.com:ultrakorne/sprawl_cli.git`. Module path: `github.com/ultrakorne/sprawl_cli`.
 - `.goreleaser.yaml` `release:` and `brews:` stanzas are still commented out — uncomment and wire when cutting the first release (owner `ultrakorne`, tap repo TBD).
-- Nothing is implemented yet beyond `version`. Next: `sprawl login` (device flow) and `sprawl health`, per the phase-2 section of the spec.
+- Next command work is **gated on server phase 3** landing: `sprawl theme get` / `sprawl theme set <name>` against `GET`/`PATCH /api/v1/settings/theme`. Don't build ahead.
+- No automated tests yet — integration tests mirroring the server's controller matrix (owner / non-owner write / non-owner read / missing bearer / missing secret / other-user id) should land before phase 3 commands are written, so they can reuse the scaffolding.
