@@ -51,7 +51,7 @@ sprawl_dev version           # confirms the URL baked into this build
 sprawl_dev login             # device flow: opens a URL, you approve in the browser
 ```
 
-After `login`, the token is saved to `~/.config/sprawl_dev/config.toml` at mode 0600. The agent secret is **not** stored there — you supply it per-shell via `SPRAWL_AGENT_SECRET` (or per-command via `-s` / `--agent-secret`).
+`login` prints the settings URL (`<api-url>/settings`) first — that's where you copy your owner agent secret. Then it starts the device grant: open the verification link, approve in the browser, and the token lands in `~/.config/sprawl_dev/config.toml` at mode 0600. The agent secret is **not** stored there — you supply it per-shell via `SPRAWL_AGENT_SECRET` (or per-command via `-s` / `--agent-secret`).
 
 ```sh
 export SPRAWL_AGENT_SECRET=<your agent secret>
@@ -76,8 +76,9 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. |
 | `sprawl checklist add <task_id>` | Adds an item. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). |
-| `sprawl checklist toggle <item_id>` | Flips the item's completion state. No flags. |
-| `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `toggle` for completion. |
+| `sprawl checklist check <item_id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
+| `sprawl checklist uncheck <item_id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
+| `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `check` / `uncheck` for completion. |
 | `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. Empty string is a legitimate success. |
 | `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
 
@@ -88,8 +89,6 @@ Write commands accept **`--from-json <path|->`** to read the attrs object from a
 ```sh
 echo '{"title":"draft","description":"seed"}' | sprawl task create --from-json - --title "final"
 ```
-
-Next up is phase 6 on the server (owner-secret UI + docs). The `login` flow will direct the user at the settings URL when that ships.
 
 ## Flags and environment variables
 

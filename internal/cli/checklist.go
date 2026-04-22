@@ -19,13 +19,14 @@ func newChecklistCmd() *cobra.Command {
 		Use:   "checklist <task_id>",
 		Short: "List or mutate checklist items for a task",
 		Long: "With just a task id, lists checklist items (GET /api/v1/tasks/:task_id/checklist). " +
-			"Use the `add`, `toggle`, and `update` subcommands to mutate items. Permission is " +
-			"enforced on the parent task — 403 if the caller can't read/write it, 404 if it isn't " +
-			"visible to them at all.",
+			"Use the `add`, `check`, `uncheck`, and `update` subcommands to mutate items. " +
+			"Permission is enforced on the parent task — 403 if the caller can't read/write it, " +
+			"404 if it isn't visible to them at all.",
 		// The listing behaviour is preserved as the parent RunE so that
 		// `sprawl checklist <task_id>` keeps working without an explicit
 		// `list` subcommand. cobra routes exact subcommand matches (add /
-		// toggle / update) to their own handlers before falling through here.
+		// check / uncheck / update) to their own handlers before falling
+		// through here.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -36,7 +37,8 @@ func newChecklistCmd() *cobra.Command {
 	}
 	cmd.SilenceErrors = true
 	cmd.AddCommand(newChecklistAddCmd())
-	cmd.AddCommand(newChecklistToggleCmd())
+	cmd.AddCommand(newChecklistCheckCmd())
+	cmd.AddCommand(newChecklistUncheckCmd())
 	cmd.AddCommand(newChecklistUpdateCmd())
 	return cmd
 }
@@ -103,16 +105,38 @@ func newChecklistAddCmd() *cobra.Command {
 	return cmd
 }
 
-func newChecklistToggleCmd() *cobra.Command {
+func newChecklistCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "toggle <item_id>",
-		Short: "Flip a checklist item's completion state (PATCH /api/v1/checklist_items/:id/toggle)",
+		Use:   "check <item_id>",
+		Short: "Mark a checklist item completed (PATCH /api/v1/checklist_items/:id/completed)",
+		Long: "Mark a checklist item completed. Sends `{\"completed\": true}`. The server is " +
+			"idempotent — calling this on an already-completed item is a no-op but still returns " +
+			"the current item.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("checklist toggle requires exactly one argument: the item id"))
+					errors.New("checklist check requires exactly one argument: the item id"))
 			}
-			return runChecklistToggle(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+			return runChecklistSetCompleted(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], true)
+		},
+	}
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func newChecklistUncheckCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "uncheck <item_id>",
+		Short: "Mark a checklist item not completed (PATCH /api/v1/checklist_items/:id/completed)",
+		Long: "Mark a checklist item not completed. Sends `{\"completed\": false}`. The server is " +
+			"idempotent — calling this on an already-uncompleted item is a no-op but still returns " +
+			"the current item.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
+					errors.New("checklist uncheck requires exactly one argument: the item id"))
+			}
+			return runChecklistSetCompleted(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], false)
 		},
 	}
 	cmd.SilenceErrors = true
@@ -125,7 +149,8 @@ func newChecklistUpdateCmd() *cobra.Command {
 		Use:   "update <item_id>",
 		Short: "Update a checklist item's title/notes (PATCH /api/v1/checklist_items/:id)",
 		Long: "Update a checklist item. Accepts --title, --notes, or `--from-json -`. Completion " +
-			"state isn't mutable through this endpoint — use `checklist toggle` instead.",
+			"state isn't mutable through this endpoint — use `checklist check` / `checklist " +
+			"uncheck` instead.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -159,12 +184,12 @@ func runChecklistAdd(ctx context.Context, stdout, stderr io.Writer, taskID strin
 	return renderChecklistItem(stdout, item)
 }
 
-func runChecklistToggle(ctx context.Context, stdout, stderr io.Writer, itemID string) error {
+func runChecklistSetCompleted(ctx context.Context, stdout, stderr io.Writer, itemID string, completed bool) error {
 	c, err := newAuthedClient()
 	if err != nil {
 		return reportErr(stdout, stderr, err)
 	}
-	item, err := c.ToggleChecklistItem(ctx, itemID)
+	item, err := c.SetChecklistItemCompleted(ctx, itemID, completed)
 	if err != nil {
 		return reportErr(stdout, stderr, err)
 	}

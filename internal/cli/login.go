@@ -30,6 +30,12 @@ func newLoginCmd() *cobra.Command {
 func runLogin(ctx context.Context, out io.Writer) error {
 	c := client.New()
 
+	settingsURL := client.BaseURL() + "/settings"
+	fmt.Fprintln(out, "Before you approve this device, copy your owner agent secret from:")
+	fmt.Fprintf(out, "  %s\n", settingsURL)
+	fmt.Fprintln(out, "You'll export it as SPRAWL_AGENT_SECRET after login; it is never stored on disk by sprawl.")
+	fmt.Fprintln(out)
+
 	grant, err := c.CreateDeviceGrant(ctx)
 	if err != nil {
 		return fmt.Errorf("create device grant: %w", err)
@@ -97,6 +103,6 @@ func onApproved(out io.Writer, token string) error {
 	fmt.Fprintf(out, "\nLogged in. Token saved to %s (mode 0600).\n", path)
 	fmt.Fprintln(out, "\nNext: export your agent secret in this shell so authed requests work:")
 	fmt.Fprintln(out, "  export SPRAWL_AGENT_SECRET=<your owner key secret>")
-	fmt.Fprintln(out, "\nThe agent secret is never stored on disk by sprawl. Get it from the settings page (phase 6) or the server's ensure_owner_key logs.")
+	fmt.Fprintf(out, "\nIf you don't have it yet, retrieve it from %s/settings. The agent secret is never stored on disk by sprawl.\n", client.BaseURL())
 	return nil
 }

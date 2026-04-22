@@ -171,13 +171,13 @@ Server adds:
 - `POST /api/v1/tasks` body `{ "task": { ... } }` → 201 + task
 - `PATCH /api/v1/tasks/:id` body `{ "task": { ... } }`
 - `POST /api/v1/tasks/:task_id/checklist`
-- `PATCH /api/v1/checklist_items/:id/toggle`
+- `PATCH /api/v1/checklist_items/:id/completed` body `{ "completed": true|false }`
 - `PATCH /api/v1/checklist_items/:id`
 - `PUT /api/v1/checklist_items/:id/notes` body `{ "notes": "..." }`
 
 PubSub now broadcasts per-user mutation events; phase 5 is browser ↔ CLI live-reactivity territory, but the CLI itself just needs to issue the HTTP calls — no subscription yet.
 
-**CLI:** `sprawl task create`, `sprawl task update <id>`, `sprawl checklist add <task_id>`, `sprawl checklist toggle <item_id>`, `sprawl checklist update <item_id>`, `sprawl note set <item_id>`. For bodies, accept flags (`--title`, `--status`) and `--from-json -` (read JSON from stdin) so agents can pipe objects in directly.
+**CLI:** `sprawl task create`, `sprawl task update <id>`, `sprawl checklist add <task_id>`, `sprawl checklist check <item_id>`, `sprawl checklist uncheck <item_id>`, `sprawl checklist update <item_id>`, `sprawl note set <item_id>`. For bodies, accept flags (`--title`, `--status`) and `--from-json -` (read JSON from stdin) so agents can pipe objects in directly.
 
 ### Phase 6 — docs + owner-secret UI
 

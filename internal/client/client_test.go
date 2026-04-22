@@ -686,7 +686,7 @@ func TestCreateChecklistItem_SendsItemEnvelope(t *testing.T) {
 	}
 }
 
-func TestToggleChecklistItem_Success(t *testing.T) {
+func TestSetChecklistItemCompleted_Check(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"checklist_item": map[string]any{
@@ -696,23 +696,58 @@ func TestToggleChecklistItem_Success(t *testing.T) {
 		})
 	})
 	c := NewAuthed("tok", "sec")
-	item, err := c.ToggleChecklistItem(context.Background(), "8")
+	item, err := c.SetChecklistItemCompleted(context.Background(), "8", true)
 	if err != nil {
-		t.Fatalf("ToggleChecklistItem: %v", err)
+		t.Fatalf("SetChecklistItemCompleted: %v", err)
 	}
 	if !item.Completed {
 		t.Fatalf("expected completed, got %+v", item)
 	}
 	r := ts.Requests()[0]
-	if r.Method != "PATCH" || r.Path != "/api/v1/checklist_items/8/toggle" {
+	if r.Method != "PATCH" || r.Path != "/api/v1/checklist_items/8/completed" {
 		t.Fatalf("request = %+v", r)
 	}
-	// No body on toggle → no Content-Type header either.
-	if len(r.Body) != 0 {
-		t.Fatalf("expected empty body, got %q", r.Body)
+	var sent struct {
+		Completed bool `json:"completed"`
 	}
-	if r.ContentType != "" {
-		t.Fatalf("Content-Type = %q, want empty for bodyless PATCH", r.ContentType)
+	if err := json.Unmarshal(r.Body, &sent); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !sent.Completed {
+		t.Fatalf("body.completed = %v, want true", sent.Completed)
+	}
+}
+
+func TestSetChecklistItemCompleted_Uncheck(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 8, "title": "step", "completed": false, "position": 2,
+				"has_notes": false, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	item, err := c.SetChecklistItemCompleted(context.Background(), "8", false)
+	if err != nil {
+		t.Fatalf("SetChecklistItemCompleted: %v", err)
+	}
+	if item.Completed {
+		t.Fatalf("expected not completed, got %+v", item)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "PATCH" || r.Path != "/api/v1/checklist_items/8/completed" {
+		t.Fatalf("request = %+v", r)
+	}
+	var sent struct {
+		// Pointer so we can distinguish "omitted" from "present and false".
+		Completed *bool `json:"completed"`
+	}
+	if err := json.Unmarshal(r.Body, &sent); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if sent.Completed == nil || *sent.Completed {
+		t.Fatalf("body.completed = %v, want explicit false", sent.Completed)
 	}
 }
 
@@ -835,7 +870,7 @@ func TestHeaderInvariants(t *testing.T) {
 		case strings.HasPrefix(p, "/api/v1/checklist_items/") && strings.HasSuffix(p, "/notes"):
 			writeJSON(w, 200, map[string]any{"notes": ""})
 		case strings.HasPrefix(p, "/api/v1/checklist_items/"):
-			// toggle or plain update — both return the item envelope.
+			// set-completed or plain update — both return the item envelope.
 			writeJSON(w, 200, map[string]any{"checklist_item": map[string]any{
 				"id": 1, "title": "x", "completed": false, "position": 0,
 				"has_notes": false, "last_actor": nil,
@@ -888,8 +923,8 @@ func TestHeaderInvariants(t *testing.T) {
 	if _, err := authed.CreateChecklistItem(context.Background(), "1", map[string]any{"title": "x"}); err != nil {
 		t.Fatalf("CreateChecklistItem: %v", err)
 	}
-	if _, err := authed.ToggleChecklistItem(context.Background(), "1"); err != nil {
-		t.Fatalf("ToggleChecklistItem: %v", err)
+	if _, err := authed.SetChecklistItemCompleted(context.Background(), "1", true); err != nil {
+		t.Fatalf("SetChecklistItemCompleted: %v", err)
 	}
 	if _, err := authed.UpdateChecklistItem(context.Background(), "1", map[string]any{"title": "x"}); err != nil {
 		t.Fatalf("UpdateChecklistItem: %v", err)

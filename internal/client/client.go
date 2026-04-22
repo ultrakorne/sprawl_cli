@@ -302,12 +302,14 @@ func (c *Client) CreateChecklistItem(ctx context.Context, taskID string, attrs m
 	return env.Item, nil
 }
 
-// ToggleChecklistItem flips the item's completion state. No request body; the
-// server returns the updated item.
-func (c *Client) ToggleChecklistItem(ctx context.Context, itemID string) (*ChecklistItem, error) {
+// SetChecklistItemCompleted sets the item's completion state explicitly. The
+// server is idempotent (no-ops when the state already matches) and returns the
+// updated item.
+func (c *Client) SetChecklistItemCompleted(ctx context.Context, itemID string, completed bool) (*ChecklistItem, error) {
+	body := map[string]bool{"completed": completed}
 	var env checklistItemEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/toggle"
-	if err := c.do(ctx, http.MethodPatch, path, nil, &env); err != nil {
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/completed"
+	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
 		return nil, err
 	}
 	return env.Item, nil
@@ -315,7 +317,7 @@ func (c *Client) ToggleChecklistItem(ctx context.Context, itemID string) (*Check
 
 // UpdateChecklistItem PATCHes item fields. The server accepts `title` and
 // `notes` via the item changeset. Completion is only mutated through
-// ToggleChecklistItem.
+// SetChecklistItemCompleted.
 func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs map[string]any) (*ChecklistItem, error) {
 	body := map[string]any{"checklist_item": attrs}
 	var env checklistItemEnvelope
