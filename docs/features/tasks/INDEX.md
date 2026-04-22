@@ -1,6 +1,6 @@
 # Tasks
 
-Read and write commands for tasks: `task list`, `task show`, `task search`, `task create`, `task update`. Each wraps a single `/api/v1/tasks*` endpoint. Server-side per-agent permission filtering means non-owner agents only see tasks their key resolves `:read` / `:write` on.
+Read and write commands for tasks: `task list`, `task show`, `task search`, `task create`, `task update`. Each wraps a single `/api/v1/tasks*` endpoint. Server-side per-agent permission filtering means non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on.
 
 ## Documents
 

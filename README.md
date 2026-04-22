@@ -69,10 +69,10 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl health` | Calls `GET /api/v1/health` to verify the full auth pipeline. |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
 | `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only. |
-| `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read`/`:write` on. |
+| `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
 | `sprawl task show <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. |
 | `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
-| `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Non-owner agents auto-gain `:write` on the task they create. |
+| `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. |
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. |
 | `sprawl checklist add <task_id>` | Adds an item. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). |
@@ -84,10 +84,73 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 
 All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`).
 
-Write commands accept **`--from-json <path|->`** to read the attrs object from a file or stdin. Explicit flags override fields parsed from the JSON source, so you can pipe a template and tweak one field on the command line:
+## Write command examples
+
+Every write command takes the same two input paths: explicit flags, or the full attrs object via `--from-json <path|->`. When both are used, explicit flags override fields parsed from the JSON source — pipe a template, tweak one field on the command line.
+
+### `task create`
+
+Wire body is `{"task": {"title": "...", "description": "...", "project_id": N}}`. `project_id` is a field of the inner object; the CLI offers `--project-id` as a convenience (integer-parsed locally so bad input fails before the HTTP call).
 
 ```sh
-echo '{"title":"draft","description":"seed"}' | sprawl task create --from-json - --title "final"
+# Flags only, no project — requires default_permission = write_create.
+sprawl task create --title "draft spec" --description "outline the v2 API"
+
+# Flags only, attached to a project.
+sprawl task create --title "wire up CI" --project-id 42
+
+# Full attrs object on stdin.
+echo '{"title":"triage","description":"go through the backlog","project_id":42}' \
+  | sprawl task create --from-json -
+
+# Template on stdin, title overridden on the CLI.
+echo '{"title":"draft","project_id":42}' \
+  | sprawl task create --from-json - --title "final"
+
+# Template from a file.
+sprawl task create --from-json ./task.json
+```
+
+### `task update <id>`
+
+Accepts `title` / `description`. `project_id` is intentionally not wired here — the server's update changeset ignores it, so surfacing it would mislead.
+
+```sh
+sprawl task update 17 --title "renamed"
+sprawl task update 17 --description ""          # clears the field (distinct from "flag unset")
+echo '{"description":"rewritten"}' | sprawl task update 17 --from-json -
+```
+
+### `checklist add <task_id>`
+
+Wire body is `{"checklist_item": {"title": "...", "notes": "..."}}`. Server assigns position (appended).
+
+```sh
+sprawl checklist add 17 --title "write migration"
+sprawl checklist add 17 --title "deploy" --notes "run after backfill"
+echo '{"title":"smoke test","notes":"curl /health"}' | sprawl checklist add 17 --from-json -
+```
+
+### `checklist update <item_id>` / `check` / `uncheck`
+
+```sh
+sprawl checklist update 203 --title "renamed"
+sprawl checklist check 203                     # idempotent
+sprawl checklist uncheck 203                   # idempotent
+```
+
+### `note set <item_id>`
+
+```sh
+sprawl note set 203 "blocked on PR #418"
+sprawl note set 203 ""                          # clears notes
+cat long-notes.md | sprawl note set 203 --stdin
+```
+
+### `theme set <id>`
+
+```sh
+sprawl theme set tokyo-night                    # owner-only; unknown id → 404
 ```
 
 ## Flags and environment variables
