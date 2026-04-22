@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -540,7 +541,6 @@ func TestGetNotes_NotFound(t *testing.T) {
 
 func TestCreateTask_SendsTaskEnvelope(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(201)
 		writeJSON(w, 201, map[string]any{
 			"task": map[string]any{
 				"id": 17, "title": "hello", "description": "d", "status": "not_started",
@@ -995,5 +995,29 @@ func TestServer5xx_ReturnsAPIError(t *testing.T) {
 	}
 	if ae.Status != 500 {
 		t.Fatalf("status = %d", ae.Status)
+	}
+}
+
+// TestResponseBodyCap_Rejected surfaces the maxBodyBytes limit as a clean
+// error rather than silently truncating into a JSON decode failure.
+func TestResponseBodyCap_Rejected(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		big := strings.Repeat("x", maxBodyBytes+10)
+		_, _ = fmt.Fprintf(w, `{"notes":%q}`, big)
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.GetNotes(context.Background(), "1")
+	if err == nil {
+		t.Fatal("expected error for oversized response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error should mention size cap: %v", err)
+	}
+	// Must not be mistaken for an APIError — the status was 200.
+	var ae *APIError
+	if errors.As(err, &ae) {
+		t.Fatalf("unexpected APIError: %+v", ae)
 	}
 }

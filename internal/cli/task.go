@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -14,42 +13,39 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
-func newTaskCmd() *cobra.Command {
+func newTaskCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "Read or mutate tasks (list, show, search, create, update)",
 	}
-	cmd.AddCommand(newTaskListCmd())
-	cmd.AddCommand(newTaskShowCmd())
-	cmd.AddCommand(newTaskSearchCmd())
-	cmd.AddCommand(newTaskCreateCmd())
-	cmd.AddCommand(newTaskUpdateCmd())
+	cmd.AddCommand(newTaskListCmd(opts))
+	cmd.AddCommand(newTaskShowCmd(opts))
+	cmd.AddCommand(newTaskSearchCmd(opts))
+	cmd.AddCommand(newTaskCreateCmd(opts))
+	cmd.AddCommand(newTaskUpdateCmd(opts))
 	return cmd
 }
 
-func newTaskListCmd() *cobra.Command {
+func newTaskListCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks visible to the current agent (GET /api/v1/tasks)",
-		Args:  cobra.NoArgs,
+		Args:  textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTaskList(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runTaskList(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
 		},
 	}
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func newTaskShowCmd() *cobra.Command {
+func newTaskShowCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "Fetch a single task by id (GET /api/v1/tasks/:id)",
+		Args:  textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("task show requires exactly one argument: the task id"))
-			}
-			return runTaskShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+			return runTaskShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
 		},
 	}
 	cmd.SilenceErrors = true
@@ -104,7 +100,7 @@ func (f *taskWriteFlags) buildAttrs(stdin io.Reader) (map[string]any, error) {
 	return attrs, nil
 }
 
-func newTaskCreateCmd() *cobra.Command {
+func newTaskCreateCmd(opts *runtimeOpts) *cobra.Command {
 	var f taskWriteFlags
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -112,17 +108,17 @@ func newTaskCreateCmd() *cobra.Command {
 		Long: "Create a task. Provide --title (required server-side) and optional " +
 			"--description / --project-id, or pipe the full attrs object as JSON via " +
 			"`--from-json -`. Flags override fields parsed from --from-json.",
-		Args: cobra.NoArgs,
+		Args: textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.hasDesc = cmd.Flags().Changed("description")
 			attrs, err := f.buildAttrs(cmd.InOrStdin())
 			if err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
 			if err := requireAttrs(attrs, "task create"); err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
-			return runTaskCreate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), attrs)
+			return runTaskCreate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), attrs, opts)
 		},
 	}
 	bindTaskWriteFlags(cmd, &f, false)
@@ -130,7 +126,7 @@ func newTaskCreateCmd() *cobra.Command {
 	return cmd
 }
 
-func newTaskUpdateCmd() *cobra.Command {
+func newTaskUpdateCmd(opts *runtimeOpts) *cobra.Command {
 	var f taskWriteFlags
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -138,20 +134,17 @@ func newTaskUpdateCmd() *cobra.Command {
 		Long: "Update a task's title / description. Accepts the same --title, --description, " +
 			"and --from-json flags as `task create`. The server's update changeset ignores " +
 			"project_id and other fields.",
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("task update requires exactly one argument: the task id"))
-			}
 			f.hasDesc = cmd.Flags().Changed("description")
 			attrs, err := f.buildAttrs(cmd.InOrStdin())
 			if err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
 			if err := requireAttrs(attrs, "task update"); err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
-			return runTaskUpdate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs)
+			return runTaskUpdate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs, opts)
 		},
 	}
 	bindTaskWriteFlags(cmd, &f, true)
@@ -159,94 +152,91 @@ func newTaskUpdateCmd() *cobra.Command {
 	return cmd
 }
 
-func runTaskCreate(ctx context.Context, stdout, stderr io.Writer, attrs map[string]any) error {
-	c, err := newAuthedClient()
+func runTaskCreate(ctx context.Context, stdout, stderr io.Writer, attrs map[string]any, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	task, err := c.CreateTask(ctx, attrs)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task))
+	return renderPayload(stdout, payload, taskDetailText(task), opts)
 }
 
-func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, attrs map[string]any) error {
-	c, err := newAuthedClient()
+func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, attrs map[string]any, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	task, err := c.UpdateTask(ctx, id, attrs)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task))
+	return renderPayload(stdout, payload, taskDetailText(task), opts)
 }
 
-func newTaskSearchCmd() *cobra.Command {
+func newTaskSearchCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search tasks by title substring (GET /api/v1/tasks/search?q=…)",
 		Long: "Case-insensitive substring match on task title. Empty or whitespace-only queries are rejected " +
 			"by the server with 422 query_required.",
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("task search requires exactly one argument: the query string"))
-			}
-			return runTaskSearch(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+			return runTaskSearch(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
 		},
 	}
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func runTaskList(ctx context.Context, stdout, stderr io.Writer) error {
-	c, err := newAuthedClient()
+func runTaskList(ctx context.Context, stdout, stderr io.Writer, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	tasks, err := c.ListTasks(ctx)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderTaskList(stdout, tasks)
+	return renderTaskList(stdout, tasks, opts)
 }
 
-func runTaskSearch(ctx context.Context, stdout, stderr io.Writer, query string) error {
-	c, err := newAuthedClient()
+func runTaskSearch(ctx context.Context, stdout, stderr io.Writer, query string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	tasks, err := c.SearchTasks(ctx, query)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderTaskList(stdout, tasks)
+	return renderTaskList(stdout, tasks, opts)
 }
 
-func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string) error {
-	c, err := newAuthedClient()
+func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	task, err := c.GetTask(ctx, id)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task))
+	return renderPayload(stdout, payload, taskDetailText(task), opts)
 }
 
-func renderTaskList(out io.Writer, tasks []*client.Task) error {
+func renderTaskList(out io.Writer, tasks []*client.Task, opts *runtimeOpts) error {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		items = append(items, taskMap(t))
 	}
 	payload := map[string]any{"tasks": items}
-	return renderPayload(out, payload, taskListText(tasks))
+	return renderPayload(out, payload, taskListText(tasks), opts)
 }
 
 // taskMap mirrors the server's task_json shape but as a `map[string]any` so

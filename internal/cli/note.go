@@ -9,33 +9,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newNoteCmd() *cobra.Command {
+func newNoteCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "note",
 		Short: "Read or write checklist-item notes",
 	}
-	cmd.AddCommand(newNoteShowCmd())
-	cmd.AddCommand(newNoteSetCmd())
+	cmd.AddCommand(newNoteShowCmd(opts))
+	cmd.AddCommand(newNoteSetCmd(opts))
 	return cmd
 }
 
-func newNoteShowCmd() *cobra.Command {
+func newNoteShowCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <item_id>",
 		Short: "Fetch the notes blob for a checklist item (GET /api/v1/checklist_items/:id/notes)",
+		Args:  textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("note show requires exactly one argument: the checklist item id"))
-			}
-			return runNoteShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+			return runNoteShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
 		},
 	}
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func newNoteSetCmd() *cobra.Command {
+func newNoteSetCmd(opts *runtimeOpts) *cobra.Command {
 	var fromStdin bool
 	cmd := &cobra.Command{
 		Use:   "set <item_id> [<notes>]",
@@ -44,18 +41,18 @@ func newNoteSetCmd() *cobra.Command {
 			"argument, or use --stdin to read the entire body from stdin (useful for multi-line / " +
 			"piped input). An empty string clears existing notes and is a valid value. Size cap is " +
 			"enforced server-side (422 on overflow).",
+		// Body source is checked in RunE so the --stdin / positional combo
+		// rule can emit a format-aware error; cobra's arg validators only
+		// know about counts.
+		Args: textArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
-			if len(args) < 1 {
-				return reportErr(stdout, stderr,
-					errors.New("note set requires the checklist item id as the first argument"))
-			}
 			itemID := args[0]
 			notes, err := resolveNoteBody(cmd.InOrStdin(), args[1:], fromStdin)
 			if err != nil {
-				return reportErr(stdout, stderr, err)
+				return reportErr(stdout, stderr, err, opts)
 			}
-			return runNoteSet(cmd.Context(), stdout, stderr, itemID, notes)
+			return runNoteSet(cmd.Context(), stdout, stderr, itemID, notes, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false,
@@ -87,14 +84,14 @@ func resolveNoteBody(stdin io.Reader, extraArgs []string, fromStdin bool) (strin
 	}
 }
 
-func runNoteSet(ctx context.Context, stdout, stderr io.Writer, itemID, notes string) error {
-	c, err := newAuthedClient()
+func runNoteSet(ctx context.Context, stdout, stderr io.Writer, itemID, notes string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	saved, err := c.SetNotes(ctx, itemID, notes)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"notes": saved}
 	// Text fallback mirrors `note show`: emit the saved notes blob verbatim
@@ -104,20 +101,20 @@ func runNoteSet(ctx context.Context, stdout, stderr io.Writer, itemID, notes str
 	if text == "" {
 		text = "(notes cleared)"
 	}
-	return renderPayload(stdout, payload, text)
+	return renderPayload(stdout, payload, text, opts)
 }
 
-func runNoteShow(ctx context.Context, stdout, stderr io.Writer, itemID string) error {
-	c, err := newAuthedClient()
+func runNoteShow(ctx context.Context, stdout, stderr io.Writer, itemID string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	notes, err := c.GetNotes(ctx, itemID)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"notes": notes}
 	// Text fallback is the raw notes blob — this is the whole point of the
 	// endpoint, and wrapping it would only get in the way of `| less` etc.
-	return renderPayload(stdout, payload, notes)
+	return renderPayload(stdout, payload, notes, opts)
 }

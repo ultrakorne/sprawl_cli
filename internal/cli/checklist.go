@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -14,7 +13,7 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
-func newChecklistCmd() *cobra.Command {
+func newChecklistCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "checklist <task_id>",
 		Short: "List or mutate checklist items for a task",
@@ -27,19 +26,16 @@ func newChecklistCmd() *cobra.Command {
 		// `list` subcommand. cobra routes exact subcommand matches (add /
 		// check / uncheck / update) to their own handlers before falling
 		// through here.
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("checklist requires exactly one argument: the task id"))
-			}
-			return runChecklist(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0])
+			return runChecklist(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
 		},
 	}
 	cmd.SilenceErrors = true
-	cmd.AddCommand(newChecklistAddCmd())
-	cmd.AddCommand(newChecklistCheckCmd())
-	cmd.AddCommand(newChecklistUncheckCmd())
-	cmd.AddCommand(newChecklistUpdateCmd())
+	cmd.AddCommand(newChecklistAddCmd(opts))
+	cmd.AddCommand(newChecklistCheckCmd(opts))
+	cmd.AddCommand(newChecklistUncheckCmd(opts))
+	cmd.AddCommand(newChecklistUpdateCmd(opts))
 	return cmd
 }
 
@@ -76,7 +72,7 @@ func (f *checklistItemWriteFlags) buildAttrs(stdin io.Reader) (map[string]any, e
 	return attrs, nil
 }
 
-func newChecklistAddCmd() *cobra.Command {
+func newChecklistAddCmd(opts *runtimeOpts) *cobra.Command {
 	var f checklistItemWriteFlags
 	cmd := &cobra.Command{
 		Use:   "add <task_id>",
@@ -84,20 +80,17 @@ func newChecklistAddCmd() *cobra.Command {
 		Long: "Add a checklist item under a task. Provide --title (required server-side) and " +
 			"optional --notes, or pipe a JSON object via `--from-json -`. Position is assigned " +
 			"by the server (appended at the end).",
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("checklist add requires exactly one argument: the task id"))
-			}
 			f.hasNotes = cmd.Flags().Changed("notes")
 			attrs, err := f.buildAttrs(cmd.InOrStdin())
 			if err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
 			if err := requireAttrs(attrs, "checklist add"); err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
-			return runChecklistAdd(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs)
+			return runChecklistAdd(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs, opts)
 		},
 	}
 	bindChecklistWriteFlags(cmd, &f)
@@ -105,45 +98,39 @@ func newChecklistAddCmd() *cobra.Command {
 	return cmd
 }
 
-func newChecklistCheckCmd() *cobra.Command {
+func newChecklistCheckCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check <item_id>",
 		Short: "Mark a checklist item completed (PATCH /api/v1/checklist_items/:id/completed)",
 		Long: "Mark a checklist item completed. Sends `{\"completed\": true}`. The server is " +
 			"idempotent — calling this on an already-completed item is a no-op but still returns " +
 			"the current item.",
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("checklist check requires exactly one argument: the item id"))
-			}
-			return runChecklistSetCompleted(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], true)
+			return runChecklistSetCompleted(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], true, opts)
 		},
 	}
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func newChecklistUncheckCmd() *cobra.Command {
+func newChecklistUncheckCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "uncheck <item_id>",
 		Short: "Mark a checklist item not completed (PATCH /api/v1/checklist_items/:id/completed)",
 		Long: "Mark a checklist item not completed. Sends `{\"completed\": false}`. The server is " +
 			"idempotent — calling this on an already-uncompleted item is a no-op but still returns " +
 			"the current item.",
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("checklist uncheck requires exactly one argument: the item id"))
-			}
-			return runChecklistSetCompleted(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], false)
+			return runChecklistSetCompleted(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], false, opts)
 		},
 	}
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func newChecklistUpdateCmd() *cobra.Command {
+func newChecklistUpdateCmd(opts *runtimeOpts) *cobra.Command {
 	var f checklistItemWriteFlags
 	cmd := &cobra.Command{
 		Use:   "update <item_id>",
@@ -151,20 +138,17 @@ func newChecklistUpdateCmd() *cobra.Command {
 		Long: "Update a checklist item. Accepts --title, --notes, or `--from-json -`. Completion " +
 			"state isn't mutable through this endpoint — use `checklist check` / `checklist " +
 			"uncheck` instead.",
+		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
-					errors.New("checklist update requires exactly one argument: the item id"))
-			}
 			f.hasNotes = cmd.Flags().Changed("notes")
 			attrs, err := f.buildAttrs(cmd.InOrStdin())
 			if err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
 			if err := requireAttrs(attrs, "checklist update"); err != nil {
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
-			return runChecklistUpdate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs)
+			return runChecklistUpdate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs, opts)
 		},
 	}
 	bindChecklistWriteFlags(cmd, &f)
@@ -172,48 +156,48 @@ func newChecklistUpdateCmd() *cobra.Command {
 	return cmd
 }
 
-func runChecklistAdd(ctx context.Context, stdout, stderr io.Writer, taskID string, attrs map[string]any) error {
-	c, err := newAuthedClient()
+func runChecklistAdd(ctx context.Context, stdout, stderr io.Writer, taskID string, attrs map[string]any, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	item, err := c.CreateChecklistItem(ctx, taskID, attrs)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderChecklistItem(stdout, item)
+	return renderChecklistItem(stdout, item, opts)
 }
 
-func runChecklistSetCompleted(ctx context.Context, stdout, stderr io.Writer, itemID string, completed bool) error {
-	c, err := newAuthedClient()
+func runChecklistSetCompleted(ctx context.Context, stdout, stderr io.Writer, itemID string, completed bool, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	item, err := c.SetChecklistItemCompleted(ctx, itemID, completed)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderChecklistItem(stdout, item)
+	return renderChecklistItem(stdout, item, opts)
 }
 
-func runChecklistUpdate(ctx context.Context, stdout, stderr io.Writer, itemID string, attrs map[string]any) error {
-	c, err := newAuthedClient()
+func runChecklistUpdate(ctx context.Context, stdout, stderr io.Writer, itemID string, attrs map[string]any, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	item, err := c.UpdateChecklistItem(ctx, itemID, attrs)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderChecklistItem(stdout, item)
+	return renderChecklistItem(stdout, item, opts)
 }
 
 // renderChecklistItem wraps a single item in the `checklist_item` envelope
 // for json/toon and emits a one-line `[x|] #id title` text fallback that
 // matches the shape of the list view's rows.
-func renderChecklistItem(out io.Writer, item *client.ChecklistItem) error {
+func renderChecklistItem(out io.Writer, item *client.ChecklistItem, opts *runtimeOpts) error {
 	payload := map[string]any{"checklist_item": checklistItemMap(item)}
-	return renderPayload(out, payload, checklistItemLine(item))
+	return renderPayload(out, payload, checklistItemLine(item), opts)
 }
 
 func checklistItemMap(it *client.ChecklistItem) map[string]any {
@@ -231,17 +215,17 @@ func checklistItemLine(it *client.ChecklistItem) string {
 	return fmt.Sprintf("%s #%d %s", checkbox(it.Completed), it.ID, it.Title)
 }
 
-func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string) error {
-	c, err := newAuthedClient()
+func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	items, err := c.ListChecklistItems(ctx, taskID)
 	if err != nil {
-		return reportErr(stdout, stderr, err)
+		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"checklist_items": checklistMaps(items)}
-	return renderPayload(stdout, payload, checklistItemsText(items))
+	return renderPayload(stdout, payload, checklistItemsText(items), opts)
 }
 
 func checklistMaps(items []*client.ChecklistItem) []any {

@@ -28,9 +28,9 @@ func resolveToken() (string, error) {
 
 // resolveAgentSecret returns the agent secret from --agent-secret or
 // $SPRAWL_AGENT_SECRET, in that order. Empty → error.
-func resolveAgentSecret() (string, error) {
-	if agentSecretFlag != "" {
-		return agentSecretFlag, nil
+func resolveAgentSecret(opts *runtimeOpts) (string, error) {
+	if opts.agentSecret != "" {
+		return opts.agentSecret, nil
 	}
 	if v := os.Getenv("SPRAWL_AGENT_SECRET"); v != "" {
 		return v, nil
@@ -40,12 +40,12 @@ func resolveAgentSecret() (string, error) {
 
 // newAuthedClient resolves both credentials (failing pre-HTTP if the agent
 // secret is missing) and returns a client ready for /api/v1/* calls.
-func newAuthedClient() (*client.Client, error) {
+func newAuthedClient(opts *runtimeOpts) (*client.Client, error) {
 	token, err := resolveToken()
 	if err != nil {
 		return nil, err
 	}
-	secret, err := resolveAgentSecret()
+	secret, err := resolveAgentSecret(opts)
 	if err != nil {
 		return nil, err
 	}

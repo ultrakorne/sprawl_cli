@@ -414,9 +414,15 @@ func (c *Client) doWithStatus(
 	}
 	defer res.Body.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes))
+	// Read one byte beyond the cap so truncation surfaces as an explicit
+	// error instead of a downstream JSON decode failure on a chopped body.
+	raw, err := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes+1))
 	if err != nil {
 		return fmt.Errorf("%s %s: read body: %w", method, path, err)
+	}
+	if len(raw) > maxBodyBytes {
+		return fmt.Errorf("%s %s: response body exceeds %d bytes (status %d)",
+			method, path, maxBodyBytes, res.StatusCode)
 	}
 	if !accept(res.StatusCode) {
 		return apiErrorFromResponse(res.StatusCode, raw)

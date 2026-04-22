@@ -12,13 +12,6 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/config"
 )
 
-func withAgentSecretFlag(t *testing.T, v string) {
-	t.Helper()
-	prev := agentSecretFlag
-	agentSecretFlag = v
-	t.Cleanup(func() { agentSecretFlag = prev })
-}
-
 // scratchConfigDir wires XDG_CONFIG_HOME to a tmpdir so token lookups don't
 // touch the user's real config. Returns the dir for assertions.
 func scratchConfigDir(t *testing.T) string {
@@ -87,9 +80,9 @@ func readDir(dir string) ([]string, error) {
 // -- resolveAgentSecret -----------------------------------------------------
 
 func TestResolveAgentSecret_FlagWins(t *testing.T) {
-	withAgentSecretFlag(t, "from-flag")
 	t.Setenv("SPRAWL_AGENT_SECRET", "from-env")
-	got, err := resolveAgentSecret()
+	opts := &runtimeOpts{agentSecret: "from-flag"}
+	got, err := resolveAgentSecret(opts)
 	if err != nil {
 		t.Fatalf("resolveAgentSecret: %v", err)
 	}
@@ -99,9 +92,9 @@ func TestResolveAgentSecret_FlagWins(t *testing.T) {
 }
 
 func TestResolveAgentSecret_FallsBackToEnv(t *testing.T) {
-	withAgentSecretFlag(t, "")
 	t.Setenv("SPRAWL_AGENT_SECRET", "from-env")
-	got, err := resolveAgentSecret()
+	opts := &runtimeOpts{}
+	got, err := resolveAgentSecret(opts)
 	if err != nil {
 		t.Fatalf("resolveAgentSecret: %v", err)
 	}
@@ -111,9 +104,9 @@ func TestResolveAgentSecret_FallsBackToEnv(t *testing.T) {
 }
 
 func TestResolveAgentSecret_Missing(t *testing.T) {
-	withAgentSecretFlag(t, "")
 	t.Setenv("SPRAWL_AGENT_SECRET", "")
-	_, err := resolveAgentSecret()
+	opts := &runtimeOpts{}
+	_, err := resolveAgentSecret(opts)
 	if err == nil {
 		t.Fatal("expected error when secret unset")
 	}
@@ -132,7 +125,6 @@ func TestNewAuthedClient_FailsPreHTTPOnMissingSecret(t *testing.T) {
 	if err := config.Save(build.AppName, &config.Config{Token: "tok"}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
-	withAgentSecretFlag(t, "")
 	t.Setenv("SPRAWL_AGENT_SECRET", "")
 	t.Setenv("SPRAWL_TOKEN", "")
 
@@ -145,7 +137,7 @@ func TestNewAuthedClient_FailsPreHTTPOnMissingSecret(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("SPRAWL_API_URL", srv.URL)
 
-	if _, err := newAuthedClient(); err == nil {
+	if _, err := newAuthedClient(&runtimeOpts{}); err == nil {
 		t.Fatal("expected error when agent secret missing")
 	}
 }
@@ -167,10 +159,10 @@ func TestNewAuthedClient_Success(t *testing.T) {
 	t.Setenv("SPRAWL_API_URL", ts.URL)
 
 	scratchConfigDir(t)
-	withAgentSecretFlag(t, "the-secret")
 	t.Setenv("SPRAWL_TOKEN", "the-token")
+	opts := &runtimeOpts{agentSecret: "the-secret"}
 
-	c, err := newAuthedClient()
+	c, err := newAuthedClient(opts)
 	if err != nil {
 		t.Fatalf("newAuthedClient: %v", err)
 	}

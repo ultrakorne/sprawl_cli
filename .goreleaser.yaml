@@ -1,10 +1,10 @@
-# goreleaser config — stub. Fill in before the first real release:
-#   - homebrew tap owner/repo
-#   - scoop bucket
-#   - github repo owner/name (inferred from the module path if unset)
+# goreleaser config. Two binaries from one repo: prod (`sprawl`) and dev
+# (`sprawl_dev`). Only the ldflag values differ. Keep this in sync with the
+# Makefile.
 #
-# Two binaries from one repo: prod (`sprawl`) and dev (`sprawl_dev`).
-# Only the ldflag values differ. Keep this in sync with the Makefile.
+# Still to wire up before distribution beyond GitHub releases:
+#   - homebrew tap (see commented `brews:` block below)
+#   - scoop bucket, if we target Windows
 
 version: 2
 
@@ -76,11 +76,12 @@ changelog:
       - "^test:"
       - "^ci:"
 
-# TODO before first release:
-# release:
-#   github:
-#     owner: ultrakorne
-#     name: sprawl_cli
+release:
+  github:
+    owner: ultrakorne
+    name: sprawl_cli
+
+# Homebrew distribution — uncomment once a tap exists.
 # brews:
 #   - repository:
 #       owner: ultrakorne

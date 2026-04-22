@@ -23,8 +23,8 @@ const (
 
 // resolveFormat picks the output format in this order:
 // --format flag → SPRAWL_OUTPUT env → toon.
-func resolveFormat() (Format, error) {
-	v := strings.ToLower(strings.TrimSpace(formatFlag))
+func resolveFormat(opts *runtimeOpts) (Format, error) {
+	v := strings.ToLower(strings.TrimSpace(opts.format))
 	if v == "" {
 		v = strings.ToLower(strings.TrimSpace(os.Getenv("SPRAWL_OUTPUT")))
 	}
@@ -41,8 +41,8 @@ func resolveFormat() (Format, error) {
 
 // renderPayload writes structured success data in the resolved format. For
 // `text`, the caller supplies a pre-formatted human line via textFallback.
-func renderPayload(out io.Writer, payload map[string]any, textFallback string) error {
-	f, err := resolveFormat()
+func renderPayload(out io.Writer, payload map[string]any, textFallback string, opts *runtimeOpts) error {
+	f, err := resolveFormat(opts)
 	if err != nil {
 		return err
 	}
@@ -80,8 +80,8 @@ func parseErrorsDetails(body string) (any, bool) {
 // reportErr renders err in the resolved format. Structured errors go to
 // stdout (agents parse stdout); human text goes to stderr. Returns the
 // original error so cobra's RunE exits non-zero.
-func reportErr(stdout, stderr io.Writer, err error) error {
-	f, ferr := resolveFormat()
+func reportErr(stdout, stderr io.Writer, err error, opts *runtimeOpts) error {
+	f, ferr := resolveFormat(opts)
 	if ferr != nil {
 		// Invalid --format value itself — surface that to stderr plainly and
 		// return the caller's original error.
