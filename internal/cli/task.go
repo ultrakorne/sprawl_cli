@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"text/tabwriter"
 
@@ -16,11 +17,13 @@ import (
 func newTaskCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
-		Short: "Read tasks (list, show, search)",
+		Short: "Read or mutate tasks (list, show, search, create, update)",
 	}
 	cmd.AddCommand(newTaskListCmd())
 	cmd.AddCommand(newTaskShowCmd())
 	cmd.AddCommand(newTaskSearchCmd())
+	cmd.AddCommand(newTaskCreateCmd())
+	cmd.AddCommand(newTaskUpdateCmd())
 	return cmd
 }
 
@@ -51,6 +54,135 @@ func newTaskShowCmd() *cobra.Command {
 	}
 	cmd.SilenceErrors = true
 	return cmd
+}
+
+// taskWriteFlags bundles the flag state shared by `task create` and
+// `task update`. Each subcommand binds its own copy so flag parsing between
+// invocations stays clean.
+type taskWriteFlags struct {
+	title       string
+	description string
+	projectID   string
+	fromJSON    string
+	hasDesc     bool
+}
+
+func bindTaskWriteFlags(cmd *cobra.Command, f *taskWriteFlags, forUpdate bool) {
+	cmd.Flags().StringVar(&f.title, "title", "", "task title")
+	cmd.Flags().StringVar(&f.description, "description", "", "task description")
+	cmd.Flags().StringVar(&f.fromJSON, "from-json", "",
+		"read task attrs as a JSON object from a file path, or `-` for stdin")
+	if !forUpdate {
+		// `project_id` is assignable at create time only — the server's update
+		// path runs through the plain task changeset, which ignores the key.
+		cmd.Flags().StringVar(&f.projectID, "project-id", "", "assign the new task to a project id")
+	}
+}
+
+// buildTaskAttrs merges --from-json (if present) with the explicit flags.
+// Flags win on conflict so `--title foo` always lands in the wire payload
+// regardless of what stdin said.
+func (f *taskWriteFlags) buildAttrs(stdin io.Reader) (map[string]any, error) {
+	attrs := map[string]any{}
+	if f.fromJSON != "" {
+		loaded, err := loadJSONFromSource(f.fromJSON, stdin)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(attrs, loaded)
+	}
+	mergeStringFlag(attrs, "title", f.title)
+	// Description is allowed to be set to empty explicitly. cobra's Changed
+	// check handles the "was the flag passed?" question that the mere
+	// presence of a zero value can't answer.
+	if f.hasDesc {
+		attrs["description"] = f.description
+	}
+	if err := mergeProjectID(attrs, f.projectID); err != nil {
+		return nil, err
+	}
+	return attrs, nil
+}
+
+func newTaskCreateCmd() *cobra.Command {
+	var f taskWriteFlags
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new task (POST /api/v1/tasks)",
+		Long: "Create a task. Provide --title (required server-side) and optional " +
+			"--description / --project-id, or pipe the full attrs object as JSON via " +
+			"`--from-json -`. Flags override fields parsed from --from-json.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f.hasDesc = cmd.Flags().Changed("description")
+			attrs, err := f.buildAttrs(cmd.InOrStdin())
+			if err != nil {
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+			}
+			if err := requireAttrs(attrs, "task create"); err != nil {
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+			}
+			return runTaskCreate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), attrs)
+		},
+	}
+	bindTaskWriteFlags(cmd, &f, false)
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func newTaskUpdateCmd() *cobra.Command {
+	var f taskWriteFlags
+	cmd := &cobra.Command{
+		Use:   "update <id>",
+		Short: "Update an existing task (PATCH /api/v1/tasks/:id)",
+		Long: "Update a task's title / description. Accepts the same --title, --description, " +
+			"and --from-json flags as `task create`. The server's update changeset ignores " +
+			"project_id and other fields.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(),
+					errors.New("task update requires exactly one argument: the task id"))
+			}
+			f.hasDesc = cmd.Flags().Changed("description")
+			attrs, err := f.buildAttrs(cmd.InOrStdin())
+			if err != nil {
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+			}
+			if err := requireAttrs(attrs, "task update"); err != nil {
+				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err)
+			}
+			return runTaskUpdate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], attrs)
+		},
+	}
+	bindTaskWriteFlags(cmd, &f, true)
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func runTaskCreate(ctx context.Context, stdout, stderr io.Writer, attrs map[string]any) error {
+	c, err := newAuthedClient()
+	if err != nil {
+		return reportErr(stdout, stderr, err)
+	}
+	task, err := c.CreateTask(ctx, attrs)
+	if err != nil {
+		return reportErr(stdout, stderr, err)
+	}
+	payload := map[string]any{"task": taskMap(task)}
+	return renderPayload(stdout, payload, taskDetailText(task))
+}
+
+func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, attrs map[string]any) error {
+	c, err := newAuthedClient()
+	if err != nil {
+		return reportErr(stdout, stderr, err)
+	}
+	task, err := c.UpdateTask(ctx, id, attrs)
+	if err != nil {
+		return reportErr(stdout, stderr, err)
+	}
+	payload := map[string]any{"task": taskMap(task)}
+	return renderPayload(stdout, payload, taskDetailText(task))
 }
 
 func newTaskSearchCmd() *cobra.Command {

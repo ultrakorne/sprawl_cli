@@ -200,6 +200,10 @@ type checklistEnvelope struct {
 	Items []*ChecklistItem `json:"checklist_items"`
 }
 
+type checklistItemEnvelope struct {
+	Item *ChecklistItem `json:"checklist_item"`
+}
+
 type notesEnvelope struct {
 	Notes string `json:"notes"`
 }
@@ -252,6 +256,83 @@ func (c *Client) GetNotes(ctx context.Context, itemID string) (string, error) {
 	var env notesEnvelope
 	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return "", err
+	}
+	return env.Notes, nil
+}
+
+// -- Phase 5: write endpoints ----------------------------------------------
+
+// CreateTask POSTs a new task. `attrs` is the inner task object — the wrapper
+// `{"task": {...}}` envelope is added here. The server accepts `title`,
+// `description`, and a top-level `project_id` key inside the inner object.
+// Validation (missing title, unknown project) happens server-side and surfaces
+// as APIError.
+func (c *Client) CreateTask(ctx context.Context, attrs map[string]any) (*Task, error) {
+	body := map[string]any{"task": attrs}
+	var env taskEnvelope
+	if err := c.do(ctx, http.MethodPost, "/api/v1/tasks", body, &env); err != nil {
+		return nil, err
+	}
+	return env.Task, nil
+}
+
+// UpdateTask PATCHes an existing task. Same envelope as CreateTask. The
+// server currently accepts `title` / `description`; other keys are ignored by
+// the changeset.
+func (c *Client) UpdateTask(ctx context.Context, id string, attrs map[string]any) (*Task, error) {
+	body := map[string]any{"task": attrs}
+	var env taskEnvelope
+	path := "/api/v1/tasks/" + url.PathEscape(id)
+	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
+		return nil, err
+	}
+	return env.Task, nil
+}
+
+// CreateChecklistItem POSTs a new item under a task. Body envelope is
+// `{"checklist_item": {...}}`; response is the same envelope.
+func (c *Client) CreateChecklistItem(ctx context.Context, taskID string, attrs map[string]any) (*ChecklistItem, error) {
+	body := map[string]any{"checklist_item": attrs}
+	var env checklistItemEnvelope
+	path := "/api/v1/tasks/" + url.PathEscape(taskID) + "/checklist"
+	if err := c.do(ctx, http.MethodPost, path, body, &env); err != nil {
+		return nil, err
+	}
+	return env.Item, nil
+}
+
+// ToggleChecklistItem flips the item's completion state. No request body; the
+// server returns the updated item.
+func (c *Client) ToggleChecklistItem(ctx context.Context, itemID string) (*ChecklistItem, error) {
+	var env checklistItemEnvelope
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/toggle"
+	if err := c.do(ctx, http.MethodPatch, path, nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Item, nil
+}
+
+// UpdateChecklistItem PATCHes item fields. The server accepts `title` and
+// `notes` via the item changeset. Completion is only mutated through
+// ToggleChecklistItem.
+func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs map[string]any) (*ChecklistItem, error) {
+	body := map[string]any{"checklist_item": attrs}
+	var env checklistItemEnvelope
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID)
+	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
+		return nil, err
+	}
+	return env.Item, nil
+}
+
+// SetNotes replaces the notes blob on an item. An empty string is a valid
+// value (clears the notes). Server echoes the saved notes.
+func (c *Client) SetNotes(ctx context.Context, itemID, notes string) (string, error) {
+	body := map[string]string{"notes": notes}
+	var env notesEnvelope
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
+	if err := c.do(ctx, http.MethodPut, path, body, &env); err != nil {
 		return "", err
 	}
 	return env.Notes, nil

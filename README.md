@@ -72,12 +72,24 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read`/`:write` on. |
 | `sprawl task show <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. |
 | `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
+| `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Non-owner agents auto-gain `:write` on the task they create. |
+| `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. |
+| `sprawl checklist add <task_id>` | Adds an item. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). |
+| `sprawl checklist toggle <item_id>` | Flips the item's completion state. No flags. |
+| `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `toggle` for completion. |
 | `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. Empty string is a legitimate success. |
+| `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
 
-All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{checklist_items:[…]}`, `{notes:"…"}`).
+All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`).
 
-More commands land as the backend adds endpoints.
+Write commands accept **`--from-json <path|->`** to read the attrs object from a file or stdin. Explicit flags override fields parsed from the JSON source, so you can pipe a template and tweak one field on the command line:
+
+```sh
+echo '{"title":"draft","description":"seed"}' | sprawl task create --from-json - --title "final"
+```
+
+Next up is phase 6 on the server (owner-secret UI + docs). The `login` flow will direct the user at the settings URL when that ships.
 
 ## Flags and environment variables
 

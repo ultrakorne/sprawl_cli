@@ -537,6 +537,258 @@ func TestGetNotes_NotFound(t *testing.T) {
 	}
 }
 
+// -- Phase 5: write endpoints ----------------------------------------------
+
+func TestCreateTask_SendsTaskEnvelope(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(201)
+		writeJSON(w, 201, map[string]any{
+			"task": map[string]any{
+				"id": 17, "title": "hello", "description": "d", "status": "not_started",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"created_by":         nil, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	task, err := c.CreateTask(context.Background(), map[string]any{
+		"title":       "hello",
+		"description": "d",
+		"project_id":  5,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if task.ID != 17 || task.Title != "hello" {
+		t.Fatalf("task = %+v", task)
+	}
+	reqs := ts.Requests()
+	if len(reqs) != 1 || reqs[0].Method != "POST" || reqs[0].Path != "/api/v1/tasks" {
+		t.Fatalf("request = %+v", reqs[0])
+	}
+	// Body must be wrapped in the `task` envelope — agents piping attrs must
+	// not accidentally skip the wrapper.
+	var sent struct {
+		Task map[string]any `json:"task"`
+	}
+	if err := json.Unmarshal(reqs[0].Body, &sent); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if sent.Task["title"] != "hello" || sent.Task["description"] != "d" {
+		t.Fatalf("task body = %+v", sent.Task)
+	}
+	// json numbers decode as float64.
+	if got, _ := sent.Task["project_id"].(float64); int(got) != 5 {
+		t.Fatalf("project_id = %v", sent.Task["project_id"])
+	}
+}
+
+func TestCreateTask_ErrorMatrix(t *testing.T) {
+	cases := []struct {
+		name, code string
+		status     int
+	}{
+		{"missing_bearer", "missing_bearer", 401},
+		{"forbidden (non-owner / no create perm)", "forbidden", 403},
+		{"project_not_found", "not_found", 404},
+		{"title required", "title", 422},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				writeError(w, tc.status, tc.code)
+			})
+			c := NewAuthed("tok", "sec")
+			_, err := c.CreateTask(context.Background(), map[string]any{"title": ""})
+			var ae *APIError
+			if !errors.As(err, &ae) {
+				t.Fatalf("want APIError, got %T", err)
+			}
+			if ae.Status != tc.status || ae.Code != tc.code {
+				t.Fatalf("APIError = %+v, want %d %q", ae, tc.status, tc.code)
+			}
+		})
+	}
+}
+
+func TestUpdateTask_SendsTaskEnvelope(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"task": map[string]any{
+				"id": 3, "title": "renamed", "description": "", "status": "in_progress",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 1, "total": 2},
+				"created_by":         nil, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	task, err := c.UpdateTask(context.Background(), "3", map[string]any{"title": "renamed"})
+	if err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if task.ID != 3 || task.Title != "renamed" {
+		t.Fatalf("task = %+v", task)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "PATCH" || r.Path != "/api/v1/tasks/3" {
+		t.Fatalf("request = %+v", r)
+	}
+	var sent struct {
+		Task map[string]any `json:"task"`
+	}
+	_ = json.Unmarshal(r.Body, &sent)
+	if sent.Task["title"] != "renamed" {
+		t.Fatalf("body = %+v", sent.Task)
+	}
+}
+
+func TestUpdateTask_NotFound(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 404, "not_found")
+	})
+	c := NewAuthed("tok", "sec")
+	_, err := c.UpdateTask(context.Background(), "999", map[string]any{"title": "x"})
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 404 {
+		t.Fatalf("APIError = %+v", ae)
+	}
+}
+
+func TestCreateChecklistItem_SendsItemEnvelope(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 201, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 8, "title": "step", "completed": false, "position": 2,
+				"has_notes": false, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	item, err := c.CreateChecklistItem(context.Background(), "4", map[string]any{"title": "step"})
+	if err != nil {
+		t.Fatalf("CreateChecklistItem: %v", err)
+	}
+	if item.ID != 8 || item.Title != "step" {
+		t.Fatalf("item = %+v", item)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "POST" || r.Path != "/api/v1/tasks/4/checklist" {
+		t.Fatalf("request = %+v", r)
+	}
+	var sent struct {
+		Item map[string]any `json:"checklist_item"`
+	}
+	_ = json.Unmarshal(r.Body, &sent)
+	if sent.Item["title"] != "step" {
+		t.Fatalf("body = %+v", sent.Item)
+	}
+}
+
+func TestToggleChecklistItem_Success(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 8, "title": "step", "completed": true, "position": 2,
+				"has_notes": false, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	item, err := c.ToggleChecklistItem(context.Background(), "8")
+	if err != nil {
+		t.Fatalf("ToggleChecklistItem: %v", err)
+	}
+	if !item.Completed {
+		t.Fatalf("expected completed, got %+v", item)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "PATCH" || r.Path != "/api/v1/checklist_items/8/toggle" {
+		t.Fatalf("request = %+v", r)
+	}
+	// No body on toggle → no Content-Type header either.
+	if len(r.Body) != 0 {
+		t.Fatalf("expected empty body, got %q", r.Body)
+	}
+	if r.ContentType != "" {
+		t.Fatalf("Content-Type = %q, want empty for bodyless PATCH", r.ContentType)
+	}
+}
+
+func TestUpdateChecklistItem_SendsItemEnvelope(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 8, "title": "renamed", "completed": false, "position": 2,
+				"has_notes": true, "last_actor": nil,
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	item, err := c.UpdateChecklistItem(context.Background(), "8", map[string]any{"title": "renamed"})
+	if err != nil {
+		t.Fatalf("UpdateChecklistItem: %v", err)
+	}
+	if item.Title != "renamed" {
+		t.Fatalf("item = %+v", item)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "PATCH" || r.Path != "/api/v1/checklist_items/8" {
+		t.Fatalf("request = %+v", r)
+	}
+	var sent struct {
+		Item map[string]any `json:"checklist_item"`
+	}
+	_ = json.Unmarshal(r.Body, &sent)
+	if sent.Item["title"] != "renamed" {
+		t.Fatalf("body = %+v", sent.Item)
+	}
+}
+
+func TestSetNotes_RoundTrip(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"notes": "line one\nline two"})
+	})
+	c := NewAuthed("tok", "sec")
+	got, err := c.SetNotes(context.Background(), "9", "line one\nline two")
+	if err != nil {
+		t.Fatalf("SetNotes: %v", err)
+	}
+	if got != "line one\nline two" {
+		t.Fatalf("notes = %q", got)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "PUT" || r.Path != "/api/v1/checklist_items/9/notes" {
+		t.Fatalf("request = %+v", r)
+	}
+	var sent struct {
+		Notes string `json:"notes"`
+	}
+	_ = json.Unmarshal(r.Body, &sent)
+	if sent.Notes != "line one\nline two" {
+		t.Fatalf("body.notes = %q", sent.Notes)
+	}
+}
+
+func TestSetNotes_EmptyStringAccepted(t *testing.T) {
+	// Clearing notes is a valid operation — round-trip an empty string.
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"notes": ""})
+	})
+	c := NewAuthed("tok", "sec")
+	if _, err := c.SetNotes(context.Background(), "9", ""); err != nil {
+		t.Fatalf("SetNotes: %v", err)
+	}
+	var sent struct {
+		Notes string `json:"notes"`
+	}
+	_ = json.Unmarshal(ts.Requests()[0].Body, &sent)
+	if sent.Notes != "" {
+		t.Fatalf("body.notes = %q, want empty", sent.Notes)
+	}
+}
+
 // -- Header invariants ------------------------------------------------------
 
 // TestHeaderInvariants asserts the security-adjacent contract: every
@@ -562,7 +814,17 @@ func TestHeaderInvariants(t *testing.T) {
 		case p == "/api/v1/tasks/search":
 			writeJSON(w, 200, map[string]any{"tasks": []any{}})
 		case strings.HasPrefix(p, "/api/v1/tasks/") && strings.HasSuffix(p, "/checklist"):
-			writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+			// GET list or POST create — both return an items-shaped payload in
+			// the appropriate envelope; reading the method here keeps the
+			// fixture faithful to each endpoint's contract.
+			if r.Method == http.MethodPost {
+				writeJSON(w, 201, map[string]any{"checklist_item": map[string]any{
+					"id": 1, "title": "x", "completed": false, "position": 0,
+					"has_notes": false, "last_actor": nil,
+				}})
+			} else {
+				writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+			}
 		case strings.HasPrefix(p, "/api/v1/tasks/"):
 			writeJSON(w, 200, map[string]any{"task": map[string]any{
 				"id": 1, "title": "t", "description": "", "status": "done",
@@ -572,6 +834,12 @@ func TestHeaderInvariants(t *testing.T) {
 			}})
 		case strings.HasPrefix(p, "/api/v1/checklist_items/") && strings.HasSuffix(p, "/notes"):
 			writeJSON(w, 200, map[string]any{"notes": ""})
+		case strings.HasPrefix(p, "/api/v1/checklist_items/"):
+			// toggle or plain update — both return the item envelope.
+			writeJSON(w, 200, map[string]any{"checklist_item": map[string]any{
+				"id": 1, "title": "x", "completed": false, "position": 0,
+				"has_notes": false, "last_actor": nil,
+			}})
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
 			w.WriteHeader(500)
@@ -610,6 +878,24 @@ func TestHeaderInvariants(t *testing.T) {
 	}
 	if _, err := authed.GetNotes(context.Background(), "9"); err != nil {
 		t.Fatalf("GetNotes: %v", err)
+	}
+	if _, err := authed.CreateTask(context.Background(), map[string]any{"title": "t"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := authed.UpdateTask(context.Background(), "1", map[string]any{"title": "t"}); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, err := authed.CreateChecklistItem(context.Background(), "1", map[string]any{"title": "x"}); err != nil {
+		t.Fatalf("CreateChecklistItem: %v", err)
+	}
+	if _, err := authed.ToggleChecklistItem(context.Background(), "1"); err != nil {
+		t.Fatalf("ToggleChecklistItem: %v", err)
+	}
+	if _, err := authed.UpdateChecklistItem(context.Background(), "1", map[string]any{"title": "x"}); err != nil {
+		t.Fatalf("UpdateChecklistItem: %v", err)
+	}
+	if _, err := authed.SetNotes(context.Background(), "9", "x"); err != nil {
+		t.Fatalf("SetNotes: %v", err)
 	}
 
 	for _, r := range ts.Requests() {
