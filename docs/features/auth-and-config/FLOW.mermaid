@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant U as User
+    participant C as sprawl CLI
+    participant S as sprawl API
+    participant B as Browser
+
+    U->>C: sprawl login
+    C->>S: POST /api/auth/device
+    S-->>C: device_code, user_code, verification_uri_complete, interval, expires_in
+    C-->>U: "open <url>, enter <user_code>"
+    U->>B: Open URL, approve
+    B->>S: Approve grant
+    loop every `interval` seconds
+        C->>S: POST /api/auth/device/token {device_code}
+        S-->>C: 400 authorization_pending OR 200 {token}
+    end
+    C->>C: write token to config.toml (0600)
+    C-->>U: reminder: export SPRAWL_AGENT_SECRET
