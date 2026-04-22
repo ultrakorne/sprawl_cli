@@ -14,6 +14,12 @@ When a command fails in `json` or `toon` mode, the error is rendered as a struct
 
 `http_status` is omitted for errors that never made it to the wire (e.g. missing agent secret). In `text` mode, errors go to stderr and nothing is written to stdout.
 
+When the server responds with the shared changeset fallback shape `{"errors": {...}}` (used for validation failures like missing / invalid fields), the CLI emits `error: "invalid"` alongside a `details` field carrying the raw errors map — so agents can act on per-field messages without re-parsing a JSON-in-string blob:
+
+```json
+{"status": "error", "http_status": 422, "error": "invalid", "details": {"title": ["can't be blank"]}}
+```
+
 ## Precedence
 
 Format resolution: `--format` flag → `SPRAWL_OUTPUT` env → `toon` default. Whitespace and case are normalised; invalid values return an error (no silent fallback).

@@ -271,7 +271,6 @@ func TestSetTheme_ErrorMatrix(t *testing.T) {
 		{"forbidden (non-owner)", 403, "forbidden", "forbidden"},
 		{"invalid_agent_secret", 403, "invalid_agent_secret", "invalid_agent_secret"},
 		{"missing_bearer", 401, "missing_bearer", "missing_bearer"},
-		{"theme_required", 422, "theme_required", "theme_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

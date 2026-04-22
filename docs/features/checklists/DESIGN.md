@@ -18,6 +18,13 @@ Both hit `PATCH /api/v1/checklist_items/:id/completed` with body `{"completed": 
 ### `checklist update <item_id>`
 `PATCH /api/v1/checklist_items/:id` body `{"checklist_item":{…}}`. `--title` / `--notes` / `--from-json`. Completion isn't mutable here — use `check` / `uncheck`.
 
+## Error shapes
+
+Task / checklist create / update endpoints wrap server-side validation:
+
+- Non-object nested body (e.g. `{"task": "foo"}` or `{"checklist_item": []}`) → 422 `invalid_body`. The CLI always wraps attrs in a JSON object, so this is a guard for malformed external payloads rather than something `sprawl` itself produces.
+- Changeset failures (missing required field, etc.) → shared fallback shape `{"errors": {...}}` with no top-level `error` code; `reportErr` surfaces these as `error: "invalid"` + `details: <errors>` in json / toon output.
+
 ### `note show <item_id>`
 `GET /api/v1/checklist_items/:id/notes`. Text fallback is the raw notes blob so it pipes cleanly into `less` / `rg`. Empty notes is a valid success.
 

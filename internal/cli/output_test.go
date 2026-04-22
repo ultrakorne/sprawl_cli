@@ -171,3 +171,35 @@ func TestReportErr_APIErrorWithoutCodeFallsBackToBody(t *testing.T) {
 		t.Fatalf("error field = %v, want body fallback", out["error"])
 	}
 }
+
+// TestReportErr_ChangesetErrorsSurfaceDetails covers the shared fallback shape
+// the server uses for changeset failures: `{"errors": {"field": [...]}}`.
+// APIError.Code is empty in that case; reportErr should decode the body and
+// emit error="invalid" + details=<errors map> rather than dumping the raw
+// JSON body into the error string.
+func TestReportErr_ChangesetErrorsSurfaceDetails(t *testing.T) {
+	withFormatFlag(t, "json")
+	var stdout, stderr bytes.Buffer
+	apiErr := &client.APIError{
+		Status: 422,
+		// Code is empty — the shared fallback shape doesn't set a top-level
+		// `error` field.
+		Body: `{"errors":{"title":["can't be blank"]}}`,
+	}
+	_ = reportErr(&stdout, &stderr, apiErr)
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	if out["error"] != "invalid" {
+		t.Fatalf("error = %v, want invalid", out["error"])
+	}
+	details, ok := out["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("details missing or wrong type: %+v", out["details"])
+	}
+	msgs, _ := details["title"].([]any)
+	if len(msgs) != 1 || msgs[0] != "can't be blank" {
+		t.Fatalf("details.title = %v", details["title"])
+	}
+}

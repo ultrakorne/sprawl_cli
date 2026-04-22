@@ -63,6 +63,20 @@ func renderPayload(out io.Writer, payload map[string]any, textFallback string) e
 	return nil
 }
 
+// parseErrorsDetails extracts the shared changeset fallback body:
+// `{"errors": {...}}`. Returns the raw errors value (usually a field→messages
+// map) so JSON / TOON can render it directly. Returns false when the body
+// isn't a JSON object or doesn't carry an `errors` field.
+func parseErrorsDetails(body string) (any, bool) {
+	var parsed struct {
+		Errors any `json:"errors"`
+	}
+	if json.Unmarshal([]byte(body), &parsed) != nil || parsed.Errors == nil {
+		return nil, false
+	}
+	return parsed.Errors, true
+}
+
 // reportErr renders err in the resolved format. Structured errors go to
 // stdout (agents parse stdout); human text goes to stderr. Returns the
 // original error so cobra's RunE exits non-zero.
@@ -83,10 +97,19 @@ func reportErr(stdout, stderr io.Writer, err error) error {
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) {
 		payload["http_status"] = apiErr.Status
-		if apiErr.Code != "" {
+		switch {
+		case apiErr.Code != "":
 			payload["error"] = apiErr.Code
-		} else {
-			payload["error"] = apiErr.Body
+		default:
+			// Shared changeset fallback shape: {"errors": {...}}. When present,
+			// tag the error as "invalid" and surface the structured field
+			// errors so agents don't have to re-parse a JSON-in-string blob.
+			if details, ok := parseErrorsDetails(apiErr.Body); ok {
+				payload["error"] = "invalid"
+				payload["details"] = details
+			} else {
+				payload["error"] = apiErr.Body
+			}
 		}
 	} else {
 		payload["error"] = err.Error()

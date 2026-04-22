@@ -15,7 +15,7 @@
 
 - **Typed structs never reach the renderer.** Client functions return `*client.Task` / `*client.ChecklistItem`, but the CLI layer converts them via `taskMap` / `checklistItemMap` / `checklistMaps` / `actorMap` / `projectMap` so the rendered shape is stable across all three formats. Null server fields (`project`, `created_by`, `last_actor`) surface as literal `nil` in TOON and `null` in JSON.
 - **`reportErr` always returns the original error unchanged** so cobra's `RunE` exits non-zero regardless of how the error was rendered.
-- **Unwrapping `*client.APIError`** populates `http_status` + `error` fields from `Code` (falling back to `Body` when `Code` is empty).
+- **Unwrapping `*client.APIError`** populates `http_status` + `error` fields from `Code`. When `Code` is empty, `reportErr` tries to decode the body as the shared changeset fallback `{"errors": {...}}`; if it matches, the envelope gains `error: "invalid"` + `details: <errors>`, otherwise the raw body goes into `error`.
 
 ## Dependencies
 

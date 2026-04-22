@@ -131,7 +131,10 @@ func (c *Client) GetTheme(ctx context.Context) (string, error) {
 // SetTheme PATCHes the active theme by id. The id must already be in
 // canonical kebab-case — the server does no normalization, so an unknown or
 // mis-cased id surfaces as APIError Status 404 Code "theme_not_found".
-// Non-owner agent → APIError Status 403 Code "forbidden".
+// Non-owner agent → APIError Status 403 Code "forbidden". Changeset
+// validation failures (e.g. missing / blank `theme` key) use the shared
+// fallback shape `{"errors": {...}}` — APIError.Code is empty in that case
+// and reportErr surfaces the details map.
 func (c *Client) SetTheme(ctx context.Context, id string) (string, error) {
 	body := map[string]string{"theme": id}
 	var env themeEnvelope
@@ -266,8 +269,14 @@ func (c *Client) GetNotes(ctx context.Context, itemID string) (string, error) {
 // CreateTask POSTs a new task. `attrs` is the inner task object — the wrapper
 // `{"task": {...}}` envelope is added here. The server accepts `title`,
 // `description`, and a top-level `project_id` key inside the inner object.
-// Validation (missing title, unknown project) happens server-side and surfaces
-// as APIError.
+// Validation happens server-side and surfaces as APIError:
+//   - malformed `project_id` (non-integer) → 422 Code "invalid_project_id"
+//   - unknown / unowned `project_id` → 404 Code "not_found" (runs before
+//     permission checks, so callers without create rights on a real project
+//     still see 404 when the project is not visible)
+//   - non-object nested `task` body → 422 Code "invalid_body"
+//   - changeset failures (e.g. missing title) → shared `{"errors": {...}}`
+//     fallback shape, surfaced by reportErr as error=invalid + details.
 func (c *Client) CreateTask(ctx context.Context, attrs map[string]any) (*Task, error) {
 	body := map[string]any{"task": attrs}
 	var env taskEnvelope

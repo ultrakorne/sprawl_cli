@@ -46,7 +46,7 @@ func mergeStringFlag(attrs map[string]any, key, value string) {
 
 // mergeProjectID parses the --project-id flag as an integer and merges it.
 // An empty flag is a no-op. Non-numeric input errors out so the user gets a
-// clean message rather than an opaque 404 from the server.
+// clean message rather than a 422 invalid_project_id from the server.
 func mergeProjectID(attrs map[string]any, value string) error {
 	if value == "" {
 		return nil
