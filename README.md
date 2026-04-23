@@ -51,7 +51,7 @@ sprawl_dev version           # confirms the URL baked into this build
 sprawl_dev login             # device flow: opens a URL, you approve in the browser
 ```
 
-`login` prints the settings URL (`<api-url>/settings`) first — that's where you copy your owner agent secret. Then it starts the device grant: open the verification link, approve in the browser, and the token lands in `~/.config/sprawl_dev/config.toml` at mode 0600. The agent secret is **not** stored there — you supply it per-shell via `SPRAWL_AGENT_SECRET` (or per-command via `-s` / `--agent-secret`).
+`login` prints the settings URL (`<api-url>/auth-settings`) first — that's where you copy your owner agent secret. Then it starts the device grant: open the verification link, approve in the browser, and the token lands in `~/.config/sprawl_dev/config.toml` at mode 0600. The agent secret is **not** stored there — you supply it per-shell via `SPRAWL_AGENT_SECRET` (or per-command via `-s` / `--agent-secret`).
 
 ```sh
 export SPRAWL_AGENT_SECRET=<your agent secret>

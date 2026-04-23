@@ -38,7 +38,7 @@ func TestOnApproved_PersistsAndPointsAtSettings(t *testing.T) {
 	for _, want := range []string{
 		"Logged in",
 		"SPRAWL_AGENT_SECRET",
-		"https://example.test/settings",
+		"https://example.test/auth-settings",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
@@ -93,7 +93,7 @@ func TestRunLogin_PromptsForSettingsBeforeDeviceFlow(t *testing.T) {
 	_ = runLogin(ctx, &buf) // non-nil error (context cancelled) is expected.
 
 	out := buf.String()
-	idxSettings := strings.Index(out, srv.URL+"/settings")
+	idxSettings := strings.Index(out, srv.URL+"/auth-settings")
 	idxAuthorise := strings.Index(out, "To authorise this device")
 	if idxSettings < 0 {
 		t.Fatalf("prelude missing settings URL:\n%s", out)

@@ -8,7 +8,7 @@ sprawl authenticates to the API with two credentials: a user **token** (obtained
 
 ### `sprawl login` (device flow)
 
-Interactive: prints the settings URL (`<api-url>/settings`) so the user can grab their owner agent secret, then prints the verification URL + user code and polls `/api/auth/device/token` at the server's `interval`. On success, writes the token to `config.toml` and repeats the settings-URL reminder alongside a `SPRAWL_AGENT_SECRET` export hint. Ctrl+C cancels cleanly through the root context.
+Interactive: prints the settings URL (`<api-url>/auth-settings`) so the user can grab their owner agent secret, then prints the verification URL + user code and polls `/api/auth/device/token` at the server's `interval`. On success, writes the token to `config.toml` and repeats the settings-URL reminder alongside a `SPRAWL_AGENT_SECRET` export hint. Ctrl+C cancels cleanly through the root context.
 
 ### Two-binary build
 
