@@ -29,26 +29,26 @@ source of truth for validation and permissions, so trust its error codes.
 Do **not** use this skill for one-off in-conversation todos — use TaskCreate
 for those. sprawl is for collaboration across sessions and agents.
 
-## Preflight (do this once per session before the first call)
+## Preflight
 
-```bash
-command -v sprawl
-printenv SPRAWL_AGENT_SECRET >/dev/null && echo have-secret || echo missing-secret
-sprawl health --format=json
-```
+**Skip it.** Just run the command the user asked for. 99 % of the time `sprawl`
+is on PATH, the secret is set, and the token is valid — probing first only
+burns tokens and a round-trip.
 
-Three possible outcomes:
+Only diagnose when a real call fails. Map the failure, then act:
 
-1. **All three succeed** (`sprawl health` prints `{"status":"ok"}`) — you're
-   ready. Skip to [Permission model](#permission-model-how-to-read-errors).
-2. **`sprawl` not on PATH**, or `health` returns `"not logged in"` — the user
-   hasn't installed or logged in yet. Read `SETUP.md` in this skill's
-   directory and walk the user through it. Do not try to run `sprawl login`
-   yourself; it's interactive.
-3. **Secret missing** or `health` returns a 401/403 error — ask the user to
-   set `SPRAWL_AGENT_SECRET` in this shell (or pass `-s <value>` per command).
-   The secret scopes what you are allowed to see and change. If they don't
-   have one yet, point them at `SETUP.md`.
+- **`sprawl: command not found`** — not installed. Read `SETUP.md` in this
+  skill's directory and walk the user through it.
+- **`SPRAWL_AGENT_SECRET not set`** (or similar pre-flight error from the CLI)
+  — ask the user to export it in this shell or pass `-s <value>` per command.
+  If they don't have one, point them at `SETUP.md`.
+- **HTTP 401** — token bad or missing. Ask the user to re-run `sprawl login`
+  (interactive — don't try it yourself).
+- **HTTP 403** — secret is scoped out of this action. Don't retry; tell the
+  user which action you lack permission for. See
+  [Permission model](#permission-model-how-to-read-errors).
+- **Anything ambiguous** — *then* run `sprawl health --format=json` to
+  separate "CLI/network broken" from "auth broken".
 
 **Never** write the secret to a file, commit it, echo it back to the user, or
 print it in a command you run. If you show a command using `-s`, redact the
@@ -235,6 +235,23 @@ sprawl checklist <id>
 ```
 
 Filter by what's visible — your key already scopes the list server-side.
+
+**Before you start an item, read its note.** The checklist response shows
+whether an item has a note but not its content. If `has_notes` is true (or
+the text output shows a note marker), pull it — that's where the previous
+agent or the human left the hand-off context:
+
+```bash
+sprawl note show <item_id>
+```
+
+Skipping this is how you redo work someone already did, or miss a blocker
+they flagged.
+
+**When you finish an item, check it off immediately** — see
+[§2](#2-make-progress-on-a-checklist). Don't wait until the end of the task:
+other agents and the human are watching the board live, and an unchecked
+item reads as "still to do".
 
 ### 2. Make progress on a checklist
 
