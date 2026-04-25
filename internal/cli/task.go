@@ -23,6 +23,7 @@ func newTaskCmd(opts *runtimeOpts) *cobra.Command {
 	cmd.AddCommand(newTaskSearchCmd(opts))
 	cmd.AddCommand(newTaskCreateCmd(opts))
 	cmd.AddCommand(newTaskUpdateCmd(opts))
+	cmd.AddCommand(newTaskDueCmd(opts))
 	return cmd
 }
 
@@ -171,6 +172,57 @@ func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, att
 		return reportErr(stdout, stderr, err, opts)
 	}
 	task, err := c.UpdateTask(ctx, id, attrs)
+	if err != nil {
+		return reportErr(stdout, stderr, err, opts)
+	}
+	payload := map[string]any{"task": taskMap(task)}
+	return renderPayload(stdout, payload, taskDetailText(task), opts)
+}
+
+// newTaskDueCmd wraps PATCH /api/v1/tasks/:id/due_date. The endpoint takes
+// one of four preset names ("yesterday" / "today" / "week") or null to
+// clear; the server resolves the preset against the user's timezone and
+// week_end_day setting and returns the same task envelope as `task show`.
+// The verb is separate from `task update` because the update changeset
+// ignores the due_date key — bundling them would mislead.
+func newTaskDueCmd(opts *runtimeOpts) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "due <id> <preset>",
+		Short: "Set or clear a task's due date (PATCH /api/v1/tasks/:id/due_date)",
+		Long: "Preset is one of: yesterday | today | week | none. " +
+			"`none` clears the due date. The server resolves the preset against " +
+			"the user's timezone and week_end_day setting; the response carries " +
+			"the resolved ISO date (or null) in `due_date`.",
+		Args: textArgs(cobra.ExactArgs(2)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTaskDue(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				args[0], args[1], opts)
+		},
+	}
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func runTaskDue(ctx context.Context, stdout, stderr io.Writer, id, preset string, opts *runtimeOpts) error {
+	// Local validation matches the --project-id pattern: bounded user input
+	// gets a clean message instead of a server 422 invalid_due round-trip.
+	var due *string
+	switch preset {
+	case "yesterday", "today", "week":
+		v := preset
+		due = &v
+	case "none":
+		due = nil
+	default:
+		return reportErr(stdout, stderr,
+			fmt.Errorf("preset must be one of: yesterday|today|week|none (got %q)", preset),
+			opts)
+	}
+	c, err := newAuthedClient(opts)
+	if err != nil {
+		return reportErr(stdout, stderr, err, opts)
+	}
+	task, err := c.SetTaskDueDate(ctx, id, due)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}

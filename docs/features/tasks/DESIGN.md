@@ -2,7 +2,7 @@
 
 ## Overview
 
-Five commands wrap the `/api/v1/tasks*` surface. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
+Six commands wrap the `/api/v1/tasks*` surface. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
 
 ## Components
 
@@ -28,8 +28,14 @@ Server-side `project_id` validation runs before permission checks:
 ### `task update <id>`
 `PATCH /api/v1/tasks/:id` body `{"task":{…}}`. `--title` / `--description` / `--from-json` (no `--project-id` — the server's update changeset ignores it). `--description ""` is treated as an explicit clear via `cmd.Flags().Changed("description")`, not as "flag unset".
 
+### `task due <id> <preset>`
+`PATCH /api/v1/tasks/:id/due_date` body `{"due": "<preset>" | null}`. Positional preset, validated locally — one of `yesterday` / `today` / `week` / `none`. `none` wires as JSON null and clears the due date; the other three are passed through verbatim and resolved server-side against the user's timezone and `week_end_day` setting. Response is the same `{"task": {...}}` envelope as `task show`, with `due_date` carrying the resolved ISO date (or null). Server errors: 422 `invalid_due` (only reachable through a CLI bug, since presets are filtered locally), 404 `not_found` (task not visible to the caller), 403 `forbidden` (no `:write` on the task), 401 `unauthenticated`.
+
 ## Design Decisions
 
 - **No `--project-id` on update**: server-side changeset ignores it; surfacing it would mislead.
 - **Empty-attrs rejected locally**: prevents no-op POSTs that would otherwise waste a round-trip.
 - **`--description ""` clears**: idiomatic for agents wanting explicit empty, distinguished from the flag being unset.
+- **`task due` is a separate verb**: the update changeset ignores `due_date`, so accepting `--due` on `task update` would silently no-op. The dedicated route also takes a preset name (write-only sugar), not a date — bundling it with `--title` / `--description` would mix two write modes.
+- **Preset validated in the CLI**: bounded enum, matches the `--project-id` precedent — clean local error beats a server 422 round-trip.
+- **`none` instead of `--clear`**: keeps the surface positional-only and parallels the read shape (server returns `null` for cleared dates).

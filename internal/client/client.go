@@ -331,6 +331,23 @@ func (c *Client) UpdateTask(ctx context.Context, id string, attrs map[string]any
 	return env.Task, nil
 }
 
+// SetTaskDueDate PATCHes a preset due date. due=nil clears the due date.
+// Server accepts "yesterday" | "today" | "week" | nil and resolves the
+// preset against the user's timezone and week_end_day setting; anything
+// else surfaces as APIError Status 422 Code "invalid_due". 404 / 403 / 401
+// use the standard envelope. Response body is the same task envelope as
+// GET /api/v1/tasks/:id, so the resolved ISO date lands in Task.DueDate.
+func (c *Client) SetTaskDueDate(ctx context.Context, id string, due *string) (*Task, error) {
+	// nil pointer marshals as JSON null, which is the wire signal to clear.
+	body := map[string]any{"due": due}
+	var env taskEnvelope
+	path := "/api/v1/tasks/" + url.PathEscape(id) + "/due_date"
+	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
+		return nil, err
+	}
+	return env.Task, nil
+}
+
 // CreateChecklistItem POSTs a new item under a task. Body envelope is
 // `{"checklist_item": {...}}`; response is the same envelope.
 func (c *Client) CreateChecklistItem(ctx context.Context, taskID string, attrs map[string]any) (*ChecklistItem, error) {

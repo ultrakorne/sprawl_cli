@@ -214,6 +214,107 @@ func TestRunTaskShow_JSONEnvelope(t *testing.T) {
 	}
 }
 
+// -- runTaskDue -------------------------------------------------------------
+
+func TestRunTaskDue_SetsToday(t *testing.T) {
+	var gotBody []byte
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/42/due_date" || r.Method != http.MethodPatch {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": map[string]any{
+				"id": 42, "title": "hello", "description": "", "status": "in_progress",
+				"due_date": "2026-04-25", "project": nil,
+				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"created_by":         nil, "last_actor": nil,
+			},
+		})
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runTaskDue(context.Background(), &stdout, &stderr, "42", "today", fx.Opts); err != nil {
+		t.Fatalf("runTaskDue: %v", err)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("decode sent body: %v (%q)", err, gotBody)
+	}
+	if sent["due"] != "today" {
+		t.Fatalf("sent due = %v, want %q", sent["due"], "today")
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	task, _ := out["task"].(map[string]any)
+	if task == nil || task["due_date"] != "2026-04-25" {
+		t.Fatalf("rendered task = %+v", out["task"])
+	}
+}
+
+func TestRunTaskDue_ClearsWithNone(t *testing.T) {
+	var gotBody []byte
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/42/due_date" || r.Method != http.MethodPatch {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": map[string]any{
+				"id": 42, "title": "hello", "description": "", "status": "in_progress",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"created_by":         nil, "last_actor": nil,
+			},
+		})
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runTaskDue(context.Background(), &stdout, &stderr, "42", "none", fx.Opts); err != nil {
+		t.Fatalf("runTaskDue: %v", err)
+	}
+	// `none` must wire as a literal JSON null, with the key present — that's
+	// the signal the server uses to distinguish "clear" from "missing field".
+	var sent map[string]any
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("decode sent body: %v (%q)", err, gotBody)
+	}
+	if _, ok := sent["due"]; !ok {
+		t.Fatalf("sent body missing `due` key: %s", gotBody)
+	}
+	if sent["due"] != nil {
+		t.Fatalf("sent due = %v, want JSON null", sent["due"])
+	}
+}
+
+func TestRunTaskDue_RejectsUnknownPreset(t *testing.T) {
+	// Local validation must run before any HTTP call. The handler t.Errorf's
+	// if reached so a regression that punts validation to the server fails.
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP call: %s %s", r.Method, r.URL.Path)
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := runTaskDue(context.Background(), &stdout, &stderr, "42", "tomorrow", fx.Opts)
+	if err == nil {
+		t.Fatal("expected an error for unknown preset")
+	}
+	if !strings.Contains(err.Error(), "yesterday|today|week|none") {
+		t.Fatalf("error = %v, want it to list the four valid presets", err)
+	}
+	var out map[string]any
+	if jerr := json.Unmarshal(stdout.Bytes(), &out); jerr != nil {
+		t.Fatalf("not JSON: %v (%q)", jerr, stdout.String())
+	}
+	if out["status"] != "error" {
+		t.Fatalf("payload = %+v, want status:error", out)
+	}
+}
+
 // -- runTaskCreate ----------------------------------------------------------
 
 func TestRunTaskCreate_WiresEnvelope(t *testing.T) {

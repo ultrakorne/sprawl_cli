@@ -178,7 +178,20 @@ echo '{"title":"draft","project_id":42}' \
 # Update title (server ignores project_id on update):
 sprawl task update 17 --title "renamed"
 sprawl task update 17 --description ""        # explicit clear (not "flag unset")
+
+# Set / clear due date (separate route — `task update` ignores due_date).
+# Only do this when the user asked for it — see Guardrails below.
+sprawl task due 17 today                      # set due date (resolved in user TZ)
+sprawl task due 17 yesterday                  # backdate by one day
+sprawl task due 17 week                       # owner's configured week-end
+sprawl task due 17 none                       # clear due date
 ```
+
+`task due` takes a preset (`yesterday|today|week|none`) and the server
+resolves it against the user's timezone and `week_end_day` setting. Reads
+return the *resolved* ISO date in `due_date` — there's no echo of which
+preset is currently set, so if you need that, compute it locally by
+comparing the date against today / yesterday / the user's week-end.
 
 ### Writes — checklists
 
@@ -315,6 +328,14 @@ Finishing your slice and passing to another agent or the human:
 - **Never** retry `403` responses. Permission won't flip mid-session.
 - **Don't** use `task update` as a status channel. Use notes / checklist
   items.
+- **Don't set due dates the user didn't ask for.** `task due` is for when
+  the human explicitly tells you to schedule something (or you're acting
+  out a clearly scheduled instruction — "remind me about this Friday").
+  Don't infer due dates from urgency cues, don't backfill them on existing
+  tasks, and don't add them when creating a task on the user's behalf
+  unless they specified one. The due date is the owner's planning channel,
+  not an agent housekeeping field — leaving it blank is the correct
+  default.
 - **Don't** `--from-json` with untrusted input without reading it first — the
   file / stdin is parsed as the full task/item attrs map.
 - **Empty strings matter**: `--description ""` and `note set X ""` are
