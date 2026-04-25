@@ -109,8 +109,40 @@ func (c *Client) PollDeviceToken(ctx context.Context, deviceCode string) (string
 	return "", errors.New("device/token: empty response")
 }
 
-func (c *Client) Health(ctx context.Context) error {
-	return c.do(ctx, http.MethodGet, "/api/v1/health", nil, nil)
+// Agent is the caller's own identity as seen by the server. `default_permission`
+// is the key's baseline scope (`none` / `read` / `write` / `write_create`); per-
+// project overrides are listed separately in Whoami.ProjectPermissions.
+type Agent struct {
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	Emoji             string `json:"emoji"`
+	IsOwner           bool   `json:"is_owner"`
+	DefaultPermission string `json:"default_permission"`
+}
+
+// ProjectPermission is a per-project scope override that ranks strictly
+// higher than the agent's default. Owners and `write_create` defaults always
+// produce an empty override list server-side.
+type ProjectPermission struct {
+	ProjectID int64  `json:"project_id"`
+	Name      string `json:"name"`
+	Level     string `json:"level"`
+}
+
+// Whoami mirrors GET /api/v1/whoami. The wire payload also carries
+// `"status":"ok"`; we drop it on decode since it adds no information beyond
+// the 200.
+type Whoami struct {
+	Agent              Agent               `json:"agent"`
+	ProjectPermissions []ProjectPermission `json:"project_permissions"`
+}
+
+func (c *Client) Whoami(ctx context.Context) (*Whoami, error) {
+	var w Whoami
+	if err := c.do(ctx, http.MethodGet, "/api/v1/whoami", nil, &w); err != nil {
+		return nil, err
+	}
+	return &w, nil
 }
 
 // themeEnvelope matches the flat wire shape — `{"theme": "<id>"}` — used by

@@ -34,7 +34,7 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newLoginCmd())
-	root.AddCommand(newHealthCmd(opts))
+	root.AddCommand(newWhoamiCmd(opts))
 	root.AddCommand(newThemeCmd(opts))
 	root.AddCommand(newTaskCmd(opts))
 	root.AddCommand(newChecklistCmd(opts))

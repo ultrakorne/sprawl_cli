@@ -20,7 +20,7 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 | [tasks](features/tasks/INDEX.md) | `task list / show / search / create / update`. |
 | [checklists](features/checklists/INDEX.md) | `checklist list / add / check / uncheck / update` and `note show / set`. |
 | [theme](features/theme/INDEX.md) | `theme get / set` — owner-only UI theme. |
-| [health](features/health/INDEX.md) | `health` liveness check with pre-flight credential validation. |
+| [whoami](features/whoami/INDEX.md) | `whoami` identity probe — caller agent + elevated project permissions. |
 
 ## Quick Links
 

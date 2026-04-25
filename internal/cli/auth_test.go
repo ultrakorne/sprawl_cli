@@ -153,7 +153,7 @@ func TestNewAuthedClient_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","agent":{"id":1,"name":"x","emoji":"","is_owner":true,"default_permission":"write_create"},"project_permissions":[]}`))
 	}))
 	t.Cleanup(ts.Close)
 	t.Setenv("SPRAWL_API_URL", ts.URL)
@@ -166,7 +166,7 @@ func TestNewAuthedClient_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAuthedClient: %v", err)
 	}
-	if err := c.Health(context.Background()); err != nil {
-		t.Fatalf("Health: %v", err)
+	if _, err := c.Whoami(context.Background()); err != nil {
+		t.Fatalf("Whoami: %v", err)
 	}
 }

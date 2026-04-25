@@ -4,7 +4,7 @@ HTTP client. Single static Go binary (two variants from one codebase), JSON on t
 
 ## Documentation
 
-Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, checklists, theme, health).
+Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, checklists, theme, whoami).
 
 ## Stack
 

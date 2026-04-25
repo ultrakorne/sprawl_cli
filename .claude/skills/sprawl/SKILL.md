@@ -47,8 +47,9 @@ Only diagnose when a real call fails. Map the failure, then act:
 - **HTTP 403** — secret is scoped out of this action. Don't retry; tell the
   user which action you lack permission for. See
   [Permission model](#permission-model-how-to-read-errors).
-- **Anything ambiguous** — *then* run `sprawl health --format=json` to
-  separate "CLI/network broken" from "auth broken".
+- **Anything ambiguous** — *then* run `sprawl whoami --format=json` to
+  separate "CLI/network broken" from "auth broken". A 200 also tells you
+  which agent and scope the server thinks you are.
 
 **Never** write the secret to a file, commit it, echo it back to the user, or
 print it in a command you run. If you show a command using `-s`, redact the
@@ -216,7 +217,7 @@ local error before any HTTP call.
 
 ```bash
 sprawl version                                # prints version + baked-in API URL
-sprawl health --format=json                   # liveness + auth pipeline
+sprawl whoami                                 # who am I + elevated project permissions (also a liveness probe)
 sprawl theme get                              # read active UI theme
 sprawl theme set tokyo-night                  # owner-only; unknown id → 404
 ```
@@ -276,11 +277,14 @@ prior content (`note set` is a full replace):
 
 ```bash
 prev=$(sprawl note show 203)
-printf '%s\n\n---\n\n%s\n' "$prev" "new status from <your-agent-name>: blocked on PR #418" \
+printf '%s\n\n---\n\n%s\n' "$prev" "blocked on PR #418" \
   | sprawl note set 203 --stdin
 ```
 
-Sign your additions so the human can tell agents apart.
+**Don't sign your edits.** No "done by <agent-name>", no "— claude". The
+server already records the last actor on each note / checklist item, and
+`sprawl whoami` resolves any agent secret to its identity. Manual signatures
+just add noise the human has to skim past.
 
 ### 4. Create a new task on behalf of the user
 

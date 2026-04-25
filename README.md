@@ -55,7 +55,7 @@ sprawl_dev login             # device flow: opens a URL, you approve in the brow
 
 ```sh
 export SPRAWL_AGENT_SECRET=<your agent secret>
-sprawl_dev health            # should print "status: ok"
+sprawl_dev whoami            # prints your agent name + elevated project permissions
 ```
 
 Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
@@ -66,7 +66,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 |---|---|
 | `sprawl version` | Prints the version and the baked-in API URL. |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
-| `sprawl health` | Calls `GET /api/v1/health` to verify the full auth pipeline. |
+| `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent and list any project-scoped permissions that elevate the default. Doubles as an auth-pipeline check. |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
 | `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only. |
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
@@ -128,7 +128,7 @@ Wire body is `{"checklist_item": {"title": "...", "notes": "..."}}`. Server assi
 ```sh
 sprawl checklist add 17 --title "write migration"
 sprawl checklist add 17 --title "deploy" --notes "run after backfill"
-echo '{"title":"smoke test","notes":"curl /health"}' | sprawl checklist add 17 --from-json -
+echo '{"title":"smoke test","notes":"hit /whoami"}' | sprawl checklist add 17 --from-json -
 ```
 
 ### `checklist update <item_id>` / `check` / `uncheck`

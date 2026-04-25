@@ -142,17 +142,43 @@ func TestPollDeviceToken_EmptyBodyStillErrors(t *testing.T) {
 
 // -- Authed endpoints -------------------------------------------------------
 
-func TestHealth_Success(t *testing.T) {
+func TestWhoami_Success(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok"})
+		writeJSON(w, 200, map[string]any{
+			"status": "ok",
+			"agent": map[string]any{
+				"id": 7, "name": "scout", "emoji": "🤖",
+				"is_owner": false, "default_permission": "read",
+			},
+			"project_permissions": []any{
+				map[string]any{"project_id": 3, "name": "Foo", "level": "write"},
+				map[string]any{"project_id": 5, "name": "Bar", "level": "write_create"},
+			},
+		})
 	})
 	c := NewAuthed("tok", "sec")
-	if err := c.Health(context.Background()); err != nil {
-		t.Fatalf("Health: %v", err)
+	w, err := c.Whoami(context.Background())
+	if err != nil {
+		t.Fatalf("Whoami: %v", err)
+	}
+	if w.Agent.ID != 7 || w.Agent.Name != "scout" || w.Agent.DefaultPermission != "read" {
+		t.Fatalf("agent = %+v", w.Agent)
+	}
+	if w.Agent.IsOwner {
+		t.Fatalf("expected non-owner, got is_owner=true")
+	}
+	if len(w.ProjectPermissions) != 2 {
+		t.Fatalf("got %d project permissions, want 2", len(w.ProjectPermissions))
+	}
+	if w.ProjectPermissions[0].Name != "Foo" || w.ProjectPermissions[0].Level != "write" {
+		t.Fatalf("perm[0] = %+v", w.ProjectPermissions[0])
+	}
+	if w.ProjectPermissions[1].ProjectID != 5 || w.ProjectPermissions[1].Level != "write_create" {
+		t.Fatalf("perm[1] = %+v", w.ProjectPermissions[1])
 	}
 	reqs := ts.Requests()
-	if len(reqs) != 1 {
-		t.Fatalf("expected 1 request, got %d", len(reqs))
+	if len(reqs) != 1 || reqs[0].Method != "GET" || reqs[0].Path != "/api/v1/whoami" {
+		t.Fatalf("request = %+v", reqs[0])
 	}
 	if reqs[0].Authorization != "Bearer tok" {
 		t.Fatalf("Authorization = %q", reqs[0].Authorization)
@@ -162,12 +188,38 @@ func TestHealth_Success(t *testing.T) {
 	}
 }
 
-func TestHealth_401MissingBearer(t *testing.T) {
+func TestWhoami_OwnerEmptyPermissions(t *testing.T) {
+	// Owners (and write_create defaults) always get an empty project list
+	// per the server contract — no overrides can outrank them.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"status": "ok",
+			"agent": map[string]any{
+				"id": 1, "name": "owner", "emoji": "👑",
+				"is_owner": true, "default_permission": "write_create",
+			},
+			"project_permissions": []any{},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	w, err := c.Whoami(context.Background())
+	if err != nil {
+		t.Fatalf("Whoami: %v", err)
+	}
+	if !w.Agent.IsOwner {
+		t.Fatalf("expected is_owner=true")
+	}
+	if len(w.ProjectPermissions) != 0 {
+		t.Fatalf("owner perms should be empty, got %+v", w.ProjectPermissions)
+	}
+}
+
+func TestWhoami_401MissingBearer(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "missing_bearer")
 	})
 	c := NewAuthed("tok", "sec")
-	err := c.Health(context.Background())
+	_, err := c.Whoami(context.Background())
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		t.Fatalf("want APIError, got %T: %v", err, err)
@@ -177,12 +229,12 @@ func TestHealth_401MissingBearer(t *testing.T) {
 	}
 }
 
-func TestHealth_403InvalidAgentSecret(t *testing.T) {
+func TestWhoami_403InvalidAgentSecret(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "invalid_agent_secret")
 	})
 	c := NewAuthed("tok", "sec")
-	err := c.Health(context.Background())
+	_, err := c.Whoami(context.Background())
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		t.Fatalf("want APIError, got %T", err)
@@ -839,8 +891,15 @@ func TestHeaderInvariants(t *testing.T) {
 			})
 		case p == "/api/auth/device/token":
 			writeJSON(w, 200, map[string]string{"token": "tok"})
-		case p == "/api/v1/health":
-			writeJSON(w, 200, map[string]string{"status": "ok"})
+		case p == "/api/v1/whoami":
+			writeJSON(w, 200, map[string]any{
+				"status": "ok",
+				"agent": map[string]any{
+					"id": 1, "name": "x", "emoji": "",
+					"is_owner": true, "default_permission": "write_create",
+				},
+				"project_permissions": []any{},
+			})
 		case p == "/api/v1/settings/theme":
 			writeJSON(w, 200, map[string]string{"theme": "tokyo-night"})
 		case p == "/api/v1/tasks":
@@ -889,8 +948,8 @@ func TestHeaderInvariants(t *testing.T) {
 	}
 
 	authed := NewAuthed("the-token", "the-secret")
-	if err := authed.Health(context.Background()); err != nil {
-		t.Fatalf("Health: %v", err)
+	if _, err := authed.Whoami(context.Background()); err != nil {
+		t.Fatalf("Whoami: %v", err)
 	}
 	if _, err := authed.GetTheme(context.Background()); err != nil {
 		t.Fatalf("GetTheme: %v", err)
@@ -971,7 +1030,7 @@ func TestServerClosed_ReturnsNetworkError(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
 	ts.Server.Close() // hang up before the request
 	c := NewAuthed("tok", "sec")
-	err := c.Health(context.Background())
+	_, err := c.Whoami(context.Background())
 	if err == nil {
 		t.Fatal("expected network error")
 	}
@@ -988,7 +1047,7 @@ func TestServer5xx_ReturnsAPIError(t *testing.T) {
 		_, _ = w.Write([]byte("boom"))
 	})
 	c := NewAuthed("tok", "sec")
-	err := c.Health(context.Background())
+	_, err := c.Whoami(context.Background())
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		t.Fatalf("want APIError, got %T", err)

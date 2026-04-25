@@ -104,8 +104,8 @@ With the binary installed, login complete, and `SPRAWL_AGENT_SECRET`
 exported:
 
 ```bash
-sprawl health --format=json
-# {"status":"ok"}
+sprawl whoami --format=json
+# {"status":"ok","agent":{"id":…,"name":"…","emoji":"…","is_owner":…,"default_permission":"…"},"project_permissions":[…]}
 ```
 
 A non-ok response here tells you what's still missing:
@@ -115,10 +115,10 @@ A non-ok response here tells you what's still missing:
 | `command not found: sprawl` | Step 1 wasn't done, or binary isn't on PATH. |
 | `"not logged in, run sprawl login"` | Step 2: the token is absent or stale. |
 | `http_status: 401` | Token is wrong / expired — re-run `sprawl login`. |
-| `http_status: 403` | Login is fine but the secret has no scope on `/health` — unlikely unless the secret is wrong. |
+| `http_status: 403` | Token is fine but the agent secret is missing / wrong / revoked (`agent_secret_required`, `invalid_agent_secret`, `agent_key_revoked`). |
 | Pre-flight "missing agent secret" | Step 4: env var isn't exported in this shell. |
 
-Once `health` returns ok, return to `SKILL.md` and proceed with the task the
+Once `whoami` returns ok, return to `SKILL.md` and proceed with the task the
 user actually asked about.
 
 ## Config file (reference only)
