@@ -185,6 +185,8 @@ sprawl task due 17 today                      # set due date (resolved in user T
 sprawl task due 17 yesterday                  # backdate by one day
 sprawl task due 17 week                       # owner's configured week-end
 sprawl task due 17 none                       # clear due date
+
+sprawl task delete 17                         # soft-delete; 404 from server treated as success (idempotent)
 ```
 
 `task due` takes a preset (`yesterday|today|week|none`) and the server
@@ -205,6 +207,7 @@ sprawl checklist add <task_id> --title "deploy" --notes "run after backfill"
 sprawl checklist check <item_id>              # idempotent
 sprawl checklist uncheck <item_id>            # idempotent
 sprawl checklist update <item_id> --title "renamed"
+sprawl checklist delete <item_id>             # hard-delete; idempotent on 404
 ```
 
 Use `check` / `uncheck` for completion — `update` doesn't mutate it. The split
@@ -328,6 +331,10 @@ Finishing your slice and passing to another agent or the human:
 - **Never** retry `403` responses. Permission won't flip mid-session.
 - **Don't** use `task update` as a status channel. Use notes / checklist
   items.
+- **Don't delete tasks or checklist items the user didn't ask you to remove.**
+  `task delete` is a soft-delete and can only be undone via the LiveView
+  trash bin (no API to restore). `checklist delete` is a hard delete and
+  has no undo. When in doubt, leave a note on the item instead.
 - **Don't set due dates the user didn't ask for.** `task due` is for when
   the human explicitly tells you to schedule something (or you're acting
   out a clearly scheduled instruction — "remind me about this Friday").

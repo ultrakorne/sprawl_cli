@@ -412,6 +412,24 @@ func (c *Client) SetNotes(ctx context.Context, itemID, notes string) (string, er
 	return env.Notes, nil
 }
 
+// DeleteTask soft-deletes a task. The server returns 204 No Content on
+// success; the row stays in the DB with hidden=true and deleted_at set, and
+// neighbor cards are reflowed atomically. 404 / 403 / 401 surface as
+// APIError; the CLI layer is responsible for translating 404 "not_found"
+// into idempotent success when desired.
+func (c *Client) DeleteTask(ctx context.Context, id string) error {
+	path := "/api/v1/tasks/" + url.PathEscape(id)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// DeleteChecklistItem hard-deletes a checklist item. The server returns 204
+// No Content on success and recomputes the parent task's completed_at.
+// Same 204/404 contract as DeleteTask.
+func (c *Client) DeleteChecklistItem(ctx context.Context, itemID string) error {
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
 // APIError represents a non-2xx response from the server.
 type APIError struct {
 	Status int

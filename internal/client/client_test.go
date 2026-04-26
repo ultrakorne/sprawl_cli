@@ -966,6 +966,76 @@ func TestSetNotes_EmptyStringAccepted(t *testing.T) {
 	}
 }
 
+func TestDeleteTask_Success204(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	c := NewAuthed("tok", "sec")
+	if err := c.DeleteTask(context.Background(), "42"); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "DELETE" || r.Path != "/api/v1/tasks/42" {
+		t.Fatalf("request = %+v", r)
+	}
+	if len(r.Body) != 0 {
+		t.Fatalf("DELETE should send no body; got %q", r.Body)
+	}
+	if r.ContentType != "" {
+		t.Fatalf("DELETE should not set Content-Type without a body; got %q", r.ContentType)
+	}
+}
+
+func TestDeleteTask_404ReturnsAPIError(t *testing.T) {
+	// The client stays faithful to the server: 404 surfaces as APIError so
+	// the CLI layer can decide whether to translate it into idempotent
+	// success.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 404, "not_found")
+	})
+	c := NewAuthed("tok", "sec")
+	err := c.DeleteTask(context.Background(), "999")
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T (%v)", err, err)
+	}
+	if ae.Status != 404 || ae.Code != "not_found" {
+		t.Fatalf("APIError = %+v, want 404/not_found", ae)
+	}
+}
+
+func TestDeleteChecklistItem_Success204(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	c := NewAuthed("tok", "sec")
+	if err := c.DeleteChecklistItem(context.Background(), "8"); err != nil {
+		t.Fatalf("DeleteChecklistItem: %v", err)
+	}
+	r := ts.Requests()[0]
+	if r.Method != "DELETE" || r.Path != "/api/v1/checklist_items/8" {
+		t.Fatalf("request = %+v", r)
+	}
+	if len(r.Body) != 0 {
+		t.Fatalf("DELETE should send no body; got %q", r.Body)
+	}
+}
+
+func TestDeleteChecklistItem_404ReturnsAPIError(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, 404, "not_found")
+	})
+	c := NewAuthed("tok", "sec")
+	err := c.DeleteChecklistItem(context.Background(), "999")
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T (%v)", err, err)
+	}
+	if ae.Status != 404 || ae.Code != "not_found" {
+		t.Fatalf("APIError = %+v, want 404/not_found", ae)
+	}
+}
+
 // -- Header invariants ------------------------------------------------------
 
 // TestHeaderInvariants asserts the security-adjacent contract: every
@@ -1024,6 +1094,13 @@ func TestHeaderInvariants(t *testing.T) {
 				writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
 			}
 		case strings.HasPrefix(p, "/api/v1/tasks/"):
+			// DELETE returns 204 with no body; everything else returns the
+			// task envelope. Branching on method keeps each endpoint's wire
+			// contract honest in the header-invariant fixture.
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNoContent)
+				break
+			}
 			writeJSON(w, 200, map[string]any{"task": map[string]any{
 				"id": 1, "title": "t", "description": "", "status": "done",
 				"due_date": nil, "project": nil,
@@ -1033,7 +1110,12 @@ func TestHeaderInvariants(t *testing.T) {
 		case strings.HasPrefix(p, "/api/v1/checklist_items/") && strings.HasSuffix(p, "/notes"):
 			writeJSON(w, 200, map[string]any{"notes": ""})
 		case strings.HasPrefix(p, "/api/v1/checklist_items/"):
-			// set-completed or plain update — both return the item envelope.
+			// DELETE returns 204; set-completed / plain update return the
+			// item envelope.
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNoContent)
+				break
+			}
 			writeJSON(w, 200, map[string]any{"checklist_item": map[string]any{
 				"id": 1, "title": "x", "completed": false, "position": 0,
 				"has_notes": false, "last_actor": nil,
@@ -1094,6 +1176,12 @@ func TestHeaderInvariants(t *testing.T) {
 	}
 	if _, err := authed.SetNotes(context.Background(), "9", "x"); err != nil {
 		t.Fatalf("SetNotes: %v", err)
+	}
+	if err := authed.DeleteTask(context.Background(), "1"); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if err := authed.DeleteChecklistItem(context.Background(), "1"); err != nil {
+		t.Fatalf("DeleteChecklistItem: %v", err)
 	}
 
 	for _, r := range ts.Requests() {

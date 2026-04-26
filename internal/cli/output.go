@@ -77,6 +77,18 @@ func parseErrorsDetails(body string) (any, bool) {
 	return parsed.Errors, true
 }
 
+// isNotFoundAPIError reports whether err is a *client.APIError with HTTP
+// 404 and the server's "not_found" code. Used by delete commands to make
+// the CLI idempotent: a second DELETE on a missing resource is success.
+// Other 404s (e.g. "theme_not_found") still surface as errors.
+func isNotFoundAPIError(err error) bool {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Status == 404 && apiErr.Code == "not_found"
+}
+
 // reportErr renders err in the resolved format. Structured errors go to
 // stdout (agents parse stdout); human text goes to stderr. Returns the
 // original error so cobra's RunE exits non-zero.

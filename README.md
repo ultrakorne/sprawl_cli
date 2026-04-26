@@ -74,15 +74,17 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
 | `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. |
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
+| `sprawl task delete <id>` | Soft-deletes a task. Server reflows neighbor cards on the canvas. A 404 (already deleted or never visible) is treated as success — the CLI is idempotent. There is no API to restore a soft-deleted task. |
 | `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. |
 | `sprawl checklist add <task_id>` | Adds an item. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). |
 | `sprawl checklist check <item_id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
 | `sprawl checklist uncheck <item_id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
 | `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `check` / `uncheck` for completion. |
+| `sprawl checklist delete <item_id>` | Hard-deletes a checklist item. May flip the parent task's `completed_at`. Idempotent on 404 like `task delete`. |
 | `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. Empty string is a legitimate success. |
 | `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
 
-All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`).
+All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`). The two delete commands return `{id:"…", deleted:true}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
 
 ## Write command examples
 

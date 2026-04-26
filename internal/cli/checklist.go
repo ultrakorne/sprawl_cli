@@ -36,6 +36,7 @@ func newChecklistCmd(opts *runtimeOpts) *cobra.Command {
 	cmd.AddCommand(newChecklistCheckCmd(opts))
 	cmd.AddCommand(newChecklistUncheckCmd(opts))
 	cmd.AddCommand(newChecklistUpdateCmd(opts))
+	cmd.AddCommand(newChecklistDeleteCmd(opts))
 	return cmd
 }
 
@@ -154,6 +155,46 @@ func newChecklistUpdateCmd(opts *runtimeOpts) *cobra.Command {
 	bindChecklistWriteFlags(cmd, &f)
 	cmd.SilenceErrors = true
 	return cmd
+}
+
+// newChecklistDeleteCmd wraps DELETE /api/v1/checklist_items/:id. Hard
+// delete — the row goes away and the parent task's completed_at may flip
+// (server recomputes). 404 not_found is treated as success so retries are
+// no-ops; see runChecklistDelete.
+func newChecklistDeleteCmd(opts *runtimeOpts) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete <item_id>",
+		Short: "Hard-delete a checklist item (DELETE /api/v1/checklist_items/:id)",
+		Long: "Hard-delete a checklist item from its parent task. The server " +
+			"recomputes the parent task's completed_at (it may flip to done if " +
+			"this was the last unchecked item, or clear if no items remain) and " +
+			"broadcasts checklist_item_deleted on PubSub. A 404 (item already " +
+			"gone or not visible) is treated as success but the payload sets " +
+			"`existed: false` so callers can distinguish a real delete from a " +
+			"no-op retry / typo'd id.",
+		Args: textArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChecklistDelete(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
+		},
+	}
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func runChecklistDelete(ctx context.Context, stdout, stderr io.Writer, itemID string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
+	if err != nil {
+		return reportErr(stdout, stderr, err, opts)
+	}
+	existed := true
+	if err := c.DeleteChecklistItem(ctx, itemID); err != nil {
+		if !isNotFoundAPIError(err) {
+			return reportErr(stdout, stderr, err, opts)
+		}
+		existed = false
+	}
+	payload := map[string]any{"id": itemID, "deleted": true, "existed": existed}
+	return renderPayload(stdout, payload, deletedText("checklist item", itemID, existed), opts)
 }
 
 func runChecklistAdd(ctx context.Context, stdout, stderr io.Writer, taskID string, attrs map[string]any, opts *runtimeOpts) error {

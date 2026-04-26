@@ -18,6 +18,9 @@ Both hit `PATCH /api/v1/checklist_items/:id/completed` with body `{"completed": 
 ### `checklist update <item_id>`
 `PATCH /api/v1/checklist_items/:id` body `{"checklist_item":{…}}`. `--title` / `--notes` / `--from-json`. Completion isn't mutable here — use `check` / `uncheck`.
 
+### `checklist delete <item_id>`
+`DELETE /api/v1/checklist_items/:id`. **Hard delete** — the row is removed from the database, not soft-deleted, and there is no undo. As a server-side side effect, the parent task's `completed_at` is recomputed in the same transaction: it flips to "done" if this was the last unchecked item, or clears if no items remain. Server broadcasts `checklist_item_deleted` on PubSub and returns 204 No Content; the CLI emits `{id: "<item_id>", deleted: true}` (json/toon) or `Deleted checklist item #<item_id>` (text). A 404 `not_found` is treated as success — repeated deletes and deletes against an id that never existed render the same payload. Other 4xx (401/403, malformed) surface through `reportErr`.
+
 ## Error shapes
 
 Task / checklist create / update endpoints wrap server-side validation:
@@ -36,3 +39,5 @@ Task / checklist create / update endpoints wrap server-side validation:
 - **`check` / `uncheck` instead of `toggle`**: agents don't reliably know current state. Explicit verbs match the server's explicit-bool endpoint and avoid a GET-then-PATCH race.
 - **Notes as a separate endpoint**: keeps list responses small when notes are large; makes clearing notes a distinct, auditable action.
 - **`note set` positional-or-stdin**: supports both interactive (`sprawl note set 8 "…"`) and piped (`cat draft.md | sprawl note set 8 --stdin`). Both paths at once is rejected locally.
+- **Hard delete with no undo (and 404 = success)**: parallels `task delete`'s idempotent contract for the same retry-friendly reason, but the destruction is real — there's no trash-bin equivalent for items, the row simply goes away. Callers that want the row preserved should `checklist uncheck` instead. The `completed_at` flip on the parent task is intentional: removing the last unchecked item legitimately means "all remaining items are done."
+- **Synthetic `{id, deleted: true}` payload on 204**: same reasoning as `task delete` — the server returns no body, but json / toon consumers always need a parseable envelope.

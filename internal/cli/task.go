@@ -24,6 +24,7 @@ func newTaskCmd(opts *runtimeOpts) *cobra.Command {
 	cmd.AddCommand(newTaskCreateCmd(opts))
 	cmd.AddCommand(newTaskUpdateCmd(opts))
 	cmd.AddCommand(newTaskDueCmd(opts))
+	cmd.AddCommand(newTaskDeleteCmd(opts))
 	return cmd
 }
 
@@ -201,6 +202,64 @@ func newTaskDueCmd(opts *runtimeOpts) *cobra.Command {
 	}
 	cmd.SilenceErrors = true
 	return cmd
+}
+
+// newTaskDeleteCmd wraps DELETE /api/v1/tasks/:id. The server soft-deletes
+// the task (row stays with hidden=true and deleted_at stamped) and reflows
+// neighboring cards atomically. We treat a 404 not_found as success so a
+// repeated delete is a no-op — see runTaskDelete.
+func newTaskDeleteCmd(opts *runtimeOpts) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete <id>",
+		Short: "Soft-delete a task (DELETE /api/v1/tasks/:id)",
+		Long: "Soft-delete a task. The server reflows neighbor cards on the " +
+			"canvas and broadcasts task_deleted on PubSub. There is currently no " +
+			"API to restore a soft-deleted task — only the LiveView trash bin. " +
+			"A 404 from the server (task already deleted or never visible) is " +
+			"treated as success so repeated deletes are no-ops, but the payload " +
+			"sets `existed: false` so callers can distinguish a real delete " +
+			"from a no-op retry / typo'd id.",
+		Args: textArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTaskDelete(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
+		},
+	}
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func runTaskDelete(ctx context.Context, stdout, stderr io.Writer, id string, opts *runtimeOpts) error {
+	c, err := newAuthedClient(opts)
+	if err != nil {
+		return reportErr(stdout, stderr, err, opts)
+	}
+	existed := true
+	if err := c.DeleteTask(ctx, id); err != nil {
+		if !isNotFoundAPIError(err) {
+			return reportErr(stdout, stderr, err, opts)
+		}
+		existed = false
+	}
+	payload := map[string]any{"id": id, "deleted": true, "existed": existed}
+	return renderPayload(stdout, payload, deletedText("task", id, existed), opts)
+}
+
+// deletedText is the shared text-fallback line for `task delete` and
+// `checklist delete`. existed=true ⇒ "Deleted <kind> #<id>"; existed=false
+// ⇒ "<Kind> #<id> already gone (no change)" so a typo or retry is visibly
+// distinct from a real delete in --format=text output.
+func deletedText(kind, id string, existed bool) string {
+	if existed {
+		return fmt.Sprintf("Deleted %s #%s", kind, id)
+	}
+	// Capitalize the first byte of `kind` for sentence start. All current
+	// callers pass ASCII ("task", "checklist item") so byte-level upper is
+	// safe and avoids pulling strings.Title (deprecated) or a unicode pkg.
+	upper := kind
+	if len(upper) > 0 && upper[0] >= 'a' && upper[0] <= 'z' {
+		upper = string(upper[0]-32) + upper[1:]
+	}
+	return fmt.Sprintf("%s #%s already gone (no change)", upper, id)
 }
 
 func runTaskDue(ctx context.Context, stdout, stderr io.Writer, id, preset string, opts *runtimeOpts) error {

@@ -157,3 +157,106 @@ func TestRunChecklistSetCompleted_SendsBoolean(t *testing.T) {
 		t.Fatalf("expected completed=true, got %v", sent.Completed)
 	}
 }
+
+// -- runChecklistDelete -----------------------------------------------------
+
+func TestRunChecklistDelete_Success204(t *testing.T) {
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/checklist_items/8" || r.Method != http.MethodDelete {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runChecklistDelete(context.Background(), &stdout, &stderr, "8", fx.Opts); err != nil {
+		t.Fatalf("runChecklistDelete: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	if out["id"] != "8" || out["deleted"] != true || out["existed"] != true {
+		t.Fatalf("payload = %+v, want {id:8, deleted:true, existed:true}", out)
+	}
+}
+
+func TestRunChecklistDelete_404TreatedAsSuccess(t *testing.T) {
+	// Idempotent UX: a delete against an unknown id surfaces as success
+	// (so retries are no-ops) but `existed:false` lets callers tell a real
+	// delete from a typo or a second-run.
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"error":"not_found"}`))
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runChecklistDelete(context.Background(), &stdout, &stderr, "999", fx.Opts); err != nil {
+		t.Fatalf("runChecklistDelete (404): %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	if out["id"] != "999" || out["deleted"] != true || out["existed"] != false {
+		t.Fatalf("payload = %+v, want {id:999, deleted:true, existed:false}", out)
+	}
+}
+
+func TestRunChecklistDelete_404TextFallback(t *testing.T) {
+	// The text fallback distinguishes 404 from 204 too — agents reading
+	// the stream-of-bytes view shouldn't get the same line for both.
+	fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"error":"not_found"}`))
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runChecklistDelete(context.Background(), &stdout, &stderr, "999", fx.Opts); err != nil {
+		t.Fatalf("runChecklistDelete (404): %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "Checklist item #999 already gone") {
+		t.Fatalf("stdout = %q, want it to mention 'already gone'", got)
+	}
+	if strings.Contains(got, "Deleted checklist item #999") {
+		t.Fatalf("stdout = %q, should NOT claim a delete happened on 404", got)
+	}
+}
+
+func TestRunChecklistDelete_403Forbidden(t *testing.T) {
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := runChecklistDelete(context.Background(), &stdout, &stderr, "5", fx.Opts)
+	if err == nil {
+		t.Fatal("expected error on 403")
+	}
+	var out map[string]any
+	if jerr := json.Unmarshal(stdout.Bytes(), &out); jerr != nil {
+		t.Fatalf("not JSON: %v (%q)", jerr, stdout.String())
+	}
+	if out["error"] != "forbidden" || out["status"] != "error" {
+		t.Fatalf("payload = %+v", out)
+	}
+}
+
+func TestRunChecklistDelete_TextFallback(t *testing.T) {
+	fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runChecklistDelete(context.Background(), &stdout, &stderr, "8", fx.Opts); err != nil {
+		t.Fatalf("runChecklistDelete: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Deleted checklist item #8") {
+		t.Fatalf("stdout = %q, want it to contain 'Deleted checklist item #8'", stdout.String())
+	}
+}
