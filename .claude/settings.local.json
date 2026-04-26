@@ -1,5 +1,9 @@
 {
   "env": {
     "SPRAWL_AGENT_SECRET": "TASKTASK"
-  }
+  },
+  "enabledMcpjsonServers": [
+    "context7"
+  ],
+  "enableAllProjectMcpServers": true
 }

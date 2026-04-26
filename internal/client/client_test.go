@@ -477,6 +477,97 @@ func TestSearchTasks_EncodesQueryString(t *testing.T) {
 	}
 }
 
+func TestSearchTasks_DecodesMatchedChecklistItems(t *testing.T) {
+	// Three rows cover the three states the server contract distinguishes:
+	// title-only match (`[]`), checklist-item match (populated), and a row
+	// without the key at all — which never happens on /search per the spec
+	// but proves the JSON decoder leaves a missing field as nil so list/
+	// show responses retain their existing shape.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"tasks": []any{
+				map[string]any{
+					"id": 1, "title": "title-only", "description": "", "status": "not_started",
+					"due_date": nil, "project": nil,
+					"checklist_progress":      map[string]any{"done": 0, "total": 0},
+					"created_by":              nil,
+					"last_actor":              nil,
+					"matched_checklist_items": []any{},
+				},
+				map[string]any{
+					"id": 2, "title": "items hit", "description": "", "status": "in_progress",
+					"due_date": nil, "project": nil,
+					"checklist_progress": map[string]any{"done": 0, "total": 2},
+					"created_by":         nil,
+					"last_actor":         nil,
+					"matched_checklist_items": []any{
+						map[string]any{"id": 11, "title": "first match"},
+						map[string]any{"id": 12, "title": "second match"},
+					},
+				},
+				map[string]any{
+					"id": 3, "title": "absent key", "description": "", "status": "done",
+					"due_date": nil, "project": nil,
+					"checklist_progress": map[string]any{"done": 0, "total": 0},
+					"created_by":         nil, "last_actor": nil,
+				},
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	tasks, err := c.SearchTasks(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("SearchTasks: %v", err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks", len(tasks))
+	}
+	// Row 1: empty array on the wire → non-nil empty slice (so renderers can
+	// distinguish "title-only match" from "field absent").
+	if tasks[0].MatchedChecklistItems == nil {
+		t.Fatalf("title-only row: MatchedChecklistItems is nil, want non-nil empty slice")
+	}
+	if len(tasks[0].MatchedChecklistItems) != 0 {
+		t.Fatalf("title-only row has %d items, want 0", len(tasks[0].MatchedChecklistItems))
+	}
+	// Row 2: populated array decodes element-by-element.
+	if got := tasks[1].MatchedChecklistItems; len(got) != 2 || got[0].ID != 11 || got[0].Title != "first match" || got[1].ID != 12 {
+		t.Fatalf("items row: MatchedChecklistItems = %+v", got)
+	}
+	// Row 3: absent key → nil slice. This is the contract for non-search
+	// responses; we exercise it here so a regression that defaults to []
+	// (and would force the field into list/show payloads) is caught.
+	if tasks[2].MatchedChecklistItems != nil {
+		t.Fatalf("absent-key row: MatchedChecklistItems = %+v, want nil", tasks[2].MatchedChecklistItems)
+	}
+}
+
+func TestListTasks_OmitsMatchedChecklistItems(t *testing.T) {
+	// /tasks index responses don't include matched_checklist_items.
+	// Decoded Task should leave the slice nil so renderers can suppress
+	// the field on the way out.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"tasks": []any{
+				map[string]any{
+					"id": 1, "title": "x", "description": "", "status": "done",
+					"due_date": nil, "project": nil,
+					"checklist_progress": map[string]any{"done": 0, "total": 0},
+					"created_by":         nil, "last_actor": nil,
+				},
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	tasks, err := c.ListTasks(context.Background())
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if tasks[0].MatchedChecklistItems != nil {
+		t.Fatalf("MatchedChecklistItems = %+v, want nil for list endpoint", tasks[0].MatchedChecklistItems)
+	}
+}
+
 func TestSearchTasks_EmptyQuery422(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		// Server echoes the documented 422 for blank q. The client doesn't
@@ -905,7 +996,21 @@ func TestHeaderInvariants(t *testing.T) {
 		case p == "/api/v1/tasks":
 			writeJSON(w, 200, map[string]any{"tasks": []any{}})
 		case p == "/api/v1/tasks/search":
-			writeJSON(w, 200, map[string]any{"tasks": []any{}})
+			// Returning a single row with an empty matched_checklist_items
+			// keeps the header-invariant fixture honest about the search
+			// contract (field always present on /search) without asserting
+			// on its content here — that's TestSearchTasks_DecodesMatchedChecklistItems'
+			// job.
+			writeJSON(w, 200, map[string]any{"tasks": []any{
+				map[string]any{
+					"id": 1, "title": "t", "description": "", "status": "done",
+					"due_date": nil, "project": nil,
+					"checklist_progress":      map[string]any{"done": 0, "total": 0},
+					"created_by":              nil,
+					"last_actor":              nil,
+					"matched_checklist_items": []any{},
+				},
+			}})
 		case strings.HasPrefix(p, "/api/v1/tasks/") && strings.HasSuffix(p, "/checklist"):
 			// GET list or POST create — both return an items-shaped payload in
 			// the appropriate envelope; reading the method here keeps the

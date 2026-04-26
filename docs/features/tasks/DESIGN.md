@@ -13,7 +13,7 @@ Six commands wrap the `/api/v1/tasks*` surface. Reads respect server-side per-ag
 `GET /api/v1/tasks/:id`. 404 when the id isn't visible to the caller; 403 when visible by scope but denied by the permission resolver. Text fallback is the multi-line detail (id/title, status, due, project, progress, actors, description).
 
 ### `task search <query>`
-`GET /api/v1/tasks/search?q=<query>`. Case-insensitive substring match on title, server-side. Empty / whitespace query → 422 from the server; the CLI does not pre-validate.
+`GET /api/v1/tasks/search?q=<query>`. Case-insensitive substring match on **task title and checklist item titles** (notes are not searched). Each task in the response carries an additional `matched_checklist_items: [{id,title}, …]` field — `[]` when only the title matched (UI hint: "matched on title"), otherwise one entry per checklist item whose title matched. Tasks dedupe: a task whose title and one or more items both match still appears once. Empty / whitespace query → 422 `query_required` from the server; the CLI does not pre-validate.
 
 ### `task create`
 `POST /api/v1/tasks` body `{"task":{…}}`. Flags: `--title`, `--description`, `--project-id` (integer — parsed locally so non-numeric input fails before the HTTP call), `--from-json <path|->`. Rejected with a local error if the merged attrs map is empty. The caller's own permission is what lets them read the task back — no post-create grant happens server-side. Projectless create (`--project-id` omitted) requires the key's `default_permission` to be `write_create`; project-scoped create requires `write_create` resolved at project scope. A key that's only `write` on an otherwise-visible project gets a 403.

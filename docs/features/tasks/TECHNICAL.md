@@ -14,7 +14,7 @@
 
 ## Wire Shapes
 
-Envelopes: `{"task": {…}}` for single-task responses, `{"tasks": [...]}` for lists. The CLI preserves the envelopes in JSON / TOON output. Key fields on a task: `id`, `title`, `description`, `status`, `due_date`, `project`, `checklist_progress`, `created_by`, `last_actor`.
+Envelopes: `{"task": {…}}` for single-task responses, `{"tasks": [...]}` for lists. The CLI preserves the envelopes in JSON / TOON output. Key fields on a task: `id`, `title`, `description`, `status`, `due_date`, `project`, `checklist_progress`, `created_by`, `last_actor`. `/tasks/search` responses additionally include `matched_checklist_items: [{id,title}, …]` per task — present (possibly `[]`) only on search payloads, absent everywhere else. The decode side uses `client.MatchedChecklistItem` and a `nil`-vs-empty distinction on `Task.MatchedChecklistItems` so `taskMap` can suppress the key on list/show/create/update output and pass it through verbatim on search output (including the `[]` "matched on title" signal).
 
 `task due` uses a dedicated route, `PATCH /api/v1/tasks/:id/due_date`, with body `{"due": "yesterday" | "today" | "week" | null}`. Response is the same `{"task": {…}}` envelope, where `due_date` is the *resolved* ISO date the server computed in the user's timezone (or `null` after a clear). Asymmetry: write takes a preset name, read returns a date — there's no server-side echo of the preset, so a CLI that wants to render "currently set to: today" must compare the date itself. Validation is server-side: `due` outside the four accepted values surfaces as `APIError` Status 422 Code `invalid_due` (the CLI filters to those four locally, so this is unreachable except via a bug).
 

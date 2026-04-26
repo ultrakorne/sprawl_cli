@@ -233,9 +233,12 @@ func runTaskDue(ctx context.Context, stdout, stderr io.Writer, id, preset string
 func newTaskSearchCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search tasks by title substring (GET /api/v1/tasks/search?q=…)",
-		Long: "Case-insensitive substring match on task title. Empty or whitespace-only queries are rejected " +
-			"by the server with 422 query_required.",
+		Short: "Search tasks by title or checklist item title (GET /api/v1/tasks/search?q=…)",
+		Long: "Case-insensitive substring match on task title AND checklist item titles (notes are not searched). " +
+			"Each task in the response carries a `matched_checklist_items` array — empty when only the title matched, " +
+			"otherwise one {id,title} entry per matched checklist item. A task appears at most once even when both " +
+			"the title and one or more items match. Empty or whitespace-only queries are rejected by the server " +
+			"with 422 query_required.",
 		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTaskSearch(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
@@ -266,7 +269,12 @@ func runTaskSearch(ctx context.Context, stdout, stderr io.Writer, query string, 
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderTaskList(stdout, tasks, opts)
+	items := make([]any, 0, len(tasks))
+	for _, t := range tasks {
+		items = append(items, taskMap(t))
+	}
+	payload := map[string]any{"tasks": items}
+	return renderPayload(stdout, payload, taskSearchListText(tasks), opts)
 }
 
 func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string, opts *runtimeOpts) error {
@@ -310,6 +318,21 @@ func taskMap(t *client.Task) map[string]any {
 		"created_by": actorMap(t.CreatedBy),
 		"last_actor": actorMap(t.LastActor),
 	}
+	// matched_checklist_items rides only on /search responses. nil ⇒ field
+	// absent on the wire ⇒ suppress emission so list/show/create/update
+	// payloads keep their existing shape. Non-nil (including empty) ⇒ pass
+	// through verbatim so callers can distinguish "matched on title"
+	// (`[]`) from "matched on items".
+	if t.MatchedChecklistItems != nil {
+		matched := make([]any, 0, len(t.MatchedChecklistItems))
+		for _, it := range t.MatchedChecklistItems {
+			matched = append(matched, map[string]any{
+				"id":    it.ID,
+				"title": it.Title,
+			})
+		}
+		m["matched_checklist_items"] = matched
+	}
 	return m
 }
 
@@ -343,19 +366,67 @@ func taskListText(tasks []*client.Task) string {
 	}
 	var buf strings.Builder
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tSTATUS\tDUE\tPROGRESS\tPROJECT\tTITLE")
+	fmt.Fprintln(tw, taskListHeader)
 	for _, t := range tasks {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%d/%d\t%s\t%s\n",
-			t.ID,
-			fallback(t.Status, "-"),
-			fallback(t.DueDate, "-"),
-			t.ChecklistProgress.Done, t.ChecklistProgress.Total,
-			projectLabel(t.Project),
-			t.Title,
-		)
+		fmt.Fprintln(tw, taskRowFields(t))
 	}
 	_ = tw.Flush()
 	return strings.TrimRight(buf.String(), "\n")
+}
+
+const taskListHeader = "ID\tSTATUS\tDUE\tPROGRESS\tPROJECT\tTITLE"
+
+// taskRowFields returns one tab-separated row matching taskListHeader.
+// Shared with the search renderer so both views build their tables from
+// the same source — no cross-function line-layout coupling.
+func taskRowFields(t *client.Task) string {
+	return fmt.Sprintf("%d\t%s\t%s\t%d/%d\t%s\t%s",
+		t.ID,
+		fallback(t.Status, "-"),
+		fallback(t.DueDate, "-"),
+		t.ChecklistProgress.Done, t.ChecklistProgress.Total,
+		projectLabel(t.Project),
+		t.Title,
+	)
+}
+
+// taskSearchListText renders the list view and interleaves a
+// `matched checklist:` block under any task whose checklist items hit
+// the query — one item per line so commas, long titles, or odd
+// whitespace in titles can't garble the output. Title-only matches
+// (MatchedChecklistItems == []) get no extra line — the title speaks
+// for itself.
+func taskSearchListText(tasks []*client.Task) string {
+	if len(tasks) == 0 {
+		return "(no tasks)"
+	}
+	// Render the aligned table to a buffer, then split header + rows
+	// (Fprintln writes exactly one newline per call, so the line count
+	// is guaranteed to be 1 + len(tasks) — no layout assumption).
+	var table strings.Builder
+	tw := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, taskListHeader)
+	for _, t := range tasks {
+		fmt.Fprintln(tw, taskRowFields(t))
+	}
+	_ = tw.Flush()
+	lines := strings.Split(strings.TrimRight(table.String(), "\n"), "\n")
+
+	var b strings.Builder
+	b.WriteString(lines[0])
+	b.WriteByte('\n')
+	for i, t := range tasks {
+		b.WriteString(lines[1+i])
+		b.WriteByte('\n')
+		if len(t.MatchedChecklistItems) == 0 {
+			continue
+		}
+		b.WriteString("      matched checklist:\n")
+		for _, it := range t.MatchedChecklistItems {
+			fmt.Fprintf(&b, "        - %s\n", it.Title)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func taskDetailText(t *client.Task) string {

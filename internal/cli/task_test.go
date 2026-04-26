@@ -214,6 +214,192 @@ func TestRunTaskShow_JSONEnvelope(t *testing.T) {
 	}
 }
 
+// -- runTaskSearch ----------------------------------------------------------
+
+func TestRunTaskSearch_JSONIncludesMatchedChecklistItems(t *testing.T) {
+	// /search results carry a per-task `matched_checklist_items` array. The
+	// CLI must pass it through to the rendered envelope verbatim, including
+	// the empty-array case (= "matched on title") which is distinct from
+	// the field being absent on list/show responses.
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/search" || r.URL.Query().Get("q") != "needle" {
+			t.Errorf("request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tasks": []any{
+				map[string]any{
+					"id": 1, "title": "needle in title", "description": "", "status": "not_started",
+					"due_date": nil, "project": nil,
+					"checklist_progress":      map[string]any{"done": 0, "total": 0},
+					"created_by":              nil,
+					"last_actor":              nil,
+					"matched_checklist_items": []any{},
+				},
+				map[string]any{
+					"id": 2, "title": "no title hit", "description": "", "status": "in_progress",
+					"due_date": nil, "project": nil,
+					"checklist_progress": map[string]any{"done": 1, "total": 3},
+					"created_by":         nil,
+					"last_actor":         nil,
+					"matched_checklist_items": []any{
+						map[string]any{"id": 11, "title": "needle item"},
+					},
+				},
+			},
+		})
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runTaskSearch(context.Background(), &stdout, &stderr, "needle", fx.Opts); err != nil {
+		t.Fatalf("runTaskSearch: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	tasks, ok := out["tasks"].([]any)
+	if !ok || len(tasks) != 2 {
+		t.Fatalf("tasks shape = %+v", out["tasks"])
+	}
+	// Title-only row must carry an empty array (not be missing the key).
+	first := tasks[0].(map[string]any)
+	got, has := first["matched_checklist_items"]
+	if !has {
+		t.Fatalf("title-only task missing matched_checklist_items: %+v", first)
+	}
+	if arr, ok := got.([]any); !ok || len(arr) != 0 {
+		t.Fatalf("title-only matched_checklist_items = %+v, want []", got)
+	}
+	// Items row must carry the matched item verbatim.
+	second := tasks[1].(map[string]any)
+	arr, _ := second["matched_checklist_items"].([]any)
+	if len(arr) != 1 {
+		t.Fatalf("items-row matched count = %d, want 1", len(arr))
+	}
+	hit := arr[0].(map[string]any)
+	if hit["title"] != "needle item" {
+		t.Fatalf("hit = %+v", hit)
+	}
+}
+
+func TestRunTaskSearch_TextShowsMatchedItems(t *testing.T) {
+	// Text mode interleaves an indented "matched checklist:" block,
+	// one item per line, beneath any row whose checklist items hit
+	// the query. Three tasks of mixed match types in non-trivial
+	// order pin the per-task alignment — a regression that confused
+	// the row→matches mapping would attach items to the wrong task.
+	// One title also contains a comma to prove the renderer doesn't
+	// rely on commas as a separator.
+	fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tasks": []any{
+				map[string]any{
+					"id": 1, "title": "items-row-A", "description": "", "status": "in_progress",
+					"due_date": nil, "project": nil,
+					"checklist_progress": map[string]any{"done": 0, "total": 2},
+					"created_by":         nil, "last_actor": nil,
+					"matched_checklist_items": []any{
+						map[string]any{"id": 11, "title": "first hit"},
+					},
+				},
+				map[string]any{
+					"id": 2, "title": "title-only-row", "description": "", "status": "done",
+					"due_date": nil, "project": nil,
+					"checklist_progress":      map[string]any{"done": 0, "total": 0},
+					"created_by":              nil,
+					"last_actor":              nil,
+					"matched_checklist_items": []any{},
+				},
+				map[string]any{
+					"id": 3, "title": "items-row-B", "description": "", "status": "in_progress",
+					"due_date": nil, "project": nil,
+					"checklist_progress": map[string]any{"done": 0, "total": 2},
+					"created_by":         nil, "last_actor": nil,
+					"matched_checklist_items": []any{
+						map[string]any{"id": 21, "title": "second, with comma"},
+						map[string]any{"id": 22, "title": "third hit"},
+					},
+				},
+			},
+		})
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runTaskSearch(context.Background(), &stdout, &stderr, "x", fx.Opts); err != nil {
+		t.Fatalf("runTaskSearch: %v", err)
+	}
+	out := stdout.String()
+	lines := strings.Split(out, "\n")
+
+	// Walk lines and assert per-task expectations: each task row is
+	// followed (or not) by exactly the right matched block, in order.
+	type expect struct {
+		row     string
+		matches []string // empty = no matched block expected after the row
+	}
+	want := []expect{
+		{row: "items-row-A", matches: []string{"first hit"}},
+		{row: "title-only-row"},
+		{row: "items-row-B", matches: []string{"second, with comma", "third hit"}},
+	}
+	cursor := 0
+	for _, exp := range want {
+		for cursor < len(lines) && !strings.Contains(lines[cursor], exp.row) {
+			cursor++
+		}
+		if cursor == len(lines) {
+			t.Fatalf("row %q not found in:\n%s", exp.row, out)
+		}
+		cursor++
+		if len(exp.matches) == 0 {
+			if cursor < len(lines) && strings.Contains(lines[cursor], "matched checklist:") {
+				t.Fatalf("row %q must not have a matched-checklist block:\n%s", exp.row, out)
+			}
+			continue
+		}
+		if cursor >= len(lines) || !strings.Contains(lines[cursor], "matched checklist:") {
+			t.Fatalf("row %q expected matched-checklist header next, got %q:\n%s", exp.row, lines[cursor], out)
+		}
+		cursor++
+		for _, m := range exp.matches {
+			if cursor >= len(lines) || !strings.Contains(lines[cursor], "- "+m) {
+				t.Fatalf("row %q expected matched item %q at line %d, got %q:\n%s", exp.row, m, cursor, lines[cursor], out)
+			}
+			cursor++
+		}
+	}
+}
+
+func TestTaskMap_OmitsMatchedWhenNil(t *testing.T) {
+	// Sanity guard: a task decoded from a non-search endpoint (nil
+	// MatchedChecklistItems) must not surface the key in rendered output.
+	// Otherwise list/show envelopes would silently grow a field.
+	task := &client.Task{ID: 1, Title: "x", Status: "done"}
+	m := taskMap(task)
+	if _, has := m["matched_checklist_items"]; has {
+		t.Fatalf("taskMap leaked matched_checklist_items for nil slice: %+v", m)
+	}
+}
+
+func TestTaskMap_KeepsMatchedEmpty(t *testing.T) {
+	// The empty-but-non-nil case is the "matched on title" signal — must
+	// reach the rendered output as `[]`, distinct from omission.
+	task := &client.Task{
+		ID: 1, Title: "x", Status: "done",
+		MatchedChecklistItems: []client.MatchedChecklistItem{},
+	}
+	m := taskMap(task)
+	got, has := m["matched_checklist_items"]
+	if !has {
+		t.Fatal("taskMap dropped non-nil empty MatchedChecklistItems")
+	}
+	if arr, ok := got.([]any); !ok || len(arr) != 0 {
+		t.Fatalf("matched_checklist_items = %+v, want []any{}", got)
+	}
+}
+
 // -- runTaskDue -------------------------------------------------------------
 
 func TestRunTaskDue_SetsToday(t *testing.T) {

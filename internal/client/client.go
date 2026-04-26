@@ -199,18 +199,32 @@ type ChecklistProgress struct {
 	Total int `json:"total"`
 }
 
+// MatchedChecklistItem is the (id, title) of a checklist item whose title
+// matched a /tasks/search query. Server only ever returns the two fields.
+type MatchedChecklistItem struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
 // Task matches the shape documented in task_json.ex. Nullable fields are
 // pointers so encoders can emit `null` rather than a zero value.
+//
+// MatchedChecklistItems is search-only: present (possibly `[]`) on
+// /api/v1/tasks/search responses, absent on every other endpoint. Decoding
+// keeps that distinction — `nil` slice means "field not in payload",
+// non-nil-empty means "search returned no checklist matches (title-only
+// hit)". taskMap relies on that to suppress emission off the search path.
 type Task struct {
-	ID                int64             `json:"id"`
-	Title             string            `json:"title"`
-	Description       string            `json:"description"`
-	Status            string            `json:"status"`
-	DueDate           string            `json:"due_date"`
-	Project           *Project          `json:"project"`
-	ChecklistProgress ChecklistProgress `json:"checklist_progress"`
-	CreatedBy         *Actor            `json:"created_by"`
-	LastActor         *Actor            `json:"last_actor"`
+	ID                    int64                  `json:"id"`
+	Title                 string                 `json:"title"`
+	Description           string                 `json:"description"`
+	Status                string                 `json:"status"`
+	DueDate               string                 `json:"due_date"`
+	Project               *Project               `json:"project"`
+	ChecklistProgress     ChecklistProgress      `json:"checklist_progress"`
+	CreatedBy             *Actor                 `json:"created_by"`
+	LastActor             *Actor                 `json:"last_actor"`
+	MatchedChecklistItems []MatchedChecklistItem `json:"matched_checklist_items,omitempty"`
 }
 
 // ChecklistItem mirrors checklist_item_json.ex.

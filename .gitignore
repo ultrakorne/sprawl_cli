@@ -5,3 +5,6 @@
 .env
 .env.*
 !.env.example
+
+.mcp.json
+opencode.jsonc
