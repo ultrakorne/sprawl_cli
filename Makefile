@@ -11,7 +11,7 @@ DIST        := dist
 
 PROD_APP    := sprawl
 DEV_APP     := sprawl_dev
-PROD_URL    ?= https://sprawl.up.railway.app
+PROD_URL    ?= https://sprawl.today
 DEV_URL     ?= http://localhost:4000
 
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)

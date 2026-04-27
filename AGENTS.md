@@ -20,7 +20,7 @@ One codebase produces two binaries. The *only* difference is linker-injected val
 
 | Binary | `APIURL` | `AppName` | Config dir |
 |---|---|---|---|
-| `sprawl` (prod) | `https://sprawl.up.railway.app` | `sprawl` | `~/.config/sprawl/` |
+| `sprawl` (prod) | `https://sprawl.today` | `sprawl` | `~/.config/sprawl/` |
 | `sprawl_dev` | `http://localhost:4000` | `sprawl_dev` | `~/.config/sprawl_dev/` |
 
 - **The API URL is never in config.** When prod moves, ship a new release. Do not add a `url` field or a `--url` flag.
