@@ -31,11 +31,19 @@ for those. sprawl is for collaboration across sessions and agents.
 
 ## Preflight
 
-**Skip it.** Just run the command the user asked for. 99 % of the time `sprawl`
-is on PATH, the secret is set, and the token is valid — probing first only
-burns tokens and a round-trip.
+**For reads, skip it.** `task list` / `task show` / `checklist` / `note show`
+are already filtered server-side to what your key can see, so just run them.
+Probing first only burns tokens and a round-trip.
 
-Only diagnose when a real call fails. Map the failure, then act:
+**For writes, run `sprawl whoami` once.** Before the first `task create`,
+`task update`, `checklist add`, `note set`, or any other mutation in this
+session, check your scope — see [Before you write](#before-you-write--check-your-scope).
+A wasted `403` on a write is fine; a wasted *chained* write is the trap,
+because `&&` swallows the error and the follow-up commands run with empty
+inputs.
+
+Only diagnose other failures when a real call hits one. Map the failure,
+then act:
 
 - **`sprawl: command not found`** — not installed. Read `SETUP.md` in this
   skill's directory and walk the user through it.
@@ -54,6 +62,62 @@ Only diagnose when a real call fails. Map the failure, then act:
 **Never** write the secret to a file, commit it, echo it back to the user, or
 print it in a command you run. If you show a command using `-s`, redact the
 value.
+
+## Before you write — check your scope
+
+Run `sprawl whoami` once at the start of a write session. Reads don't need
+this (the server already filters them), but writes need to know your scope
+upfront — otherwise you'll learn it the hard way through a `403`, and any
+chained follow-up commands will run with empty inputs and produce a confusing
+partial state.
+
+```bash
+sprawl whoami
+# agent:
+#   default_permission: write              # ← projectless `task create` needs write_create
+#   ...
+# project_permissions[1]{level,name,project_id}:
+#   write_create,Sprawl,1                  # ← projects you can create/edit in
+```
+
+What each scope unlocks: `read` → list/show only · `write` → edit existing
+tasks/items in scope · `write_create` → also create new ones.
+
+For a `task create`:
+
+- **Projectless** (`sprawl task create --title ...`) — needs
+  `agent.default_permission = write_create`.
+- **Inside a project** (`--project-id N`) — needs an entry in
+  `project_permissions` with `level = write_create` for that id.
+
+If neither holds, **don't try.** Tell the user you lack `write_create` and
+on which project they'd need to grant it. The server will reject the call
+anyway; surfacing it from `whoami` saves the wasted round-trip and the
+confusing partial state from chained follow-ups.
+
+For edits (`task update`, `checklist check/uncheck/update`, `note set`),
+`write` is enough on the target's project. You can usually skip the
+whoami check for edits if you've already established scope earlier in the
+session — but if this is the first write of the session, just check.
+
+**Don't chain writes with `&&` to capture the new id.** Run
+`task create` on its own, read the id from its output, *then* add checklist
+items. If the create returns 403, an `&&` chain blows past it with an empty
+id and the next command silently no-ops on stderr — exactly the failure
+mode that surfaces as "(no output)".
+
+```bash
+# Right — split so each step's outcome is visible:
+sprawl task create --title "quick reminders"
+# → note the id from the output
+sprawl checklist add <id> --title "print something"
+sprawl checklist add <id> --title "talk to Antti about AI tools"
+
+# Wrong — masks 403 on create, follow-ups run on empty id:
+task_json=$(sprawl task create --title "quick reminders" --format=json) \
+  && id=$(printf '%s' "$task_json" | jq -r '.task.id') \
+  && sprawl checklist add "$id" --title "..."
+```
 
 ## Credential model
 
@@ -155,6 +219,23 @@ sprawl task show <id>
 sprawl task search "<query>"                   # case-insensitive substring on title
 sprawl checklist <task_id>                     # list checklist items for a task
 sprawl note show <item_id>                     # raw notes blob; empty is valid
+```
+
+**Reading note content into a shell variable or another command — use `--format=text`, not json + a parser.**
+
+The `text` format on `note show` emits the notes body verbatim with no envelope, which is exactly what you want when capturing or piping the content. Reaching for `--format=json | jq -r '.notes'` works but is unnecessary; reaching for `--format=json | python3 -c "import json,sys; print(json.load(sys.stdin)['notes'])"` is pure overhead — don't do it.
+
+```bash
+# Right — raw content straight out:
+body=$(sprawl note show 203 --format=text)
+sprawl note show 203 --format=text | less
+sprawl note show 203 --format=text > note.md
+
+# Wrong — toon envelope leaks into the variable ("notes: \"...\""):
+body=$(sprawl note show 203)
+
+# Overkill — only justified if you're extracting *other* fields too:
+sprawl note show 203 --format=json | jq -r '.notes'
 ```
 
 ### Writes — tasks
@@ -292,7 +373,7 @@ Use the item's notes blob. Append by reading first if you need to preserve
 prior content (`note set` is a full replace):
 
 ```bash
-prev=$(sprawl note show 203)
+prev=$(sprawl note show 203 --format=text)
 printf '%s\n\n---\n\n%s\n' "$prev" "blocked on PR #418" \
   | sprawl note set 203 --stdin
 ```
@@ -304,13 +385,21 @@ just add noise the human has to skim past.
 
 ### 4. Create a new task on behalf of the user
 
-Only if the user asked, and only if your key resolves `write_create`. If you
-get a `403`, surface that — don't retry.
+Only if the user asked, and only if your key resolves `write_create` for the
+target scope (projectless or the specific `--project-id`). Run
+[`sprawl whoami`](#before-you-write--check-your-scope) first if you haven't
+this session — that's the cheap way to find out before round-tripping.
+If you get a `403` anyway, surface it — don't retry.
+
+Create the task on its own, then add checklist items in separate calls so
+each step's outcome is visible — see the chaining warning in
+[Before you write](#before-you-write--check-your-scope).
 
 ```bash
-sprawl task create --title "investigate flaky deploy" \
-  --description "seen twice this week on main; logs in #ops" \
-  --project-id 42
+sprawl task create --title "flaky deploy" --project-id 42
+# → note the task id from the output
+sprawl checklist add <task_id> --title "repro on staging"
+sprawl checklist add <task_id> --title "check #ops logs"
 ```
 
 ### 5. Hand off
