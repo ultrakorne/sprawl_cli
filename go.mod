@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/alpkeskin/gotoon v0.1.1
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/mod v0.35.0
 )
 
 require (

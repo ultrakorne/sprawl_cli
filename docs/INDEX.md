@@ -21,6 +21,7 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 | [checklists](features/checklists/INDEX.md) | `checklist list / add / check / uncheck / update` and `note show / set`. |
 | [theme](features/theme/INDEX.md) | `theme get / set` — owner-only UI theme. |
 | [whoami](features/whoami/INDEX.md) | `whoami` identity probe — caller agent + elevated project permissions. |
+| [auto-update](features/auto-update/INDEX.md) | Once-per-day update notice + `sprawl update` (download, verify, atomic replace). |
 
 ## Quick Links
 

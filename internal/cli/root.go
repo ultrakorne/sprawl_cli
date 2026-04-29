@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
+	"github.com/ultrakorne/sprawl_cli/internal/updater"
 )
 
 // runtimeOpts holds invocation-wide flag state bound by the root command.
@@ -25,6 +26,18 @@ func NewRootCmd() *cobra.Command {
 		Long: "sprawl — HTTP client for the sprawl API.\n\n" +
 			"Output: --format=text|json|toon (default toon; override session-wide with $SPRAWL_OUTPUT).",
 		SilenceUsage: true,
+		// PersistentPreRunE runs the daily version check on the prod binary
+		// (no-op everywhere else). Errors are swallowed inside MaybeNotify
+		// so a flaky network never blocks a real command. We skip the
+		// `update` subcommand to avoid printing "update available" right
+		// before running the update itself.
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Name() == "update" {
+				return nil
+			}
+			_ = updater.MaybeNotify(cmd.Context(), cmd.ErrOrStderr())
+			return nil
+		},
 	}
 
 	root.PersistentFlags().StringVar(&opts.format, "format", "",
@@ -39,6 +52,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newTaskCmd(opts))
 	root.AddCommand(newChecklistCmd(opts))
 	root.AddCommand(newNoteCmd(opts))
+	root.AddCommand(newUpdateCmd())
 	return root
 }
 

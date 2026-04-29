@@ -65,11 +65,11 @@ If you don't want to use `gh auth token`, create a token at <https://github.com/
 
 Export it as `GITHUB_TOKEN` before running `goreleaser release --clean`.
 
-## Private-repo caveat
+## Repo visibility and auto-update
 
-Releasing to a private repo works without changes — goreleaser authenticates with `GITHUB_TOKEN` regardless of repo visibility.
+The in-binary auto-update path (see [`features/auto-update`](features/auto-update/INDEX.md)) calls `https://api.github.com/repos/ultrakorne/sprawl_cli/releases/latest` and the asset URLs without an `Authorization` header — it relies on the repo being public. If the repo is ever flipped private, both the daily notice and `sprawl update` will silently fail (404 / network error) and a backend proxy or auth-bearing client will need to be wired in.
 
-What does *not* work on a private repo is any future in-binary auto-update path (see `docs/plans/auto-update.md`): GitHub's REST API returns 404 to unauthenticated calls against `/releases/latest`, and asset downloads need an auth header. Resolve by either making the repo public or proxying the release metadata through the sprawl backend before shipping the auto-update feature.
+Releasing itself works either way — goreleaser authenticates with `GITHUB_TOKEN` regardless of visibility.
 
 ## Recovering from a bad release
 
@@ -82,3 +82,16 @@ git tag -d v0.2.0                                # delete the local tag
 ```
 
 Prefer cutting `v0.2.1` over re-using a published tag — anyone who already pulled `v0.2.0` will not see a re-tagged release.
+
+## Testing Autoupdate locally
+###  Banner + update against the real GitHub release
+
+Once a release exists on ultrakorne/sprawl_cli (e.g. v0.1.0):
+
+rm -f ~/.config/sprawl/update_check.json
+make build VERSION=v0.0.1     # pretend we're behind
+./dist/sprawl whoami           # banner fires from a real GitHub /releases/latest call
+./dist/sprawl update --yes     # downloads v0.1.0, verifies SHA256, replaces dist/sprawl
+./dist/sprawl version          # confirms the bump
+
+Anything dirty (e.g. plain make build) refuses with the local build (version=…) message — that's by design.
