@@ -25,4 +25,4 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 ## Quick Links
 
 - [README](../README.md) — install + usage
-- [CLAUDE.md](../CLAUDE.md) — project invariants and collaboration rules
+- [RELEASING](RELEASING.md) — tag, build, and publish a new version with goreleaser
