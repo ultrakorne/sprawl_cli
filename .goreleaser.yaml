@@ -26,7 +26,7 @@ builds:
       - -s -w
       - -X github.com/ultrakorne/sprawl_cli/internal/build.APIURL=https://sprawl.today
       - -X github.com/ultrakorne/sprawl_cli/internal/build.AppName=sprawl
-      - -X github.com/ultrakorne/sprawl_cli/internal/build.Version={{.Version}}
+      - -X github.com/ultrakorne/sprawl_cli/internal/build.Version=v{{.Version}}
       - -X github.com/ultrakorne/sprawl_cli/internal/build.Commit={{.ShortCommit}}
       - -X github.com/ultrakorne/sprawl_cli/internal/build.Date={{.Date}}
     goos: [linux, darwin]

@@ -242,6 +242,30 @@ func TestRunUpdate_AlreadyLatest(t *testing.T) {
 	}
 }
 
+// Regression: goreleaser strips the "v" prefix when injecting {{.Version}},
+// so binaries shipped before that was fixed have build.Version like "0.2.0".
+// The update command must still recognise them as releases and compare
+// correctly against the GitHub tag (which is "v0.2.0"). Before the fix this
+// test produced "local build (version=0.2.0); install a release before
+// running update."
+func TestRunUpdate_UnprefixedReleaseVersionIsAlreadyLatest(t *testing.T) {
+	swapBuild(t, "sprawl", "0.5.0")
+	srv := fakeReleaseServer(t, "v0.5.0", "ignored", nil)
+	t.Cleanup(srv.Close)
+	swapBaseURL(t, srv.URL)
+
+	var stdout, stderr bytes.Buffer
+	if err := RunUpdate(context.Background(), &stdout, &stderr, strings.NewReader(""), true); err != nil {
+		t.Fatalf("RunUpdate: %v", err)
+	}
+	if strings.Contains(stdout.String(), "local build") {
+		t.Fatalf("unprefixed release misclassified as local build: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "already the latest") {
+		t.Fatalf("expected up-to-date message, got %q", stdout.String())
+	}
+}
+
 func TestRunUpdate_SuccessReplacesBinary(t *testing.T) {
 	swapBuild(t, "sprawl", "v0.1.0")
 

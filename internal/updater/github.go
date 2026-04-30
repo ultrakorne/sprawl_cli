@@ -57,7 +57,7 @@ func RunUpdate(ctx context.Context, stdout, stderr io.Writer, stdin io.Reader, a
 	if !semver.IsValid(rel.TagName) {
 		return fmt.Errorf("release tag %q is not semver", rel.TagName)
 	}
-	if semver.Compare(rel.TagName, build.Version) <= 0 {
+	if semver.Compare(rel.TagName, canonicalVersion(build.Version)) <= 0 {
 		fmt.Fprintf(stdout, "sprawl %s is already the latest.\n", strings.TrimPrefix(build.Version, "v"))
 		return nil
 	}

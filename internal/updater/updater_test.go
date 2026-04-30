@@ -52,12 +52,17 @@ func TestIsReleaseVersion(t *testing.T) {
 	}{
 		{"v0.1.0", true},
 		{"v1.2.3", true},
+		// goreleaser strips the leading "v" by default, so the un-prefixed
+		// form must also count as a release — older binaries (incl. v0.2.0)
+		// have "0.2.0" baked in.
+		{"0.1.0", true},
+		{"0.2.0", true},
 		{"", false},
 		{"dev", false},
 		{"v0.1.0-1-gabc123-dirty", false}, // git describe output
+		{"0.1.0-1-gabc123-dirty", false},
 		{"v0.1.0-rc1", false},
 		{"v0.1.0+meta", false},
-		{"0.1.0", false}, // no v prefix → not valid semver per x/mod
 		{"garbage", false},
 	}
 	for _, c := range cases {

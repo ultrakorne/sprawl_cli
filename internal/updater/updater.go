@@ -41,14 +41,37 @@ const (
 // pre-release or build suffix). False for "dev", "", or `git describe`
 // output like "v0.1.0-1-gabc123-dirty" — we use it to gate every
 // auto-update behaviour so local builds stay quiet.
+//
+// Accepts both "v0.2.0" and "0.2.0" forms: goreleaser strips the leading "v"
+// from `{{.Version}}` by default, so binaries shipped before the goreleaser
+// config was tightened bake in an un-prefixed version. Without normalisation
+// those releases would mis-classify as local builds and `sprawl update`
+// would refuse to run.
 func IsReleaseVersion(v string) bool {
 	if v == "" || v == "dev" {
 		return false
 	}
-	if !semver.IsValid(v) {
+	c := canonicalVersion(v)
+	if !semver.IsValid(c) {
 		return false
 	}
-	return semver.Prerelease(v) == "" && semver.Build(v) == ""
+	return semver.Prerelease(c) == "" && semver.Build(c) == ""
+}
+
+// canonicalVersion returns v with a leading "v" if it would otherwise be
+// valid semver. Non-semver inputs are returned unchanged so the caller's
+// own validation can reject them.
+func canonicalVersion(v string) string {
+	if v == "" {
+		return v
+	}
+	if strings.HasPrefix(v, "v") {
+		return v
+	}
+	if semver.IsValid("v" + v) {
+		return "v" + v
+	}
+	return v
 }
 
 type updateCache struct {
@@ -151,7 +174,7 @@ func printBannerIfNewer(stderr io.Writer, latest string) {
 	if latest == "" || !semver.IsValid(latest) {
 		return
 	}
-	if semver.Compare(latest, build.Version) <= 0 {
+	if semver.Compare(latest, canonicalVersion(build.Version)) <= 0 {
 		return
 	}
 	cur := strings.TrimPrefix(build.Version, "v")
