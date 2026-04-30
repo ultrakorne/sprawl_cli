@@ -1,13 +1,36 @@
-# sprawl
+# Sprawl CLI
 
-Command-line client for the sprawl API. A single static Go binary — one for prod, one for dev — that authenticates via device flow
+CLI for Sprawl <https://sprawl.today>
 
-## Requirements
+## Install
+
+One-liner that grabs the latest release, verifies its checksum, and drops the binary into `~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/scripts/install.sh | bash
+```
+
+Pin a specific release or pick a different install dir via env vars:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/scripts/install.sh \
+  | SPRAWL_VERSION=v0.2.0 BIN_DIR=/usr/local/bin bash
+```
+
+(For a system-wide path like `/usr/local/bin`, prefix the command with `sudo` and pass `-E` so the env vars survive: `... | sudo -E env BIN_DIR=/usr/local/bin bash`.)
+
+After the first install, future upgrades are in-place: `sprawl update` downloads the latest release, verifies SHA256, and atomically replaces the running binary.
+
+Supported targets: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64. The script refuses to run without a SHA-256 verifier (`sha256sum` or `shasum`).
+
+## Build from source
+
+### Requirements
 
 - Go **1.26.2** or newer. If you use [mise](https://mise.jdx.dev/), `mise install` inside the repo picks up the version pinned in `mise.toml`.
 - For `sprawl_dev`: a running sprawl backend on `http://localhost:4000`.
 
-## Build
+### Build
 
 Two binaries ship from this codebase. The only difference between them is the API URL and config directory baked in at link time.
 
@@ -25,7 +48,7 @@ make build PROD_URL=https://staging.example.com
 
 Other useful targets: `make check`, `make test`, `make fmt`, `make vet`, `make tidy`, `make clean`. See [Testing](#testing) for the day-to-day loop.
 
-## Install
+### Install from source
 
 There's no `make install`. Copy the binary onto your `PATH`:
 
