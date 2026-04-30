@@ -180,9 +180,12 @@ func (c *Client) SetTheme(ctx context.Context, id string) (string, error) {
 
 // Actor identifies the user or agent that created a record or was the last
 // to touch it. Null on any record created before phase 5 backfills started.
+// Emoji is populated only on agent actors where the server has it; user
+// actors and pre-phase-5 records leave it empty (omitempty hides the field).
 type Actor struct {
-	Type string `json:"type"`
-	ID   int64  `json:"id"`
+	Type  string `json:"type"`
+	ID    int64  `json:"id"`
+	Emoji string `json:"emoji,omitempty"`
 }
 
 // Project is the nested project shape returned on a Task. Static colour only;
@@ -308,6 +311,62 @@ func (c *Client) GetNotes(ctx context.Context, itemID string) (string, error) {
 		return "", err
 	}
 	return env.Notes, nil
+}
+
+// ActivityLog mirrors GET /api/v1/activity_log: completed tasks + completed
+// checklist items for a single day, scoped by the caller's permission cascade.
+// The response is not enveloped — top-level keys come straight in.
+type ActivityLog struct {
+	Date           string                   `json:"date"`
+	CompletedTasks []*Task                  `json:"completed_tasks"`
+	CompletedItems []*ActivityChecklistItem `json:"completed_items"`
+}
+
+// ActivityChecklistItem is a checklist item inside the activity log. It
+// extends ChecklistItem with `completed_at` (the timestamp the day grouping
+// is built on) and a minimal parent-task summary so clients can group items
+// without a follow-up fetch.
+type ActivityChecklistItem struct {
+	ID          int64            `json:"id"`
+	Title       string           `json:"title"`
+	Completed   bool             `json:"completed"`
+	CompletedAt string           `json:"completed_at"`
+	Position    int              `json:"position"`
+	HasNotes    bool             `json:"has_notes"`
+	LastActor   *Actor           `json:"last_actor"`
+	Task        ActivityItemTask `json:"task"`
+}
+
+// ActivityItemTask is the trimmed parent-task view nested under each
+// completed item — id, title, and project only.
+type ActivityItemTask struct {
+	ID      int64    `json:"id"`
+	Title   string   `json:"title"`
+	Project *Project `json:"project"`
+}
+
+// GetActivityLog issues GET /api/v1/activity_log. `date` (YYYY-MM-DD) and
+// `daysAgo` are mutually exclusive — the caller is responsible for enforcing
+// that before invoking; the server also rejects the combo with 422
+// invalid_date_params, but the CLI catches it earlier so the message is
+// crisper. Empty strings for both ⇒ today in the user's timezone.
+func (c *Client) GetActivityLog(ctx context.Context, date, daysAgo string) (*ActivityLog, error) {
+	path := "/api/v1/activity_log"
+	params := url.Values{}
+	if date != "" {
+		params.Set("date", date)
+	}
+	if daysAgo != "" {
+		params.Set("days_ago", daysAgo)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+	var out ActivityLog
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // -- Phase 5: write endpoints ----------------------------------------------

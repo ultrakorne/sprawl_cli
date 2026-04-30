@@ -219,7 +219,12 @@ sprawl task show <id>
 sprawl task search "<query>"                   # case-insensitive substring on title
 sprawl checklist <task_id>                     # list checklist items for a task
 sprawl note show <item_id>                     # raw notes blob; empty is valid
+sprawl activity                                # completed tasks + items for today
+sprawl activity --days-ago 1                   # yesterday
+sprawl activity --date 2026-04-29              # specific day
 ```
+
+**Daily activity:** `sprawl activity` returns the calling agent's completed tasks + completed checklist items for a single day, scoped by the same key cascade as `task list`. Default is today in the user's timezone. `--date` (YYYY-MM-DD) and `--days-ago` (`0..365`, `0`=today) are mutually exclusive — passing both is a local error before any HTTP call. Empty days return an empty result, not an error. Useful for daily standup write-ups, weekly summaries (loop over `--days-ago 0..6`), and answering "what did I get done yesterday?".
 
 **Reading note content into a shell variable or another command — use `--format=text`, not json + a parser.**
 

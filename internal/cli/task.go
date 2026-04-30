@@ -410,10 +410,14 @@ func actorMap(a *client.Actor) any {
 	if a == nil {
 		return nil
 	}
-	return map[string]any{
+	m := map[string]any{
 		"type": a.Type,
 		"id":   a.ID,
 	}
+	if a.Emoji != "" {
+		m["emoji"] = a.Emoji
+	}
+	return m
 }
 
 // taskListText is the `--format=text` fallback for list/search. Agents read
