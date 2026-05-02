@@ -68,9 +68,16 @@ type DeviceGrant struct {
 	Interval                int    `json:"interval"`
 }
 
-func (c *Client) CreateDeviceGrant(ctx context.Context) (*DeviceGrant, error) {
+// CreateDeviceGrant kicks off the device flow. `name` is an optional display
+// label the server stores on the resulting bearer token (visible in
+// /auth-settings); empty string == omitted, server defaults to "default".
+func (c *Client) CreateDeviceGrant(ctx context.Context, name string) (*DeviceGrant, error) {
+	var body any
+	if name != "" {
+		body = map[string]string{"name": name}
+	}
 	var g DeviceGrant
-	if err := c.do(ctx, http.MethodPost, "/api/auth/device", nil, &g); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/auth/device", body, &g); err != nil {
 		return nil, err
 	}
 	return &g, nil

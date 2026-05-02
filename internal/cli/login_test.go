@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
 	"github.com/ultrakorne/sprawl_cli/internal/config"
@@ -51,6 +54,45 @@ func TestOnApproved_PersistsAndPointsAtSettings(t *testing.T) {
 	}
 	if dir == "" {
 		t.Fatal("scratchConfigDir returned empty")
+	}
+}
+
+func TestDeviceTokenName_SystemAndHost(t *testing.T) {
+	got := deviceTokenName()
+	if got == "" {
+		t.Fatal("deviceTokenName returned empty")
+	}
+	if !strings.HasPrefix(got, runtime.GOOS) {
+		t.Fatalf("deviceTokenName = %q, want prefix %q", got, runtime.GOOS)
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		want := runtime.GOOS + " · " + host
+		if got != want && !strings.HasPrefix(want, got) /* truncated */ {
+			t.Fatalf("deviceTokenName = %q, want %q", got, want)
+		}
+	}
+	if rc := utf8.RuneCountInString(got); rc > 64 {
+		t.Fatalf("rune count = %d, want ≤ 64", rc)
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes(strings.Repeat("é", 80), 64); utf8.RuneCountInString(got) != 64 {
+		t.Fatalf("truncateRunes(80×é, 64) rune count = %d, want 64", utf8.RuneCountInString(got))
+	}
+	if got := truncateRunes("short", 64); got != "short" {
+		t.Fatalf("truncateRunes shouldn't shrink short input: %q", got)
+	}
+	if got := truncateRunes("anything", 0); got != "" {
+		t.Fatalf("truncateRunes with n=0 should return empty: %q", got)
+	}
+}
+
+func TestSanitizeNamePart_StripsControlChars(t *testing.T) {
+	in := "  he\x01llo\tworld\x7f  "
+	got := sanitizeNamePart(in)
+	if got != "helloworld" {
+		t.Fatalf("sanitizeNamePart = %q, want %q", got, "helloworld")
 	}
 }
 

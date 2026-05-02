@@ -74,7 +74,7 @@ func TestCreateDeviceGrant_Success(t *testing.T) {
 		})
 	})
 	c := New()
-	g, err := c.CreateDeviceGrant(context.Background())
+	g, err := c.CreateDeviceGrant(context.Background(), "")
 	if err != nil {
 		t.Fatalf("CreateDeviceGrant: %v", err)
 	}
@@ -90,6 +90,40 @@ func TestCreateDeviceGrant_Success(t *testing.T) {
 	}
 	if reqs[0].Authorization != "" || reqs[0].AgentSecret != "" {
 		t.Fatalf("unauth endpoint must not send auth headers: %+v", reqs[0])
+	}
+	// Empty-name path: no body sent (matches pre-name-feature wire shape).
+	if len(reqs[0].Body) != 0 {
+		t.Fatalf("expected empty body when name is empty, got %q", reqs[0].Body)
+	}
+}
+
+func TestCreateDeviceGrant_SendsName(t *testing.T) {
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"device_code":               "dc",
+			"user_code":                 "UC1",
+			"verification_uri":          "https://x/auth/device",
+			"verification_uri_complete": "https://x/auth/device?user_code=UC1",
+			"expires_in":                600,
+			"interval":                  5,
+		})
+	})
+	c := New()
+	if _, err := c.CreateDeviceGrant(context.Background(), "home-laptop · task_manager"); err != nil {
+		t.Fatalf("CreateDeviceGrant: %v", err)
+	}
+	reqs := ts.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(reqs))
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(reqs[0].Body, &body); err != nil {
+		t.Fatalf("decode body %q: %v", reqs[0].Body, err)
+	}
+	if body.Name != "home-laptop · task_manager" {
+		t.Fatalf("name = %q, want %q", body.Name, "home-laptop · task_manager")
 	}
 }
 
@@ -1127,7 +1161,7 @@ func TestHeaderInvariants(t *testing.T) {
 	})
 
 	unauth := New()
-	if _, err := unauth.CreateDeviceGrant(context.Background()); err != nil {
+	if _, err := unauth.CreateDeviceGrant(context.Background(), ""); err != nil {
 		t.Fatalf("CreateDeviceGrant: %v", err)
 	}
 	if _, err := unauth.PollDeviceToken(context.Background(), "dc"); err != nil {

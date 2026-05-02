@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,7 +39,7 @@ func runLogin(ctx context.Context, out io.Writer) error {
 	fmt.Fprintln(out, "You'll export it as SPRAWL_AGENT_SECRET after login.")
 	fmt.Fprintln(out)
 
-	grant, err := c.CreateDeviceGrant(ctx)
+	grant, err := c.CreateDeviceGrant(ctx, deviceTokenName())
 	if err != nil {
 		return fmt.Errorf("create device grant: %w", err)
 	}
@@ -93,6 +96,61 @@ func runLogin(ctx context.Context, out io.Writer) error {
 			return fmt.Errorf("poll device token: %w", err)
 		}
 	}
+}
+
+// deviceTokenName builds the display label sent with POST /api/auth/device.
+// Format: "<system> · <hostname>" (e.g. "linux · home-laptop"). Falls back to
+// just the system tag if the hostname is unavailable. Returns "" if even the
+// system tag is empty — empty string tells the server to use its default.
+func deviceTokenName() string {
+	system := sanitizeNamePart(runtime.GOOS)
+	host, _ := os.Hostname()
+	host = sanitizeNamePart(host)
+
+	var name string
+	switch {
+	case system != "" && host != "":
+		name = system + " · " + host
+	case system != "":
+		name = system
+	case host != "":
+		name = host
+	default:
+		return ""
+	}
+
+	name = strings.TrimSpace(name)
+	return truncateRunes(name, 64)
+}
+
+// sanitizeNamePart strips control characters and trims whitespace from a
+// single component of the device-token name.
+func sanitizeNamePart(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// truncateRunes returns s truncated to at most n runes — rune-safe so we
+// never split a multibyte codepoint.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }
 
 func onApproved(out io.Writer, token string) error {
