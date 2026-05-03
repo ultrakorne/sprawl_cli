@@ -89,6 +89,15 @@ func isNotFoundAPIError(err error) bool {
 	return apiErr.Status == 404 && apiErr.Code == "not_found"
 }
 
+// printAndReturn prints err to stderr and returns it, so SilenceErrors=true
+// commands still tell the user what failed before cobra triggers exit 1.
+// Used by the text-only commands (skill install, update) that don't go
+// through the format-aware reportErr pipeline.
+func printAndReturn(stderr io.Writer, err error) error {
+	fmt.Fprintf(stderr, "error: %v\n", err)
+	return err
+}
+
 // reportErr renders err in the resolved format. Structured errors go to
 // stdout (agents parse stdout); human text goes to stderr. Returns the
 // original error so cobra's RunE exits non-zero.

@@ -57,6 +57,55 @@ func TestOnApproved_PersistsAndPointsAtSettings(t *testing.T) {
 	}
 }
 
+func TestOnApproved_TipShownWhenNoSkillInstalls(t *testing.T) {
+	scratchConfigDir(t)
+	t.Setenv("SPRAWL_API_URL", "https://example.test")
+
+	var buf bytes.Buffer
+	if err := onApproved(&buf, "tok"); err != nil {
+		t.Fatalf("onApproved: %v", err)
+	}
+	if !strings.Contains(buf.String(), "sprawl skill install") {
+		t.Fatalf("expected install tip in output:\n%s", buf.String())
+	}
+}
+
+func TestOnApproved_TipHiddenWhenSkillInstallsExist(t *testing.T) {
+	scratchConfigDir(t)
+	t.Setenv("SPRAWL_API_URL", "https://example.test")
+
+	// Pre-existing install record — re-login should keep it AND skip the tip.
+	seed := &config.Config{
+		Token: "old",
+		SkillInstalls: []config.SkillInstall{
+			{Kind: "skill", Name: "sprawl", Tool: "claude", Scope: "global", Path: "/x", Version: "0.1.0"},
+		},
+	}
+	if err := config.Save(build.AppName, seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := onApproved(&buf, "new-token"); err != nil {
+		t.Fatalf("onApproved: %v", err)
+	}
+	if strings.Contains(buf.String(), "sprawl skill install") {
+		t.Fatalf("install tip leaked despite existing install:\n%s", buf.String())
+	}
+
+	// Token replaced, install record preserved.
+	loaded, err := config.Load(build.AppName)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Token != "new-token" {
+		t.Fatalf("Token = %q, want new-token", loaded.Token)
+	}
+	if len(loaded.SkillInstalls) != 1 || loaded.SkillInstalls[0].Path != "/x" {
+		t.Fatalf("SkillInstalls wiped on re-login: %+v", loaded.SkillInstalls)
+	}
+}
+
 func TestDeviceTokenName_SystemAndHost(t *testing.T) {
 	got := deviceTokenName()
 	if got == "" {

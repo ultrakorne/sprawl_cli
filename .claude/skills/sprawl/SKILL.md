@@ -1,5 +1,6 @@
 ---
 name: sprawl
+version: "0.1.0"
 description: >
   Collaborate on shared tasks, checklists, and notes with the human and other
   agents via the sprawl CLI. Use this skill whenever the user asks you to look

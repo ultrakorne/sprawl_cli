@@ -154,7 +154,14 @@ func truncateRunes(s string, n int) string {
 }
 
 func onApproved(out io.Writer, token string) error {
-	if err := config.Save(build.AppName, &config.Config{Token: token}); err != nil {
+	// Load-then-mutate so re-login keeps any [[skill_installs]] records.
+	// A blank-slate Save would wipe them since Config is the whole file.
+	cfg, err := config.Load(build.AppName)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	cfg.Token = token
+	if err := config.Save(build.AppName, cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 	path, _ := config.Path(build.AppName)
@@ -162,5 +169,8 @@ func onApproved(out io.Writer, token string) error {
 	fmt.Fprintln(out, "\nNext: export your agent secret in this shell so authed requests work:")
 	fmt.Fprintln(out, "  export SPRAWL_AGENT_SECRET=<your owner key secret>")
 	fmt.Fprintf(out, "\nIf you don't have it yet, retrieve it from %s/auth-settings. The agent secret is never stored on disk by sprawl.\n", client.BaseURL())
+	if len(cfg.SkillInstalls) == 0 {
+		fmt.Fprintln(out, "\nTip: run `sprawl skill install` to drop the sprawl skill / sprawl-bookkeeper agent into Claude Code or OpenCode.")
+	}
 	return nil
 }

@@ -21,11 +21,17 @@ import (
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
 	"github.com/ultrakorne/sprawl_cli/internal/config"
+	"github.com/ultrakorne/sprawl_cli/internal/skill"
 )
 
 // baseURL is the GitHub API root. Tests override this to point at an
 // httptest.Server. There is no user-visible flag.
 var baseURL = "https://api.github.com"
+
+// fetchRemoteSkillVersions is the seam MaybeNotify uses to probe skill /
+// agent frontmatter on master. Pinned as a var so updater tests can swap
+// it for a stub without depending on the skill package's internal hosts.
+var fetchRemoteSkillVersions = skill.FetchRemoteVersions
 
 const (
 	repoOwner = "ultrakorne"
@@ -75,13 +81,18 @@ func canonicalVersion(v string) string {
 }
 
 type updateCache struct {
-	CheckedAt     time.Time `json:"checked_at"`
-	LatestVersion string    `json:"latest_version"`
+	CheckedAt                  time.Time `json:"checked_at"`
+	LatestVersion              string    `json:"latest_version"`
+	LatestSkillVersion         string    `json:"latest_skill_version,omitempty"`
+	LatestClaudeAgentVersion   string    `json:"latest_claude_agent_version,omitempty"`
+	LatestOpenCodeAgentVersion string    `json:"latest_opencode_agent_version,omitempty"`
 }
 
 // MaybeNotify is invoked from the root command's PersistentPreRunE. It
 // always returns nil; any failure (network, disk, parse) is silent so the
-// banner can never block or noise up the user's actual command.
+// banner can never block or noise up the user's actual command. The CLI
+// release tag and the master-branch skill/agent frontmatter versions are
+// probed together and cached for 24h.
 func MaybeNotify(ctx context.Context, stderr io.Writer) error {
 	if !shouldCheck() {
 		return nil
@@ -94,24 +105,98 @@ func MaybeNotify(ctx context.Context, stderr io.Writer) error {
 
 	cached, cachedOK := readCache(cachePath)
 	if cachedOK && time.Since(cached.CheckedAt) < cacheWindow {
-		printBannerIfNewer(stderr, cached.LatestVersion)
+		printBanners(stderr, cached)
 		return nil
 	}
 
+	probeCtx, cancel := context.WithTimeout(ctx, notifyTimeout)
+	defer cancel()
 	latest := fetchLatestQuiet(ctx)
+	rv := fetchRemoteSkillVersions(probeCtx)
+
 	// Always rewrite the cache so we back off for the next 24h, even on
-	// failure. On error we preserve any prior latest_version so a transient
-	// network hiccup doesn't lose the previously known target.
-	next := updateCache{CheckedAt: time.Now().UTC(), LatestVersion: latest}
-	if latest == "" && cachedOK {
-		next.LatestVersion = cached.LatestVersion
+	// failure. Preserve any prior values so a transient network hiccup
+	// doesn't lose previously-known versions.
+	next := updateCache{
+		CheckedAt:                  time.Now().UTC(),
+		LatestVersion:              latest,
+		LatestSkillVersion:         rv.Skill,
+		LatestClaudeAgentVersion:   rv.ClaudeAgent,
+		LatestOpenCodeAgentVersion: rv.OpenCodeAgent,
+	}
+	if cachedOK {
+		if next.LatestVersion == "" {
+			next.LatestVersion = cached.LatestVersion
+		}
+		if next.LatestSkillVersion == "" {
+			next.LatestSkillVersion = cached.LatestSkillVersion
+		}
+		if next.LatestClaudeAgentVersion == "" {
+			next.LatestClaudeAgentVersion = cached.LatestClaudeAgentVersion
+		}
+		if next.LatestOpenCodeAgentVersion == "" {
+			next.LatestOpenCodeAgentVersion = cached.LatestOpenCodeAgentVersion
+		}
 	}
 	_ = writeCache(cachePath, next)
 
-	if next.LatestVersion != "" {
-		printBannerIfNewer(stderr, next.LatestVersion)
-	}
+	printBanners(stderr, next)
 	return nil
+}
+
+// printBanners emits the CLI banner (when newer) and a single skill/agent
+// banner if any recorded install is older than the corresponding remote.
+func printBanners(stderr io.Writer, c updateCache) {
+	if c.LatestVersion != "" {
+		printBannerIfNewer(stderr, c.LatestVersion)
+	}
+	cfg, err := config.Load(build.AppName)
+	if err != nil || len(cfg.SkillInstalls) == 0 {
+		return
+	}
+	skillStale := hasStaleInstall(cfg.SkillInstalls, "skill", "", c.LatestSkillVersion)
+	agentStale := hasStaleInstall(cfg.SkillInstalls, "agent", "claude", c.LatestClaudeAgentVersion) ||
+		hasStaleInstall(cfg.SkillInstalls, "agent", "opencode", c.LatestOpenCodeAgentVersion)
+
+	switch {
+	case skillStale && agentStale:
+		printSkillBanner(stderr, "sprawl skill + sprawl-bookkeeper agent updates available — run `sprawl update`.")
+	case skillStale:
+		printSkillBanner(stderr, "sprawl skill update available — run `sprawl update`.")
+	case agentStale:
+		printSkillBanner(stderr, "sprawl-bookkeeper agent update available — run `sprawl update`.")
+	}
+}
+
+// hasStaleInstall reports whether any install of the given (kind, tool)
+// has a recorded version that differs from remote. Empty remote means
+// "couldn't probe" → false (silent rather than nag without certainty).
+// Empty tool matches any tool (used for skills, which don't differ by tool).
+func hasStaleInstall(installs []config.SkillInstall, kind, tool, remote string) bool {
+	if remote == "" {
+		return false
+	}
+	for _, inst := range installs {
+		if inst.Kind != kind {
+			continue
+		}
+		if tool != "" && inst.Tool != tool {
+			continue
+		}
+		if inst.Version != remote {
+			return true
+		}
+	}
+	return false
+}
+
+func printSkillBanner(stderr io.Writer, msg string) {
+	line := msg + "\n"
+	if useColor(stderr) {
+		fmt.Fprintf(stderr, "\x1b[33m%s\x1b[0m", line)
+		return
+	}
+	fmt.Fprint(stderr, line)
 }
 
 func shouldCheck() bool {
