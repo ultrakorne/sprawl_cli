@@ -15,6 +15,7 @@ func newSkillCmd() *cobra.Command {
 		Short: "Manage the sprawl skill and sprawl-bookkeeper agent install",
 	}
 	cmd.AddCommand(newSkillInstallCmd())
+	cmd.AddCommand(newSkillUninstallCmd())
 	return cmd
 }
 
@@ -35,6 +36,27 @@ func newSkillInstallCmd() *cobra.Command {
 				return printAndReturn(cmd.ErrOrStderr(), fmt.Errorf("getwd: %w", err))
 			}
 			if err := skill.Install(cmd.Context(), cwd, cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
+				return printAndReturn(cmd.ErrOrStderr(), err)
+			}
+			return nil
+		},
+	}
+	cmd.SilenceErrors = true
+	return cmd
+}
+
+func newSkillUninstallCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove every recorded sprawl skill / agent install",
+		Long: "Lists every skill / agent install recorded in config.toml, asks for " +
+			"confirmation, then deletes each path and clears its config row. " +
+			"There is no per-target selection — the command always clears every " +
+			"recorded install at once.",
+		Args:         textArgs(cobra.NoArgs),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := skill.Uninstall(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
 				return printAndReturn(cmd.ErrOrStderr(), err)
 			}
 			return nil

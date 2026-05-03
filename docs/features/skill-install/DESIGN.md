@@ -70,6 +70,14 @@ Same gating as the binary banner: prod `sprawl` only, only when `IsReleaseVersio
 - **Per-target failures don't abort the run.** Each target prints `✓` or `✗` with its own error; the command exits non-zero only if at least one target failed. Successful writes are still recorded so the next `update` can resume.
 - **Frontmatter version parser is a hand-rolled scanner**, not a YAML lib. The version field is a single top-level scalar; pulling in a YAML dependency for a one-line lookup would violate the no-extra-deps stance.
 
+## Uninstall
+
+`sprawl skill uninstall` is the symmetric tear-down. It loads `config.toml`, prints every recorded `[[skill_installs]]` row (`name (tool, scope) ← path`), asks once for confirmation through the same bubbletea Yes/No prompt the install confirmation uses, then deletes each `path` (`os.RemoveAll`, which copes with both skill directories and single agent files) and drops its row.
+
+There is no per-target picker by design — the bookkeeping already enumerates every place a copy landed, and the install matrix is small enough that "remove the lot" is the only useful default. A user who wants finer control can edit `config.toml` and remove rows by hand before re-running `uninstall`.
+
+Per-target failures don't abort the rest. A removal that fails (e.g. permissions) prints `✗ <path>: <err>` and keeps its config row so the user can retry; successful removals are dropped from the config regardless. An empty `[[skill_installs]]` table prints `Nothing installed.` and exits cleanly without prompting.
+
 ## Why a separate command, not bundled into `login`
 
 `login` already does one thing — device-flow authentication — and the user might run it many times (token expiry, fresh shells on shared machines). Auto-installing skills there would either (a) re-extract the same files repeatedly or (b) need its own "already installed" gate, both of which are worse than a one-time explicit command with a clear name.

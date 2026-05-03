@@ -12,10 +12,11 @@ The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls 
 
 | File | Role |
 |------|------|
-| `internal/cli/skill.go` | Cobra wiring for `skill` and `skill install`. |
+| `internal/cli/skill.go` | Cobra wiring for `skill`, `skill install`, and `skill uninstall`. |
 | `internal/cli/update.go` | `update` runs `updater.RunUpdate` then `skill.Update`, joining errors. |
 | `internal/cli/login.go` | After a successful login, suggests `sprawl skill install` when no installs are recorded; uses load-then-mutate so re-login preserves rows. |
 | `internal/skill/install.go` | `Install` — orchestrates prompt → target resolution → download → write → record. |
+| `internal/skill/uninstall.go` | `Uninstall` — list recorded rows, confirm, `os.RemoveAll` each path, drop the rows from config. |
 | `internal/skill/prompt.go` | `multiSelectModel` / `singleSelectModel` (bubbletea v2 models), `runPromptChoice`, `runPromptConfirm`; lipgloss palette for the cursor / checkbox / hint styling. |
 | `internal/skill/targets.go` | `Choice` / `Target`, `ResolveTargets`, `srcFor`, `dstFor` — the destination-path matrix. |
 | `internal/skill/download.go` | `fetchMasterTarball`, `extractTarball` — GitHub API tarball, gzip + tar walk, top-prefix strip. |
