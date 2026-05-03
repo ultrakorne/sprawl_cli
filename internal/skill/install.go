@@ -1,8 +1,8 @@
 package skill
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,11 +25,14 @@ func Install(ctx context.Context, cwd string, in io.Reader, out io.Writer) error
 	if err != nil {
 		return fmt.Errorf("resolve home: %w", err)
 	}
-	r := bufio.NewReader(in)
 
-	choice, err := promptChoice(r, out, cwd)
+	choice, err := promptChoiceFunc(in, out, cwd)
 	if err != nil {
-		return err
+		if errors.Is(err, errPromptCancelled) {
+			fmt.Fprintln(out, "Cancelled.")
+			return nil
+		}
+		return fmt.Errorf("prompt: %w", err)
 	}
 	if len(choice.What) == 0 || len(choice.Tools) == 0 {
 		fmt.Fprintln(out, "Nothing selected.")
@@ -43,7 +46,16 @@ func Install(ctx context.Context, cwd string, in io.Reader, out io.Writer) error
 		fmt.Fprintf(out, "  - %s (%s, %s) → %s\n", t.Name, t.Tool, t.Scope, t.DstPath)
 	}
 	fmt.Fprintln(out)
-	if !promptYesNo(r, out, "Proceed? [Y/n]: ", true) {
+
+	proceed, err := promptConfirmFunc(in, out, "Proceed?")
+	if err != nil {
+		if errors.Is(err, errPromptCancelled) {
+			fmt.Fprintln(out, "Aborted.")
+			return nil
+		}
+		return fmt.Errorf("confirm: %w", err)
+	}
+	if !proceed {
 		fmt.Fprintln(out, "Aborted.")
 		return nil
 	}

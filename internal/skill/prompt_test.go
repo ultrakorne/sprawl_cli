@@ -1,132 +1,191 @@
 package skill
 
 import (
-	"bufio"
-	"bytes"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
-func reader(s string) *bufio.Reader {
-	return bufio.NewReader(strings.NewReader(s))
+// renderPlain returns the View body with ANSI escape codes stripped, so
+// substring asserts don't break when lipgloss colours interleave with the
+// content.
+func renderPlain(m tea.Model) string {
+	v := m.View()
+	return ansi.Strip(v.Content)
 }
 
-func TestPromptMultiSelect_BlankPicksAll(t *testing.T) {
-	in := reader("\n")
-	var out bytes.Buffer
-	got, err := promptMultiSelect(in, &out, "header", []option{
-		{label: "A", value: "a"}, {label: "B", value: "b"},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
+// drive feeds messages into a bubbletea Model one at a time and returns
+// the final state. We test models directly rather than spawning a Program
+// so tests stay deterministic and don't need a TTY.
+func drive(t *testing.T, m tea.Model, msgs ...tea.Msg) tea.Model {
+	t.Helper()
+	for _, msg := range msgs {
+		m, _ = m.Update(msg)
 	}
+	return m
+}
+
+func key(s string) tea.KeyPressMsg {
+	switch s {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace}
+	}
+	// Single printable character.
+	r := []rune(s)[0]
+	return tea.KeyPressMsg{Code: r, Text: s}
+}
+
+func TestMultiSelect_DefaultsToAllSelected(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	final := drive(t, m, key("enter")).(multiSelectModel)
+	got := final.values()
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("got %v", got)
+		t.Fatalf("values = %v, want [a b]", got)
 	}
 }
 
-func TestPromptMultiSelect_CommaSeparated(t *testing.T) {
-	in := reader("2,1\n")
-	var out bytes.Buffer
-	got, err := promptMultiSelect(in, &out, "header", []option{
-		{label: "A", value: "a"}, {label: "B", value: "b"}, {label: "C", value: "c"},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	// Returned in input order; duplicates collapsed.
-	if len(got) != 2 || got[0] != "b" || got[1] != "a" {
-		t.Fatalf("got %v", got)
+func TestMultiSelect_SpaceTogglesAtCursor(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	// Toggle off A, leave B on, confirm.
+	final := drive(t, m, key("space"), key("enter")).(multiSelectModel)
+	got := final.values()
+	if len(got) != 1 || got[0] != "b" {
+		t.Fatalf("values = %v, want [b]", got)
 	}
 }
 
-func TestPromptMultiSelect_RetriesOnInvalidInput(t *testing.T) {
-	in := reader("99\n1\n")
-	var out bytes.Buffer
-	got, err := promptMultiSelect(in, &out, "header", []option{
-		{label: "A", value: "a"},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("got %v", got)
-	}
-	if !strings.Contains(out.String(), "Invalid selection") {
-		t.Fatalf("expected error message, got %q", out.String())
+func TestMultiSelect_ArrowKeysMoveCursor(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}, {label: "C", value: "c"}})
+	final := drive(t, m, key("down"), key("space"), key("enter")).(multiSelectModel)
+	// All on by default; toggling B off leaves [a, c].
+	got := final.values()
+	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Fatalf("values = %v, want [a c]", got)
 	}
 }
 
-func TestPromptSingleSelect(t *testing.T) {
-	in := reader("2\n")
-	var out bytes.Buffer
-	got, err := promptSingleSelect(in, &out, "scope", []option{
-		{label: "Global", value: "global"}, {label: "Local", value: "local"},
-	})
-	if err != nil {
-		t.Fatalf("err: %v", err)
+func TestMultiSelect_VimKeysMoveCursor(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	// j down → cursor on B; toggle B off; k up; toggle A off; enter must
+	// refuse since selection is now empty.
+	final := drive(t, m, key("j"), key("space"), key("k"), key("space"), key("enter")).(multiSelectModel)
+	if len(final.values()) != 0 {
+		t.Fatalf("values = %v, expected empty after toggling both off", final.values())
 	}
-	if got != "local" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestPromptYesNo_Defaults(t *testing.T) {
-	cases := []struct {
-		in         string
-		defaultYes bool
-		want       bool
-	}{
-		{"\n", true, true},
-		{"\n", false, false},
-		{"y\n", false, true},
-		{"YES\n", false, true},
-		{"n\n", true, false},
-		{"nope\n", true, false},
-	}
-	for _, tc := range cases {
-		var out bytes.Buffer
-		got := promptYesNo(reader(tc.in), &out, "ok? ", tc.defaultYes)
-		if got != tc.want {
-			t.Fatalf("input %q default=%v: got %v want %v", tc.in, tc.defaultYes, got, tc.want)
-		}
+	if final.cancel {
+		t.Fatal("empty enter should not flip cancel")
 	}
 }
 
-func TestPromptChoice_FullPath(t *testing.T) {
-	// Pick both skill+agent (blank), pick claude only (1), pick local (2).
-	in := reader("\n1\n2\n")
-	var out bytes.Buffer
-	got, err := promptChoice(in, &out, "/here")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if len(got.What) != 2 {
-		t.Fatalf("What = %v", got.What)
-	}
-	if len(got.Tools) != 1 || got.Tools[0] != "claude" {
-		t.Fatalf("Tools = %v", got.Tools)
-	}
-	if got.Scope != "local" {
-		t.Fatalf("Scope = %q", got.Scope)
-	}
-	if !strings.Contains(out.String(), "current folder: /here") {
-		t.Fatalf("cwd not shown in label: %q", out.String())
+func TestMultiSelect_AKeyTogglesAll(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	// All on by default → 'a' clears all → 'a' again restores all → enter.
+	final := drive(t, m, key("a"), key("a"), key("enter")).(multiSelectModel)
+	if len(final.values()) != 2 {
+		t.Fatalf("values = %v, want both", final.values())
 	}
 }
 
-func TestParseIndexes(t *testing.T) {
-	got, ok := parseIndexes("1,3,2", 3)
-	if !ok || len(got) != 3 || got[0] != 0 || got[1] != 2 || got[2] != 1 {
-		t.Fatalf("parseIndexes = %v ok=%v", got, ok)
+func TestMultiSelect_EscCancels(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}})
+	final := drive(t, m, key("esc")).(multiSelectModel)
+	if !final.cancel {
+		t.Fatal("esc should set cancel")
 	}
-	if _, ok := parseIndexes("1,abc", 3); ok {
-		t.Fatal("expected !ok on bad token")
+}
+
+func TestMultiSelect_CtrlCCancels(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}})
+	final := drive(t, m, key("ctrl+c")).(multiSelectModel)
+	if !final.cancel {
+		t.Fatal("ctrl+c should set cancel")
 	}
-	if _, ok := parseIndexes("1,4", 3); ok {
-		t.Fatal("expected !ok on out-of-range")
+}
+
+func TestMultiSelect_CursorClampsAtEnds(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	final := drive(t, m, key("up"), key("up"), key("up")).(multiSelectModel)
+	if final.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (clamped)", final.cursor)
 	}
-	if _, ok := parseIndexes("", 3); ok {
-		t.Fatal("expected !ok on empty token")
+	final = drive(t, m, key("down"), key("down"), key("down"), key("down")).(multiSelectModel)
+	if final.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 (clamped at last index)", final.cursor)
+	}
+}
+
+func TestMultiSelect_View_RendersCheckboxesAndCursor(t *testing.T) {
+	m := newMultiSelect("Pick something", []option{{label: "Alpha", value: "a"}, {label: "Beta", value: "b"}})
+	body := renderPlain(m)
+	if !strings.Contains(body, "Pick something") {
+		t.Errorf("title missing: %q", body)
+	}
+	if !strings.Contains(body, "[x] Alpha") {
+		t.Errorf("Alpha row should be checked: %q", body)
+	}
+	if !strings.Contains(body, "› [x] Alpha") {
+		t.Errorf("cursor should be on Alpha: %q", body)
+	}
+	if !strings.Contains(body, "esc: cancel") {
+		t.Errorf("hints missing: %q", body)
+	}
+}
+
+func TestMultiSelect_View_EmitsAnsiWhenStyled(t *testing.T) {
+	// Pin the contract that we *do* emit ANSI styling — so a future change
+	// that strips colours doesn't go unnoticed.
+	m := newMultiSelect("hello", []option{{label: "A", value: "a"}})
+	if !strings.Contains(m.View().Content, "\x1b[") {
+		t.Fatal("View should contain ANSI escape codes for colour")
+	}
+}
+
+func TestSingleSelect_EnterPicksFirst(t *testing.T) {
+	m := newSingleSelect("scope", []option{{label: "Global", value: "global"}, {label: "Local", value: "local"}})
+	final := drive(t, m, key("enter")).(singleSelectModel)
+	if final.value() != "global" {
+		t.Fatalf("value = %q, want global", final.value())
+	}
+}
+
+func TestSingleSelect_DownThenEnter(t *testing.T) {
+	m := newSingleSelect("scope", []option{{label: "Global", value: "global"}, {label: "Local", value: "local"}})
+	final := drive(t, m, key("down"), key("enter")).(singleSelectModel)
+	if final.value() != "local" {
+		t.Fatalf("value = %q, want local", final.value())
+	}
+}
+
+func TestSingleSelect_EscCancels(t *testing.T) {
+	m := newSingleSelect("scope", []option{{label: "Global", value: "global"}})
+	final := drive(t, m, key("esc")).(singleSelectModel)
+	if !final.cancel {
+		t.Fatal("esc should cancel")
+	}
+}
+
+func TestSingleSelect_View_HasCursorAndHints(t *testing.T) {
+	m := newSingleSelect("Scope?", []option{{label: "Global", value: "g"}, {label: "Local — /tmp", value: "l"}})
+	body := renderPlain(m)
+	if !strings.Contains(body, "Scope?") {
+		t.Errorf("title missing: %q", body)
+	}
+	if !strings.Contains(body, "› Global") {
+		t.Errorf("cursor on first row: %q", body)
+	}
+	if !strings.Contains(body, "Local — /tmp") {
+		t.Errorf("local label with cwd missing: %q", body)
 	}
 }

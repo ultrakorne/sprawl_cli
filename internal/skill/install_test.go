@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,9 +53,9 @@ func installFixtureTarball(t *testing.T) []byte {
 }
 
 // pinHomeAndConfig redirects HOME and XDG_CONFIG_HOME to a scratch dir and
-// returns it. The skill installer reads UserHomeDir; the config layer reads
-// XDG_CONFIG_HOME — both must point at the scratch space so the test
-// doesn't touch the real home.
+// returns it. The skill installer reads UserHomeDir; the config layer
+// reads XDG_CONFIG_HOME — both must point at the scratch space so the
+// test doesn't touch the real home.
 func pinHomeAndConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -74,15 +75,49 @@ func pinTarballServer(t *testing.T, body []byte) {
 	t.Cleanup(func() { baseURL = old })
 }
 
+// stubPrompts replaces the bubbletea-driven prompts with deterministic
+// callbacks. Tests skip the TUI plumbing entirely; the prompt models are
+// covered by prompt_test.go.
+func stubPrompts(t *testing.T, choice Choice, proceed bool) {
+	t.Helper()
+	prevC, prevP := promptChoiceFunc, promptConfirmFunc
+	promptChoiceFunc = func(_ io.Reader, _ io.Writer, _ string) (Choice, error) {
+		return choice, nil
+	}
+	promptConfirmFunc = func(_ io.Reader, _ io.Writer, _ string) (bool, error) {
+		return proceed, nil
+	}
+	t.Cleanup(func() {
+		promptChoiceFunc = prevC
+		promptConfirmFunc = prevP
+	})
+}
+
+// stubPromptsCancelled simulates the user hitting esc/ctrl+c at the
+// initial choice screen.
+func stubPromptsCancelled(t *testing.T) {
+	t.Helper()
+	prevC, prevP := promptChoiceFunc, promptConfirmFunc
+	promptChoiceFunc = func(_ io.Reader, _ io.Writer, _ string) (Choice, error) {
+		return Choice{}, errPromptCancelled
+	}
+	t.Cleanup(func() {
+		promptChoiceFunc = prevC
+		promptConfirmFunc = prevP
+	})
+}
+
 func TestInstall_GlobalAllTools_WritesFilesAndConfig(t *testing.T) {
 	home := pinHomeAndConfig(t)
 	pinTarballServer(t, installFixtureTarball(t))
+	stubPrompts(t, Choice{
+		What:  []string{"skill", "agent"},
+		Tools: []string{"claude", "opencode"},
+		Scope: "global",
+	}, true)
 
-	// Blank = both items, blank = both tools, "1" = global, "y" = confirm.
-	stdin := strings.NewReader("\n\n1\ny\n")
 	var stdout bytes.Buffer
-
-	if err := Install(context.Background(), "/cwd-unused", stdin, &stdout); err != nil {
+	if err := Install(context.Background(), "/cwd-unused", strings.NewReader(""), &stdout); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -127,11 +162,14 @@ func TestInstall_LocalScope_UsesCwd(t *testing.T) {
 	pinHomeAndConfig(t)
 	pinTarballServer(t, installFixtureTarball(t))
 	cwd := t.TempDir()
+	stubPrompts(t, Choice{
+		What:  []string{"skill"},
+		Tools: []string{"claude"},
+		Scope: "local",
+	}, true)
 
-	// "1" = skill only, "1" = claude only, "2" = local, "y" = confirm.
-	stdin := strings.NewReader("1\n1\n2\ny\n")
 	var stdout bytes.Buffer
-	if err := Install(context.Background(), cwd, stdin, &stdout); err != nil {
+	if err := Install(context.Background(), cwd, strings.NewReader(""), &stdout); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -144,10 +182,14 @@ func TestInstall_LocalScope_UsesCwd(t *testing.T) {
 func TestInstall_AbortAtConfirm_NoFilesWritten(t *testing.T) {
 	home := pinHomeAndConfig(t)
 	pinTarballServer(t, installFixtureTarball(t))
+	stubPrompts(t, Choice{
+		What:  []string{"skill"},
+		Tools: []string{"claude"},
+		Scope: "global",
+	}, false) // user said no at confirm
 
-	stdin := strings.NewReader("\n\n1\nn\n")
 	var stdout bytes.Buffer
-	if err := Install(context.Background(), "/cwd", stdin, &stdout); err != nil {
+	if err := Install(context.Background(), "/cwd", strings.NewReader(""), &stdout); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Aborted") {
@@ -155,6 +197,23 @@ func TestInstall_AbortAtConfirm_NoFilesWritten(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "sprawl")); err == nil {
 		t.Fatalf("skill dir created despite abort")
+	}
+}
+
+func TestInstall_CancelAtChoice_NoFilesWritten(t *testing.T) {
+	home := pinHomeAndConfig(t)
+	pinTarballServer(t, installFixtureTarball(t))
+	stubPromptsCancelled(t)
+
+	var stdout bytes.Buffer
+	if err := Install(context.Background(), "/cwd", strings.NewReader(""), &stdout); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Cancelled") {
+		t.Fatalf("expected cancelled message, got %q", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "sprawl")); err == nil {
+		t.Fatalf("skill dir created despite cancel")
 	}
 }
 
@@ -168,9 +227,14 @@ func TestInstall_DownloadFailure_Surfaces(t *testing.T) {
 	baseURL = srv.URL
 	t.Cleanup(func() { baseURL = old })
 
-	stdin := strings.NewReader("\n\n1\ny\n")
+	stubPrompts(t, Choice{
+		What:  []string{"skill"},
+		Tools: []string{"claude"},
+		Scope: "global",
+	}, true)
+
 	var stdout bytes.Buffer
-	err := Install(context.Background(), "/cwd", stdin, &stdout)
+	err := Install(context.Background(), "/cwd", strings.NewReader(""), &stdout)
 	if err == nil {
 		t.Fatal("expected error on download failure")
 	}

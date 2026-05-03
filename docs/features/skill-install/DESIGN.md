@@ -4,15 +4,17 @@
 
 The repo ships two AI-tool artefacts alongside the CLI: the **`sprawl` skill** (a directory of guidance / setup files at `.claude/skills/sprawl/`) and the **`sprawl-bookkeeper` agent** (a single-file sub-agent definition, in two flavours — `.claude/agents/sprawl-bookkeeper.md` and `.opencode/agents/sprawl-bookkeeper.md`, because the frontmatter schemas differ). `sprawl skill install` lets the user drop these into the directories Claude Code or OpenCode loads from, without cloning the repo or hand-copying files.
 
-The command is interactive only. There is no flag-driven non-interactive mode — the install matrix (what × tool × scope) is small enough that three short prompts beat a wall of flags, and an agent that wants to script it can pipe answers in.
+The command is interactive only. The prompts are bubbletea TUI screens — arrow / vim keys to move, space to toggle a multi-select row, enter to confirm, esc or ctrl+c to cancel. There is no flag-driven mode and no piped-input mode: the prompt models consume key events, not lines, so feeding stdin from a script does not work. Anyone scripting an install today has to clone the repo and run `scripts/install-skill.sh` — that's an acceptable cost since the matrix has only sixteen states.
 
 ## Install matrix
 
-Three picks, in order. The first two are multi-select (blank = all); the third is single-select.
+Three picks, in order. The first two are multi-select; the third is single-select.
 
 1. **What** — `sprawl skill`, `sprawl-bookkeeper agent`, or both.
 2. **For which AI tools** — Claude Code, OpenCode, or both.
 3. **Scope** — `global` (the user's home) or `local` (the current working directory).
+
+Multi-select rows start all-checked. Pressing enter on the first stage with the defaults intact picks both items; an empty selection (everything toggled off) is refused — the user must toggle at least one row back on or hit esc to cancel the flow. The single-select scope cursor starts on `Global` so a default-everything install lands in the user's home dir.
 
 A `Choice{What, Tools, Scope}` expands to one `Target` per (what × tool) pair. A confirmation summary lists every absolute destination path before any download or write happens.
 

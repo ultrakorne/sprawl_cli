@@ -16,7 +16,7 @@ The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls 
 | `internal/cli/update.go` | `update` runs `updater.RunUpdate` then `skill.Update`, joining errors. |
 | `internal/cli/login.go` | After a successful login, suggests `sprawl skill install` when no installs are recorded; uses load-then-mutate so re-login preserves rows. |
 | `internal/skill/install.go` | `Install` — orchestrates prompt → target resolution → download → write → record. |
-| `internal/skill/prompt.go` | `promptChoice` and the multi/single/yes-no helpers; loops on bad input until valid or EOF. |
+| `internal/skill/prompt.go` | `multiSelectModel` / `singleSelectModel` (bubbletea v2 models), `runPromptChoice`, `runPromptConfirm`; lipgloss palette for the cursor / checkbox / hint styling. |
 | `internal/skill/targets.go` | `Choice` / `Target`, `ResolveTargets`, `srcFor`, `dstFor` — the destination-path matrix. |
 | `internal/skill/download.go` | `fetchMasterTarball`, `extractTarball` — GitHub API tarball, gzip + tar walk, top-prefix strip. |
 | `internal/skill/write.go` | `writeTarget` (skill = wipe-and-rewrite directory, agent = single-file overwrite). |
@@ -80,5 +80,6 @@ A successful `sprawl update` calls `removeCache` on the binary path; the skill-u
 - `skill.baseURL` (download.go) — GitHub API root, swapped in `download_test.go` for `httptest.Server`.
 - `skill.rawBaseURL` (remote.go) — raw content host, swapped in `update_test.go`.
 - `updater.fetchRemoteSkillVersions` (updater.go) — probe seam, stubbed in `updater_test.go` so updater tests don't need a working raw-host fixture.
+- `skill.promptChoiceFunc` / `skill.promptConfirmFunc` (prompt.go) — interactive prompts. `install_test.go` substitutes deterministic returns via `stubPrompts` / `stubPromptsCancelled` so `Install` end-to-end tests don't drive a fake TTY. The bubbletea models themselves are unit-tested in `prompt_test.go` by feeding synthetic `tea.KeyPressMsg`s directly into `model.Update`; no `tea.NewProgram` is spun up under test.
 
 There is no user-visible flag; production hosts are fixed for end users.

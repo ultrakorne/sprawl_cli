@@ -12,6 +12,7 @@ Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered increm
 - **HTTP**: stdlib `net/http` + `encoding/json` — no extra client deps
 - **Config**: TOML via `github.com/BurntSushi/toml`
 - **Output**: TOON via `github.com/alpkeskin/gotoon` (default), JSON, plain text fallback
+- **Interactive TUI**: `charm.land/bubbletea/v2` — see [Interactive prompts](#interactive-prompts) for when to reach for it
 - **Releases**: `goreleaser`
 
 ## Two-binary build pattern (critical)
@@ -75,6 +76,47 @@ make tidy fmt vet
 ```
 
 Change the prod URL at build time without editing the Makefile: `make build PROD_URL=https://staging.example.com`.
+
+## Interactive prompts
+
+`charm.land/bubbletea/v2` is the chosen TUI lib. We already use it for the
+three-stage selection in `sprawl skill install` (see
+`internal/skill/prompt.go`); reach for it whenever a command needs more
+than a single line of input.
+
+**When to use bubbletea:**
+- Multi-select / single-select pickers (checkboxes, radio lists).
+- Forms with several fields where blank-line / comma-separated parsing
+  would feel awkward.
+- Anything that benefits from arrow-key navigation, live preview, or a
+  spinner during async work.
+
+**When NOT to use it:** a single y/N prompt (`scanner.Scan` is fine — see
+`internal/updater/github.go` `confirm`), or non-interactive output (the
+update banner, the login URL print). Mixing bubbletea programs with
+line-by-line `fmt.Fprintln` output in the same flow gets ugly fast.
+
+**Pattern to follow:**
+1. Define a `tea.Model` with `Init() Cmd`, `Update(Msg) (Model, Cmd)`, and
+   `View() View`. Use `tea.NewView(string)` to wrap rendered text.
+2. Match key presses by string in `Update`:
+   `if k, ok := msg.(tea.KeyPressMsg); ok { switch k.String() { ... } }`.
+   Common keys: `"enter"`, `"esc"`, `"ctrl+c"`, `"up"`/`"k"`,
+   `"down"`/`"j"`, `"space"` (also matches `" "`).
+3. Wrap the program runner in a thin function (`runMultiSelect`, etc.)
+   and expose the call site as a swappable `var fooFunc = runFoo` so
+   tests can stub it without driving a fake TTY. See `prompt.go` for the
+   shape — `promptChoiceFunc` and `promptConfirmFunc` are the seams.
+4. Cancellation (`esc` / `ctrl+c`) returns `errPromptCancelled`; call
+   sites should `errors.Is` and translate it into a friendly "Cancelled."
+   message, not a stack-trace error.
+5. Test models directly via `model.Update(msg)` — there's a small `key`
+   helper in `prompt_test.go` for synthesising `tea.KeyPressMsg`. Don't
+   spawn `tea.NewProgram` in tests.
+
+The dependency adds ~7 MB to the binary, mostly transitive
+(`charmbracelet/ultraviolet` + `x/ansi`). If you're tempted to add it for
+a single-line prompt, default to a plain `bufio.Scanner` instead.
 
 ## Collaboration rules
 
