@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,8 +27,9 @@ var errPromptCancelled = errors.New("prompt cancelled")
 
 // option pairs a human-readable label with the value emitted on selection.
 type option struct {
-	label string
-	value string
+	label        string
+	value        string
+	autodetectBy string
 }
 
 // promptChoiceFunc and promptConfirmFunc are seams so install_test can
@@ -36,6 +38,7 @@ type option struct {
 var (
 	promptChoiceFunc  = runPromptChoice
 	promptConfirmFunc = runPromptConfirm
+	lookPathFunc      = exec.LookPath
 )
 
 // runPromptChoice walks the user through what / tools / scope as three
@@ -45,14 +48,16 @@ func runPromptChoice(in io.Reader, out io.Writer, cwd string) (Choice, error) {
 	what, err := runMultiSelect(in, out, "What to install?", []option{
 		{label: "sprawl skill", value: "skill"},
 		{label: "sprawl-bookkeeper agent", value: "agent"},
-	})
+	}, nil)
 	if err != nil {
 		return Choice{}, err
 	}
-	tools, err := runMultiSelect(in, out, "For which AI tools?", []option{
-		{label: "Claude Code", value: "claude"},
-		{label: "OpenCode", value: "opencode"},
-	})
+	toolOptions := []option{
+		{label: "Claude Code", value: "claude", autodetectBy: "claude"},
+		{label: "OpenCode", value: "opencode", autodetectBy: "opencode"},
+		{label: "Codex", value: "codex", autodetectBy: "codex"},
+	}
+	tools, err := runMultiSelect(in, out, "For which AI tools?", toolOptions, installedToolDefaults(toolOptions))
 	if err != nil {
 		return Choice{}, err
 	}
@@ -79,8 +84,8 @@ func runPromptConfirm(in io.Reader, out io.Writer, title string) (bool, error) {
 	return v == "yes", nil
 }
 
-func runMultiSelect(in io.Reader, out io.Writer, title string, items []option) ([]string, error) {
-	p := tea.NewProgram(newMultiSelect(title, items),
+func runMultiSelect(in io.Reader, out io.Writer, title string, items []option, selected []bool) ([]string, error) {
+	p := tea.NewProgram(newMultiSelect(title, items, selected),
 		tea.WithInput(in), tea.WithOutput(out))
 	final, err := p.Run()
 	if err != nil {
@@ -108,8 +113,8 @@ func runSingleSelect(in io.Reader, out io.Writer, title string, items []option) 
 }
 
 // multiSelectModel is a checklist with cursor + per-row toggle + an "all"
-// shortcut. All items default to selected so an enter-only run picks
-// everything (matching the prior comma-separated UX where blank meant all).
+// shortcut. Callers can provide checked rows; otherwise all items default to
+// selected so an enter-only run picks everything.
 type multiSelectModel struct {
 	title    string
 	items    []option
@@ -118,12 +123,29 @@ type multiSelectModel struct {
 	cancel   bool
 }
 
-func newMultiSelect(title string, items []option) multiSelectModel {
+func newMultiSelect(title string, items []option, selected []bool) multiSelectModel {
 	sel := make([]bool, len(items))
-	for i := range sel {
-		sel[i] = true
+	if selected != nil {
+		copy(sel, selected)
+	} else {
+		for i := range sel {
+			sel[i] = true
+		}
 	}
 	return multiSelectModel{title: title, items: items, selected: sel}
+}
+
+func installedToolDefaults(items []option) []bool {
+	selected := make([]bool, len(items))
+	for i, item := range items {
+		if item.autodetectBy == "" {
+			continue
+		}
+		if _, err := lookPathFunc(item.autodetectBy); err == nil {
+			selected[i] = true
+		}
+	}
+	return selected
 }
 
 func (m multiSelectModel) Init() tea.Cmd { return nil }
@@ -191,6 +213,9 @@ func (m multiSelectModel) View() tea.View {
 			label = rowStyle.Render(label)
 		}
 		fmt.Fprintf(&b, "%s%s %s\n", cursor, check, label)
+	}
+	if len(m.values()) == 0 {
+		b.WriteString("\n" + hintStyle.Render("no tools selected — use space to toggle at least one on") + "\n")
 	}
 	b.WriteString("\n" + hintStyle.Render("space: toggle • a: all/none • enter: confirm • esc: cancel") + "\n")
 	return tea.NewView(b.String())

@@ -23,7 +23,7 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 | [whoami](features/whoami/INDEX.md) | `whoami` identity probe — caller agent + elevated project permissions. |
 | [activity](features/activity/INDEX.md) | `activity` — daily completion log (completed tasks + completed checklist items) for a single day. |
 | [auto-update](features/auto-update/INDEX.md) | Once-per-day update notice + `sprawl update` (download, verify, atomic replace). |
-| [skill-install](features/skill-install/INDEX.md) | `sprawl skill install` / `sprawl skill uninstall` — drop the bundled sprawl skill / sprawl-bookkeeper agent into Claude Code or OpenCode, track each copy for refresh, and clear them all when no longer wanted. |
+| [skill-install](features/skill-install/INDEX.md) | `sprawl skill install` / `sprawl skill uninstall` — drop the bundled sprawl skill / sprawl-bookkeeper agent into Claude Code, OpenCode, or Codex, track each copy for refresh, and clear them all when no longer wanted. |
 
 ## Quick Links
 

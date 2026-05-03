@@ -23,12 +23,13 @@ type RemoteVersions struct {
 	Skill         string
 	ClaudeAgent   string
 	OpenCodeAgent string
+	CodexAgent    string
 }
 
-// FetchRemoteVersions fetches the three frontmatter files in parallel and
-// parses the `version:` field out of each. Returns whatever it could probe;
-// errors on individual files are folded into empty strings so a slow or
-// missing source doesn't fail the whole call.
+// FetchRemoteVersions fetches the version markers in parallel and parses the
+// `version:` field out of each. Returns whatever it could probe; errors on
+// individual files are folded into empty strings so a slow or missing source
+// doesn't fail the whole call.
 func FetchRemoteVersions(ctx context.Context) RemoteVersions {
 	type result struct {
 		key string
@@ -38,6 +39,7 @@ func FetchRemoteVersions(ctx context.Context) RemoteVersions {
 		"skill":         ".claude/skills/sprawl/SKILL.md",
 		"claudeAgent":   ".claude/agents/sprawl-bookkeeper.md",
 		"opencodeAgent": ".opencode/agents/sprawl-bookkeeper.md",
+		"codexAgent":    codexAgentAssetPath,
 	}
 	ch := make(chan result, len(files))
 	for key, path := range files {
@@ -55,6 +57,8 @@ func FetchRemoteVersions(ctx context.Context) RemoteVersions {
 			out.ClaudeAgent = r.v
 		case "opencodeAgent":
 			out.OpenCodeAgent = r.v
+		case "codexAgent":
+			out.CodexAgent = r.v
 		}
 	}
 	return out
@@ -94,8 +98,11 @@ func (rv RemoteVersions) VersionFor(kind, tool string) string {
 	case "skill":
 		return rv.Skill
 	case "agent":
-		if tool == "opencode" {
+		switch tool {
+		case "opencode":
 			return rv.OpenCodeAgent
+		case "codex":
+			return rv.CodexAgent
 		}
 		return rv.ClaudeAgent
 	}

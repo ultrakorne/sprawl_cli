@@ -24,6 +24,11 @@ func TestParseFrontmatterVersion(t *testing.T) {
 			want: "1.0.0",
 		},
 		{
+			name: "codex toml comment marker",
+			in:   "# version: 0.8.0\nname = \"sprawl-bookkeeper\"\n",
+			want: "0.8.0",
+		},
+		{
 			name: "no frontmatter",
 			in:   "version: 0.1.0\nbody\n",
 			want: "",

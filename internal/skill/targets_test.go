@@ -8,7 +8,7 @@ import (
 func TestResolveTargets_GlobalScope_AllTools(t *testing.T) {
 	got := ResolveTargets(Choice{
 		What:  []string{"skill", "agent"},
-		Tools: []string{"claude", "opencode"},
+		Tools: []string{"claude", "opencode", "codex"},
 		Scope: "global",
 	}, "/h", "/cwd")
 
@@ -19,12 +19,18 @@ func TestResolveTargets_GlobalScope_AllTools(t *testing.T) {
 		{Kind: "skill", Name: "sprawl", Tool: "opencode", Scope: "global",
 			SrcPath: ".claude/skills/sprawl",
 			DstPath: filepath.Join("/h", ".config", "opencode", "skills", "sprawl")},
+		{Kind: "skill", Name: "sprawl", Tool: "codex", Scope: "global",
+			SrcPath: ".claude/skills/sprawl",
+			DstPath: filepath.Join("/h", ".agents", "skills", "sprawl")},
 		{Kind: "agent", Name: "sprawl-bookkeeper", Tool: "claude", Scope: "global",
 			SrcPath: ".claude/agents/sprawl-bookkeeper.md",
 			DstPath: filepath.Join("/h", ".claude", "agents", "sprawl-bookkeeper.md")},
 		{Kind: "agent", Name: "sprawl-bookkeeper", Tool: "opencode", Scope: "global",
 			SrcPath: ".opencode/agents/sprawl-bookkeeper.md",
 			DstPath: filepath.Join("/h", ".config", "opencode", "agents", "sprawl-bookkeeper.md")},
+		{Kind: "agent", Name: "sprawl-bookkeeper", Tool: "codex", Scope: "global",
+			SrcPath: "internal/skill/assets/sprawl-bookkeeper.codex.toml",
+			DstPath: filepath.Join("/h", ".codex", "agents", "sprawl-bookkeeper.toml")},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d (%+v)", len(got), len(want), got)
@@ -39,15 +45,17 @@ func TestResolveTargets_GlobalScope_AllTools(t *testing.T) {
 func TestResolveTargets_LocalScope_UsesCwd(t *testing.T) {
 	got := ResolveTargets(Choice{
 		What:  []string{"skill", "agent"},
-		Tools: []string{"claude", "opencode"},
+		Tools: []string{"claude", "opencode", "codex"},
 		Scope: "local",
 	}, "/h", "/cwd")
 
 	wantPaths := []string{
 		filepath.Join("/cwd", ".claude", "skills", "sprawl"),
 		filepath.Join("/cwd", ".opencode", "skills", "sprawl"),
+		filepath.Join("/cwd", ".agents", "skills", "sprawl"),
 		filepath.Join("/cwd", ".claude", "agents", "sprawl-bookkeeper.md"),
 		filepath.Join("/cwd", ".opencode", "agents", "sprawl-bookkeeper.md"),
+		filepath.Join("/cwd", ".codex", "agents", "sprawl-bookkeeper.toml"),
 	}
 	if len(got) != len(wantPaths) {
 		t.Fatalf("len = %d, want %d", len(got), len(wantPaths))
@@ -79,7 +87,7 @@ func TestResolveTargets_PartialSelection(t *testing.T) {
 func TestResolveTargets_AgentSrcDiffersByTool(t *testing.T) {
 	got := ResolveTargets(Choice{
 		What:  []string{"agent"},
-		Tools: []string{"claude", "opencode"},
+		Tools: []string{"claude", "opencode", "codex"},
 		Scope: "global",
 	}, "/h", "/cwd")
 	if got[0].SrcPath != ".claude/agents/sprawl-bookkeeper.md" {
@@ -87,5 +95,8 @@ func TestResolveTargets_AgentSrcDiffersByTool(t *testing.T) {
 	}
 	if got[1].SrcPath != ".opencode/agents/sprawl-bookkeeper.md" {
 		t.Fatalf("opencode agent src = %q", got[1].SrcPath)
+	}
+	if got[2].SrcPath != "internal/skill/assets/sprawl-bookkeeper.codex.toml" {
+		t.Fatalf("codex agent src = %q", got[2].SrcPath)
 	}
 }

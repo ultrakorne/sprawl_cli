@@ -17,15 +17,16 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/config"
 )
 
-// installFixtureTarball builds a tarball containing the four files
-// `sprawl skill install` cares about, with version frontmatter.
+// installFixtureTarball builds a tarball containing the files
+// `sprawl skill install` cares about, with version markers.
 func installFixtureTarball(t *testing.T) []byte {
 	t.Helper()
 	files := map[string]string{
-		".claude/skills/sprawl/SKILL.md":        "---\nname: sprawl\nversion: \"0.5.0\"\n---\nbody\n",
-		".claude/skills/sprawl/SETUP.md":        "setup",
-		".claude/agents/sprawl-bookkeeper.md":   "---\nversion: 0.6.0\n---\nclaude agent",
-		".opencode/agents/sprawl-bookkeeper.md": "---\nversion: 0.7.0\n---\nopencode agent",
+		".claude/skills/sprawl/SKILL.md":                     "---\nname: sprawl\nversion: \"0.5.0\"\n---\nbody\n",
+		".claude/skills/sprawl/SETUP.md":                     "setup",
+		".claude/agents/sprawl-bookkeeper.md":                "---\nversion: 0.6.0\n---\nclaude agent",
+		".opencode/agents/sprawl-bookkeeper.md":              "---\nversion: 0.7.0\n---\nopencode agent",
+		"internal/skill/assets/sprawl-bookkeeper.codex.toml": "# version: 0.8.0\nname = \"sprawl-bookkeeper\"\ndeveloper_instructions = \"x\"\n",
 	}
 	var buf bytes.Buffer
 	gzw := gzip.NewWriter(&buf)
@@ -112,7 +113,7 @@ func TestInstall_GlobalAllTools_WritesFilesAndConfig(t *testing.T) {
 	pinTarballServer(t, installFixtureTarball(t))
 	stubPrompts(t, Choice{
 		What:  []string{"skill", "agent"},
-		Tools: []string{"claude", "opencode"},
+		Tools: []string{"claude", "opencode", "codex"},
 		Scope: "global",
 	}, true)
 
@@ -124,8 +125,10 @@ func TestInstall_GlobalAllTools_WritesFilesAndConfig(t *testing.T) {
 	expectFiles := []string{
 		filepath.Join(home, ".claude", "skills", "sprawl", "SKILL.md"),
 		filepath.Join(home, ".config", "opencode", "skills", "sprawl", "SKILL.md"),
+		filepath.Join(home, ".agents", "skills", "sprawl", "SKILL.md"),
 		filepath.Join(home, ".claude", "agents", "sprawl-bookkeeper.md"),
 		filepath.Join(home, ".config", "opencode", "agents", "sprawl-bookkeeper.md"),
+		filepath.Join(home, ".codex", "agents", "sprawl-bookkeeper.toml"),
 	}
 	for _, p := range expectFiles {
 		if _, err := os.Stat(p); err != nil {
@@ -137,8 +140,8 @@ func TestInstall_GlobalAllTools_WritesFilesAndConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(cfg.SkillInstalls) != 4 {
-		t.Fatalf("SkillInstalls = %d, want 4 (%+v)", len(cfg.SkillInstalls), cfg.SkillInstalls)
+	if len(cfg.SkillInstalls) != 6 {
+		t.Fatalf("SkillInstalls = %d, want 6 (%+v)", len(cfg.SkillInstalls), cfg.SkillInstalls)
 	}
 	for _, inst := range cfg.SkillInstalls {
 		switch inst.Kind {
@@ -150,6 +153,8 @@ func TestInstall_GlobalAllTools_WritesFilesAndConfig(t *testing.T) {
 			want := "0.6.0"
 			if inst.Tool == "opencode" {
 				want = "0.7.0"
+			} else if inst.Tool == "codex" {
+				want = "0.8.0"
 			}
 			if inst.Version != want {
 				t.Fatalf("agent (%s) version = %q, want %s", inst.Tool, inst.Version, want)

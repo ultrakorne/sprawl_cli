@@ -40,12 +40,13 @@ func pinRawServer(t *testing.T, versions map[string]string) {
 
 func TestFetchRemoteVersions(t *testing.T) {
 	pinRawServer(t, map[string]string{
-		".claude/skills/sprawl/SKILL.md":        "0.5.0",
-		".claude/agents/sprawl-bookkeeper.md":   "0.6.0",
-		".opencode/agents/sprawl-bookkeeper.md": "0.7.0",
+		".claude/skills/sprawl/SKILL.md":                     "0.5.0",
+		".claude/agents/sprawl-bookkeeper.md":                "0.6.0",
+		".opencode/agents/sprawl-bookkeeper.md":              "0.7.0",
+		"internal/skill/assets/sprawl-bookkeeper.codex.toml": "0.8.0",
 	})
 	rv := FetchRemoteVersions(context.Background())
-	if rv.Skill != "0.5.0" || rv.ClaudeAgent != "0.6.0" || rv.OpenCodeAgent != "0.7.0" {
+	if rv.Skill != "0.5.0" || rv.ClaudeAgent != "0.6.0" || rv.OpenCodeAgent != "0.7.0" || rv.CodexAgent != "0.8.0" {
 		t.Fatalf("RemoteVersions = %+v", rv)
 	}
 }
@@ -59,13 +60,13 @@ func TestFetchRemoteVersions_PartialFailure_ReturnsEmpty(t *testing.T) {
 	if rv.Skill != "0.5.0" {
 		t.Fatalf("Skill = %q", rv.Skill)
 	}
-	if rv.ClaudeAgent != "" || rv.OpenCodeAgent != "" {
+	if rv.ClaudeAgent != "" || rv.OpenCodeAgent != "" || rv.CodexAgent != "" {
 		t.Fatalf("expected empty strings on missing files, got %+v", rv)
 	}
 }
 
 func TestRemoteVersions_VersionFor(t *testing.T) {
-	rv := RemoteVersions{Skill: "1", ClaudeAgent: "2", OpenCodeAgent: "3"}
+	rv := RemoteVersions{Skill: "1", ClaudeAgent: "2", OpenCodeAgent: "3", CodexAgent: "4"}
 	if v := rv.VersionFor("skill", "claude"); v != "1" {
 		t.Fatalf("skill/claude = %q", v)
 	}
@@ -74,6 +75,9 @@ func TestRemoteVersions_VersionFor(t *testing.T) {
 	}
 	if v := rv.VersionFor("agent", "opencode"); v != "3" {
 		t.Fatalf("agent/opencode = %q", v)
+	}
+	if v := rv.VersionFor("agent", "codex"); v != "4" {
+		t.Fatalf("agent/codex = %q", v)
 	}
 	if v := rv.VersionFor("nope", "claude"); v != "" {
 		t.Fatalf("unknown kind = %q, want empty", v)

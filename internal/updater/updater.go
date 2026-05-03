@@ -86,12 +86,13 @@ type updateCache struct {
 	LatestSkillVersion         string    `json:"latest_skill_version,omitempty"`
 	LatestClaudeAgentVersion   string    `json:"latest_claude_agent_version,omitempty"`
 	LatestOpenCodeAgentVersion string    `json:"latest_opencode_agent_version,omitempty"`
+	LatestCodexAgentVersion    string    `json:"latest_codex_agent_version,omitempty"`
 }
 
 // MaybeNotify is invoked from the root command's PersistentPreRunE. It
 // always returns nil; any failure (network, disk, parse) is silent so the
 // banner can never block or noise up the user's actual command. The CLI
-// release tag and the master-branch skill/agent frontmatter versions are
+// release tag and the master-branch skill/agent version markers are
 // probed together and cached for 24h.
 func MaybeNotify(ctx context.Context, stderr io.Writer) error {
 	if !shouldCheck() {
@@ -123,6 +124,7 @@ func MaybeNotify(ctx context.Context, stderr io.Writer) error {
 		LatestSkillVersion:         rv.Skill,
 		LatestClaudeAgentVersion:   rv.ClaudeAgent,
 		LatestOpenCodeAgentVersion: rv.OpenCodeAgent,
+		LatestCodexAgentVersion:    rv.CodexAgent,
 	}
 	if cachedOK {
 		if next.LatestVersion == "" {
@@ -136,6 +138,9 @@ func MaybeNotify(ctx context.Context, stderr io.Writer) error {
 		}
 		if next.LatestOpenCodeAgentVersion == "" {
 			next.LatestOpenCodeAgentVersion = cached.LatestOpenCodeAgentVersion
+		}
+		if next.LatestCodexAgentVersion == "" {
+			next.LatestCodexAgentVersion = cached.LatestCodexAgentVersion
 		}
 	}
 	_ = writeCache(cachePath, next)
@@ -156,7 +161,8 @@ func printBanners(stderr io.Writer, c updateCache) {
 	}
 	skillStale := hasStaleInstall(cfg.SkillInstalls, "skill", "", c.LatestSkillVersion)
 	agentStale := hasStaleInstall(cfg.SkillInstalls, "agent", "claude", c.LatestClaudeAgentVersion) ||
-		hasStaleInstall(cfg.SkillInstalls, "agent", "opencode", c.LatestOpenCodeAgentVersion)
+		hasStaleInstall(cfg.SkillInstalls, "agent", "opencode", c.LatestOpenCodeAgentVersion) ||
+		hasStaleInstall(cfg.SkillInstalls, "agent", "codex", c.LatestCodexAgentVersion)
 
 	switch {
 	case skillStale && agentStale:

@@ -24,7 +24,7 @@ func newSkillInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Interactively install the sprawl skill and/or sprawl-bookkeeper agent",
 		Long: "Walks you through picking what to install (skill, agent, or both), " +
-			"for which AI tools (Claude Code, OpenCode, or both), and where (your " +
+			"for which AI tools, and where (your " +
 			"home directory or the current folder). Source is the repo's master " +
 			"branch on GitHub. Each install is recorded in config.toml so " +
 			"`sprawl update` can refresh them when a new version ships.",

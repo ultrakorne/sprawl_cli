@@ -170,7 +170,7 @@ func onApproved(out io.Writer, token string) error {
 	fmt.Fprintln(out, "  export SPRAWL_AGENT_SECRET=<your owner key secret>")
 	fmt.Fprintf(out, "\nIf you don't have it yet, retrieve it from %s/auth-settings. The agent secret is never stored on disk by sprawl.\n", client.BaseURL())
 	if len(cfg.SkillInstalls) == 0 {
-		fmt.Fprintln(out, "\nTip: run `sprawl skill install` to drop the sprawl skill / sprawl-bookkeeper agent into Claude Code or OpenCode.")
+		fmt.Fprintln(out, "\nTip: run `sprawl skill install` to install the Sprawl skill / or sprawl-bookkeeper agent for your AI Tool")
 	}
 	return nil
 }

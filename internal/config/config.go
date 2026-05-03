@@ -27,7 +27,7 @@ import (
 type SkillInstall struct {
 	Kind    string `toml:"kind"`    // "skill" | "agent"
 	Name    string `toml:"name"`    // e.g. "sprawl" or "sprawl-bookkeeper"
-	Tool    string `toml:"tool"`    // "claude" | "opencode"
+	Tool    string `toml:"tool"`    // "claude" | "opencode" | "codex"
 	Scope   string `toml:"scope"`   // "global" | "local"
 	Path    string `toml:"path"`    // absolute target path
 	Version string `toml:"version"` // version recorded at install time

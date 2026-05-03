@@ -2,7 +2,7 @@
 
 ## Overview
 
-The repo ships two AI-tool artefacts alongside the CLI: the **`sprawl` skill** (a directory of guidance / setup files at `.claude/skills/sprawl/`) and the **`sprawl-bookkeeper` agent** (a single-file sub-agent definition, in two flavours — `.claude/agents/sprawl-bookkeeper.md` and `.opencode/agents/sprawl-bookkeeper.md`, because the frontmatter schemas differ). `sprawl skill install` lets the user drop these into the directories Claude Code or OpenCode loads from, without cloning the repo or hand-copying files.
+The repo ships two AI-tool artefacts alongside the CLI: the **`sprawl` skill** (a directory of guidance / setup files at `.claude/skills/sprawl/`) and the **`sprawl-bookkeeper` agent** (a single-file sub-agent definition, in three flavours — `.claude/agents/sprawl-bookkeeper.md`, `.opencode/agents/sprawl-bookkeeper.md`, and `internal/skill/assets/sprawl-bookkeeper.codex.toml`, because the host schemas differ). `sprawl skill install` lets the user drop these into the directories Claude Code, OpenCode, or Codex loads from, without cloning the repo or hand-copying files.
 
 The command is interactive only. The prompts are bubbletea TUI screens — arrow / vim keys to move, space to toggle a multi-select row, enter to confirm, esc or ctrl+c to cancel. There is no flag-driven mode and no piped-input mode: the prompt models consume key events, not lines, so feeding stdin from a script does not work. Anyone scripting an install today has to clone the repo and run `scripts/install-skill.sh` — that's an acceptable cost since the matrix has only sixteen states.
 
@@ -11,10 +11,10 @@ The command is interactive only. The prompts are bubbletea TUI screens — arrow
 Three picks, in order. The first two are multi-select; the third is single-select.
 
 1. **What** — `sprawl skill`, `sprawl-bookkeeper agent`, or both.
-2. **For which AI tools** — Claude Code, OpenCode, or both.
+2. **For which AI tools** — Claude Code, OpenCode, Codex, or any mix.
 3. **Scope** — `global` (the user's home) or `local` (the current working directory).
 
-Multi-select rows start all-checked. Pressing enter on the first stage with the defaults intact picks both items; an empty selection (everything toggled off) is refused — the user must toggle at least one row back on or hit esc to cancel the flow. The single-select scope cursor starts on `Global` so a default-everything install lands in the user's home dir.
+The "what" multi-select starts all-checked. The tool multi-select starts checked only for tools that are installed on the host according to `which claude`, `which opencode`, and `which codex`; missing tools remain available but unchecked. An empty selection (everything toggled off, or no installed tools detected and the user presses enter immediately) is refused — the user must toggle at least one row back on or hit esc to cancel the flow. The single-select scope cursor starts on `Global` so a default-everything install lands in the user's home dir.
 
 A `Choice{What, Tools, Scope}` expands to one `Target` per (what × tool) pair. A confirmation summary lists every absolute destination path before any download or write happens.
 
@@ -24,10 +24,12 @@ A `Choice{What, Tools, Scope}` expands to one `Target` per (what × tool) pair. 
 |------|------|-------------|------------------------|
 | skill | Claude Code | `~/.claude/skills/sprawl/` | `<cwd>/.claude/skills/sprawl/` |
 | skill | OpenCode | `~/.config/opencode/skills/sprawl/` | `<cwd>/.opencode/skills/sprawl/` |
+| skill | Codex | `~/.agents/skills/sprawl/` | `<cwd>/.agents/skills/sprawl/` |
 | agent | Claude Code | `~/.claude/agents/sprawl-bookkeeper.md` | `<cwd>/.claude/agents/sprawl-bookkeeper.md` |
 | agent | OpenCode | `~/.config/opencode/agents/sprawl-bookkeeper.md` | `<cwd>/.opencode/agents/sprawl-bookkeeper.md` |
+| agent | Codex | `~/.codex/agents/sprawl-bookkeeper.toml` | `<cwd>/.codex/agents/sprawl-bookkeeper.toml` |
 
-The path asymmetry between OpenCode global (`~/.config/opencode/...`) and OpenCode local (`<cwd>/.opencode/...`) mirrors the directories OpenCode itself reads from in those two scopes — it's not a sprawl convention.
+The path asymmetry between OpenCode global (`~/.config/opencode/...`) and OpenCode local (`<cwd>/.opencode/...`) mirrors the directories OpenCode itself reads from in those two scopes — it's not a sprawl convention. Codex skills follow Codex's `.agents/skills` convention (`~/.agents/skills` globally, repo-local `.agents/skills` locally); Codex custom agents use Codex's `.codex/agents/*.toml` convention.
 
 ## Source: master tarball, not a git clone
 
@@ -43,7 +45,7 @@ Every successful per-target write upserts a row into `[[skill_installs]]` in `co
 [[skill_installs]]
 kind = "skill"            # "skill" | "agent"
 name = "sprawl"           # "sprawl" | "sprawl-bookkeeper"
-tool = "claude"           # "claude" | "opencode"
+tool = "claude"           # "claude" | "opencode" | "codex"
 scope = "global"          # "global" | "local"
 path = "/Users/x/.claude/skills/sprawl"
 version = "0.1.0"         # parsed from the freshly-written frontmatter
@@ -55,7 +57,7 @@ version = "0.1.0"         # parsed from the freshly-written frontmatter
 
 ## Stale-skill banner
 
-The once-per-day notify path (`updater.MaybeNotify`) was extended to probe the three master-branch frontmatter files (`SKILL.md`, both `sprawl-bookkeeper.md` flavours) in parallel and cache the versions next to `latest_version` in `update_check.json`. When any recorded install is older than its remote, a single yellow stderr line is printed:
+The once-per-day notify path (`updater.MaybeNotify`) was extended to probe the four master-branch version marker files (`SKILL.md`, both markdown `sprawl-bookkeeper.md` flavours, and the Codex TOML agent asset) in parallel and cache the versions next to `latest_version` in `update_check.json`. When any recorded install is older than its remote, a single yellow stderr line is printed:
 
 - `sprawl skill update available — run \`sprawl update\`.`
 - `sprawl-bookkeeper agent update available — run \`sprawl update\`.`

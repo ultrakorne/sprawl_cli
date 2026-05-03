@@ -6,7 +6,7 @@
 
 `sprawl update` joins this to the binary-update flow: `internal/cli/update.go` runs `updater.RunUpdate` first, then unconditionally calls `skill.Update` regardless of the binary result. Skill update reuses the same tarball-download / extract / write helpers but probes per-file frontmatter on `raw.githubusercontent.com` first (`remote.go`) so it can short-circuit no-op runs without downloading the full tarball.
 
-The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls `skill.FetchRemoteVersions` alongside its existing release-tag probe; the cached `update_check.json` file gained three optional fields for the master-branch versions (skill, claude agent, opencode agent) so banners survive 24h without re-probing.
+The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls `skill.FetchRemoteVersions` alongside its existing release-tag probe; the cached `update_check.json` file gained optional fields for the master-branch versions (skill, claude agent, opencode agent, codex agent) so banners survive 24h without re-probing.
 
 ## Source files
 
@@ -17,12 +17,13 @@ The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls 
 | `internal/cli/login.go` | After a successful login, suggests `sprawl skill install` when no installs are recorded; uses load-then-mutate so re-login preserves rows. |
 | `internal/skill/install.go` | `Install` — orchestrates prompt → target resolution → download → write → record. |
 | `internal/skill/uninstall.go` | `Uninstall` — list recorded rows, confirm, `os.RemoveAll` each path, drop the rows from config. |
-| `internal/skill/prompt.go` | `multiSelectModel` / `singleSelectModel` (bubbletea v2 models), `runPromptChoice`, `runPromptConfirm`; lipgloss palette for the cursor / checkbox / hint styling. |
+| `internal/skill/prompt.go` | `multiSelectModel` / `singleSelectModel` (bubbletea v2 models), `runPromptChoice`, `runPromptConfirm`; lipgloss palette for the cursor / checkbox / hint styling; tool default preselection via `which claude`, `which opencode`, and `which codex`. |
 | `internal/skill/targets.go` | `Choice` / `Target`, `ResolveTargets`, `srcFor`, `dstFor` — the destination-path matrix. |
+| `internal/skill/assets/sprawl-bookkeeper.codex.toml` | Codex-specific custom-agent source copied into `.codex/agents/sprawl-bookkeeper.toml`. |
 | `internal/skill/download.go` | `fetchMasterTarball`, `extractTarball` — GitHub API tarball, gzip + tar walk, top-prefix strip. |
 | `internal/skill/write.go` | `writeTarget` (skill = wipe-and-rewrite directory, agent = single-file overwrite). |
 | `internal/skill/frontmatter.go` | `ParseFrontmatterVersion` — line scanner for the `version:` field in `---`-delimited YAML frontmatter. |
-| `internal/skill/remote.go` | `FetchRemoteVersions`, `RemoteVersions.VersionFor` — parallel probe of three raw frontmatter files for fast staleness checks. |
+| `internal/skill/remote.go` | `FetchRemoteVersions`, `RemoteVersions.VersionFor` — parallel probe of raw version marker files for fast staleness checks. |
 | `internal/skill/update.go` | `Update` — diff recorded versions vs remote, re-extract stale, persist new versions. |
 | `internal/config/config.go` | `SkillInstall` schema, `Config.UpsertInstall`, `Config.RemoveInstall`. |
 | `internal/updater/updater.go` | `MaybeNotify` extended to probe + cache skill/agent versions and emit a stale-install banner. |
@@ -31,7 +32,7 @@ The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls 
 
 `dstFor(what, tool, scope, home, cwd)` is a switch over a `"<what>/<tool>/<scope>"` key returning the absolute path. Unknown combinations return `""`; callers feed values straight from the prompts so this is treated as unreachable. The local-scope label shown in the prompt includes the resolved cwd so the user sees exactly where files will land before confirming.
 
-`srcFor(what, tool)` returns the repo-relative path inside the tarball. Skill source is the same path for both tools (`.claude/skills/sprawl`) — the directory is tool-agnostic. Agent source diverges per tool because the frontmatter shapes differ (Claude uses `tools:` / `skills:`, OpenCode has its own keys).
+`srcFor(what, tool)` returns the repo-relative path inside the tarball. Skill source is the same path for every tool (`.claude/skills/sprawl`) — the directory is tool-agnostic enough for the current hosts. Agent source diverges per tool because the host schemas differ: Claude uses markdown frontmatter with `tools:` / `skills:`, OpenCode has its own markdown keys, and Codex uses a TOML custom-agent file. The Codex source intentionally does not try to auto-enable the `sprawl` skill; it tells the spawned agent to use the skill that was installed separately.
 
 ## Tarball handling
 
@@ -39,7 +40,7 @@ The once-per-day notify path (`internal/updater/updater.go::MaybeNotify`) calls 
 
 `extractTarball` walks the gzip+tar reader, skipping non-regular entries. GitHub wraps the repo in a top-level prefix dir (`ultrakorne-sprawl_cli-<sha>/`); the extractor strips the first path segment from every entry so callers see clean repo-relative paths matching what `srcFor` returns.
 
-`writeSkillDir` `os.RemoveAll`s the destination before unpacking to avoid leaving stale files from a prior install. `writeAgentFile` is a plain overwrite. Both parse the frontmatter `version:` from the freshly-written content (SKILL.md for skills, the agent file for agents) and return that string for the config bookkeeping; an empty result means the marker file lacked frontmatter and the recorded version is empty.
+`writeSkillDir` `os.RemoveAll`s the destination before unpacking to avoid leaving stale files from a prior install. `writeAgentFile` is a plain overwrite. Both parse the version marker from the freshly-written content (SKILL.md for skills, the agent file for agents) and return that string for the config bookkeeping; an empty result means the marker file lacked a marker and the recorded version is empty. Markdown artefacts use YAML frontmatter `version:`; the Codex TOML agent uses a leading `# version:` comment so the file remains valid Codex TOML.
 
 ## Update flow
 
@@ -60,13 +61,14 @@ A single failed write doesn't abort the rest — errors are joined and surfaced 
   "latest_version": "v0.2.0",
   "latest_skill_version": "0.1.0",
   "latest_claude_agent_version": "0.1.0",
-  "latest_opencode_agent_version": "0.1.0"
+  "latest_opencode_agent_version": "0.1.0",
+  "latest_codex_agent_version": "0.1.0"
 }
 ```
 
 The skill-version probe goes through a `fetchRemoteSkillVersions` package var (defaulting to `skill.FetchRemoteVersions`) so updater tests can stub it without spinning up servers for the skill package's hosts.
 
-`hasStaleInstall(installs, kind, tool, remote)` reports whether any recorded install of that (kind, tool) has a `Version` differing from `remote`. An empty `remote` means "couldn't probe" and is treated as not-stale rather than nag-without-certainty. `tool == ""` matches any tool (used for skills, which don't differ by tool). One of three banners is printed depending on which combinations are stale.
+`hasStaleInstall(installs, kind, tool, remote)` reports whether any recorded install of that (kind, tool) has a `Version` differing from `remote`. An empty `remote` means "couldn't probe" and is treated as not-stale rather than nag-without-certainty. `tool == ""` matches any tool (used for skills, which don't differ by tool). One of three user-facing banners is printed depending on whether skills, agents, or both are stale.
 
 A successful `sprawl update` calls `removeCache` on the binary path; the skill-update half doesn't bust the cache itself — the next 24 h window will re-probe and find everything in sync, so the banner naturally clears.
 

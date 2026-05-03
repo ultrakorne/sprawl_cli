@@ -1,5 +1,5 @@
 // Package skill installs and updates the sprawl skill + sprawl-bookkeeper
-// agent into the destinations expected by Claude Code and OpenCode. Source
+// agent into the destinations expected by Claude Code, OpenCode, and Codex. Source
 // is the repo's master branch on GitHub; install paths and recorded
 // versions live in the per-binary config.toml so `sprawl update` can
 // re-extract every recorded copy when a new version ships.
@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 )
 
+const codexAgentAssetPath = "internal/skill/assets/sprawl-bookkeeper.codex.toml"
+
 // Choice is the user's selection coming out of the interactive prompts.
 type Choice struct {
 	What  []string // subset of {"skill", "agent"}
-	Tools []string // subset of {"claude", "opencode"}
+	Tools []string // subset of {"claude", "opencode", "codex"}
 	Scope string   // "global" | "local"
 }
 
@@ -23,7 +25,7 @@ type Choice struct {
 type Target struct {
 	Kind    string // "skill" | "agent"
 	Name    string // "sprawl" | "sprawl-bookkeeper"
-	Tool    string // "claude" | "opencode"
+	Tool    string // "claude" | "opencode" | "codex"
 	Scope   string // "global" | "local"
 	SrcPath string // repo-relative path inside the master tarball
 	DstPath string // absolute destination on disk
@@ -57,15 +59,18 @@ func nameFor(what string) string {
 }
 
 // srcFor returns the repo-relative path of the source. Skill content is
-// shared between Claude and OpenCode; the agent file diverges per tool
-// because the frontmatter shape differs.
+// shared between supported tools; the agent file diverges per tool because
+// each host has a different schema.
 func srcFor(what, tool string) string {
 	switch what {
 	case "skill":
 		return ".claude/skills/sprawl"
 	case "agent":
-		if tool == "opencode" {
+		switch tool {
+		case "opencode":
 			return ".opencode/agents/sprawl-bookkeeper.md"
+		case "codex":
+			return codexAgentAssetPath
 		}
 		return ".claude/agents/sprawl-bookkeeper.md"
 	}
@@ -88,12 +93,16 @@ func dstFor(what, tool, scope, home, cwd string) string {
 		return filepath.Join(base, ".config", "opencode", "skills", "sprawl")
 	case "skill/opencode/local":
 		return filepath.Join(base, ".opencode", "skills", "sprawl")
+	case "skill/codex/global", "skill/codex/local":
+		return filepath.Join(base, ".agents", "skills", "sprawl")
 	case "agent/claude/global", "agent/claude/local":
 		return filepath.Join(base, ".claude", "agents", "sprawl-bookkeeper.md")
 	case "agent/opencode/global":
 		return filepath.Join(base, ".config", "opencode", "agents", "sprawl-bookkeeper.md")
 	case "agent/opencode/local":
 		return filepath.Join(base, ".opencode", "agents", "sprawl-bookkeeper.md")
+	case "agent/codex/global", "agent/codex/local":
+		return filepath.Join(base, ".codex", "agents", "sprawl-bookkeeper.toml")
 	}
 	return ""
 }

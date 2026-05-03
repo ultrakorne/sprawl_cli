@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func key(s string) tea.KeyPressMsg {
 }
 
 func TestMultiSelect_DefaultsToAllSelected(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}}, nil)
 	final := drive(t, m, key("enter")).(multiSelectModel)
 	got := final.values()
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
@@ -56,8 +57,17 @@ func TestMultiSelect_DefaultsToAllSelected(t *testing.T) {
 	}
 }
 
+func TestMultiSelect_UsesProvidedDefaults(t *testing.T) {
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}, {label: "C", value: "c"}}, []bool{true, false, true})
+	final := drive(t, m, key("enter")).(multiSelectModel)
+	got := final.values()
+	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Fatalf("values = %v, want [a c]", got)
+	}
+}
+
 func TestMultiSelect_SpaceTogglesAtCursor(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}}, nil)
 	// Toggle off A, leave B on, confirm.
 	final := drive(t, m, key("space"), key("enter")).(multiSelectModel)
 	got := final.values()
@@ -67,7 +77,7 @@ func TestMultiSelect_SpaceTogglesAtCursor(t *testing.T) {
 }
 
 func TestMultiSelect_ArrowKeysMoveCursor(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}, {label: "C", value: "c"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}, {label: "C", value: "c"}}, nil)
 	final := drive(t, m, key("down"), key("space"), key("enter")).(multiSelectModel)
 	// All on by default; toggling B off leaves [a, c].
 	got := final.values()
@@ -77,7 +87,7 @@ func TestMultiSelect_ArrowKeysMoveCursor(t *testing.T) {
 }
 
 func TestMultiSelect_VimKeysMoveCursor(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}}, nil)
 	// j down → cursor on B; toggle B off; k up; toggle A off; enter must
 	// refuse since selection is now empty.
 	final := drive(t, m, key("j"), key("space"), key("k"), key("space"), key("enter")).(multiSelectModel)
@@ -90,7 +100,7 @@ func TestMultiSelect_VimKeysMoveCursor(t *testing.T) {
 }
 
 func TestMultiSelect_AKeyTogglesAll(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}}, nil)
 	// All on by default → 'a' clears all → 'a' again restores all → enter.
 	final := drive(t, m, key("a"), key("a"), key("enter")).(multiSelectModel)
 	if len(final.values()) != 2 {
@@ -99,7 +109,7 @@ func TestMultiSelect_AKeyTogglesAll(t *testing.T) {
 }
 
 func TestMultiSelect_EscCancels(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}}, nil)
 	final := drive(t, m, key("esc")).(multiSelectModel)
 	if !final.cancel {
 		t.Fatal("esc should set cancel")
@@ -107,7 +117,7 @@ func TestMultiSelect_EscCancels(t *testing.T) {
 }
 
 func TestMultiSelect_CtrlCCancels(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}}, nil)
 	final := drive(t, m, key("ctrl+c")).(multiSelectModel)
 	if !final.cancel {
 		t.Fatal("ctrl+c should set cancel")
@@ -115,7 +125,7 @@ func TestMultiSelect_CtrlCCancels(t *testing.T) {
 }
 
 func TestMultiSelect_CursorClampsAtEnds(t *testing.T) {
-	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}})
+	m := newMultiSelect("pick", []option{{label: "A", value: "a"}, {label: "B", value: "b"}}, nil)
 	final := drive(t, m, key("up"), key("up"), key("up")).(multiSelectModel)
 	if final.cursor != 0 {
 		t.Fatalf("cursor = %d, want 0 (clamped)", final.cursor)
@@ -127,7 +137,7 @@ func TestMultiSelect_CursorClampsAtEnds(t *testing.T) {
 }
 
 func TestMultiSelect_View_RendersCheckboxesAndCursor(t *testing.T) {
-	m := newMultiSelect("Pick something", []option{{label: "Alpha", value: "a"}, {label: "Beta", value: "b"}})
+	m := newMultiSelect("Pick something", []option{{label: "Alpha", value: "a"}, {label: "Beta", value: "b"}}, nil)
 	body := renderPlain(m)
 	if !strings.Contains(body, "Pick something") {
 		t.Errorf("title missing: %q", body)
@@ -143,10 +153,18 @@ func TestMultiSelect_View_RendersCheckboxesAndCursor(t *testing.T) {
 	}
 }
 
+func TestMultiSelect_View_HintsWhenNothingSelected(t *testing.T) {
+	m := newMultiSelect("Pick tools", []option{{label: "Claude", value: "claude"}, {label: "Codex", value: "codex"}}, []bool{false, false})
+	body := renderPlain(m)
+	if !strings.Contains(body, "no tools selected") {
+		t.Fatalf("empty-selection hint missing: %q", body)
+	}
+}
+
 func TestMultiSelect_View_EmitsAnsiWhenStyled(t *testing.T) {
 	// Pin the contract that we *do* emit ANSI styling — so a future change
 	// that strips colours doesn't go unnoticed.
-	m := newMultiSelect("hello", []option{{label: "A", value: "a"}})
+	m := newMultiSelect("hello", []option{{label: "A", value: "a"}}, nil)
 	if !strings.Contains(m.View().Content, "\x1b[") {
 		t.Fatal("View should contain ANSI escape codes for colour")
 	}
@@ -187,5 +205,28 @@ func TestSingleSelect_View_HasCursorAndHints(t *testing.T) {
 	}
 	if !strings.Contains(body, "Local — /tmp") {
 		t.Errorf("local label with cwd missing: %q", body)
+	}
+}
+
+func TestInstalledToolDefaults(t *testing.T) {
+	prev := lookPathFunc
+	lookPathFunc = func(name string) (string, error) {
+		if name == "claude" || name == "codex" {
+			return "/bin/" + name, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Cleanup(func() { lookPathFunc = prev })
+
+	got := installedToolDefaults([]option{
+		{value: "claude", autodetectBy: "claude"},
+		{value: "opencode", autodetectBy: "opencode"},
+		{value: "codex", autodetectBy: "codex"},
+	})
+	want := []bool{true, false, true}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("defaults = %v, want %v", got, want)
+		}
 	}
 }
