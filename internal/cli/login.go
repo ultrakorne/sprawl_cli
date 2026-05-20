@@ -154,8 +154,6 @@ func truncateRunes(s string, n int) string {
 }
 
 func onApproved(out io.Writer, token string) error {
-	// Load-then-mutate so re-login keeps any [[skill_installs]] records.
-	// A blank-slate Save would wipe them since Config is the whole file.
 	cfg, err := config.Load(build.AppName)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -169,8 +167,7 @@ func onApproved(out io.Writer, token string) error {
 	fmt.Fprintln(out, "\nNext: export your agent secret in this shell so authed requests work:")
 	fmt.Fprintln(out, "  export SPRAWL_AGENT_SECRET=<your owner key secret>")
 	fmt.Fprintf(out, "\nIf you don't have it yet, retrieve it from %s/auth-settings. The agent secret is never stored on disk by sprawl.\n", client.BaseURL())
-	if len(cfg.SkillInstalls) == 0 {
-		fmt.Fprintln(out, "\nTip: run `sprawl skill install` to install the Sprawl skill / or sprawl-bookkeeper agent for your AI Tool")
-	}
+	fmt.Fprintln(out, "\nTip: install the sprawl skill into your AI tool with:")
+	fmt.Fprintln(out, "  gh skill install ultrakorne/sprawl_cli sprawl")
 	return nil
 }

@@ -93,11 +93,6 @@ and shell history.
 export SPRAWL_AGENT_SECRET=<paste secret here>     # this shell only
 ```
 
-To persist across sessions, the user can add the export to their shell rc
-(`~/.bashrc`, `~/.zshrc`), but that's their call — **sprawl itself never
-writes the secret to disk**, and you shouldn't either. Don't offer to edit
-their rc files without explicit instruction.
-
 ## 5. Verify end-to-end
 
 With the binary installed, login complete, and `SPRAWL_AGENT_SECRET`

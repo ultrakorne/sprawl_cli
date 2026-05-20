@@ -9,6 +9,7 @@ description: >
   work with another agent — anything that reads or writes the sprawl task
   space. The skill wraps the `sprawl` CLI; a user-provided `SPRAWL_AGENT_SECRET`
   (env var or `-s` flag) scopes what the caller can see and change.
+license: 'MIT'
 allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_AGENT_SECRET), Bash(test:*)
 ---
 

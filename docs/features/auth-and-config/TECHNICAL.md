@@ -32,7 +32,6 @@ Every `/api/v1/*` request sends `Authorization: Bearer <token>` + `X-Agent-Secre
 - **Poll interval honours the server's value** returned in the grant; the CLI does not cap or accelerate it.
 - **Config save is atomic**: writes to a sibling tempfile then renames, so a failed write never truncates an existing `config.toml`.
 - **`BaseURL()` strips a single trailing slash** from both `SPRAWL_API_URL` and `build.APIURL` so downstream path composition is unambiguous.
-- **Config schema also stores `[[skill_installs]]`** — bookkeeping for `sprawl skill install` so `sprawl update` can re-extract recorded copies. `Config.UpsertInstall` / `RemoveInstall` are the only callers; the field is `omitempty` so existing configs without the table parse fine. Re-login uses load-then-mutate (not blank-slate save) so the token rewrite preserves these rows. See [skill-install](../skill-install/INDEX.md).
 
 ## Dependencies
 

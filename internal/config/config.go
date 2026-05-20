@@ -1,14 +1,10 @@
 // Package config reads and writes the per-binary config.toml.
 //
 // The config directory is derived from the binary's AppName (set at build
-// time via -ldflags), so `sprawl` and `sprawl_dev` never collide.
-// Schema:
-//   - token: device-flow result, written by `sprawl login`.
-//   - skill_installs: bookkeeping for `sprawl skill install` so that
-//     `sprawl update` can re-extract every recorded copy.
-//
-// The agent secret is never persisted — it comes from SPRAWL_AGENT_SECRET
-// at invocation time.
+// time via -ldflags), so `sprawl` and `sprawl_dev` never collide. The only
+// field currently stored is `token` (the device-flow result, written by
+// `sprawl login`). The agent secret is never persisted — it comes from
+// SPRAWL_AGENT_SECRET at invocation time.
 package config
 
 import (
@@ -21,47 +17,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// SkillInstall records one on-disk copy of the sprawl skill or the
-// sprawl-bookkeeper agent. `Path` is the install identity — for a skill it
-// points at the directory, for an agent at the .md file.
-type SkillInstall struct {
-	Kind    string `toml:"kind"`    // "skill" | "agent"
-	Name    string `toml:"name"`    // e.g. "sprawl" or "sprawl-bookkeeper"
-	Tool    string `toml:"tool"`    // "claude" | "opencode" | "codex"
-	Scope   string `toml:"scope"`   // "global" | "local"
-	Path    string `toml:"path"`    // absolute target path
-	Version string `toml:"version"` // version recorded at install time
-}
-
 type Config struct {
-	Token         string         `toml:"token,omitempty"`
-	SkillInstalls []SkillInstall `toml:"skill_installs,omitempty"`
-}
-
-// UpsertInstall replaces the existing record for inst.Path or appends a new
-// one. Path is the identity — a skill dir and an agent file can never share
-// it. Returns true if an existing record was replaced.
-func (c *Config) UpsertInstall(inst SkillInstall) bool {
-	for i, existing := range c.SkillInstalls {
-		if existing.Path == inst.Path {
-			c.SkillInstalls[i] = inst
-			return true
-		}
-	}
-	c.SkillInstalls = append(c.SkillInstalls, inst)
-	return false
-}
-
-// RemoveInstall drops the record for path. Returns true if a record was
-// removed.
-func (c *Config) RemoveInstall(path string) bool {
-	for i, existing := range c.SkillInstalls {
-		if existing.Path == path {
-			c.SkillInstalls = append(c.SkillInstalls[:i], c.SkillInstalls[i+1:]...)
-			return true
-		}
-	}
-	return false
+	Token string `toml:"token,omitempty"`
 }
 
 // Dir returns the config directory for appName, honouring XDG_CONFIG_HOME

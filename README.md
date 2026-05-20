@@ -108,6 +108,28 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
 | `sprawl update` | Downloads the latest GitHub release, verifies SHA256, and atomically replaces the running binary. Refuses on `sprawl_dev` and on local builds. Pass `--yes` to skip the confirmation prompt. See [features/auto-update](docs/features/auto-update/INDEX.md). |
 
+## AI-tool integration
+
+The repo ships a sprawl **skill** (under `skills/sprawl/`) for the AI tools that follow the [agentskills.io](https://agentskills.io/specification) convention, and a `sprawl-bookkeeper` **sub-agent** (under `agents/`) in three host-specific flavours.
+
+Install the skill with `gh` (works for Claude Code, OpenCode, Codex, Cursor, and most other supported hosts — see `gh skill install --help` for the full list):
+
+```sh
+# Project scope (default): drops it under the current repo
+gh skill install ultrakorne/sprawl_cli sprawl
+
+# User scope: available everywhere
+gh skill install ultrakorne/sprawl_cli sprawl --scope user --agent claude-code
+```
+
+The sub-agent (`sprawl-bookkeeper`) is not a `gh skill` artefact, so install it by hand. See [`agents/README.md`](agents/README.md) for the per-host paths; the short version for Claude Code is:
+
+```sh
+mkdir -p ~/.claude/agents
+curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/agents/claude/sprawl-bookkeeper.md \
+  -o ~/.claude/agents/sprawl-bookkeeper.md
+```
+
 All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`). The two delete commands return `{id:"…", deleted:true}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
 
 ## Write command examples
@@ -229,3 +251,8 @@ Tests live next to the code they cover (`internal/client/*_test.go`, `internal/c
 rm -f /usr/local/bin/sprawl /usr/local/bin/sprawl_dev
 rm -rf ~/.config/sprawl ~/.config/sprawl_dev
 ```
+
+If you installed the sprawl skill with `gh skill install`, remove it the same
+way (`gh skill list` / a manual `rm` of the host directory). The
+`sprawl-bookkeeper` agent file (`~/.claude/agents/sprawl-bookkeeper.md` or the
+equivalent for OpenCode / Codex) is also a plain delete.

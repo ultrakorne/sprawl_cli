@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
-	"github.com/ultrakorne/sprawl_cli/internal/config"
-	"github.com/ultrakorne/sprawl_cli/internal/skill"
 )
 
 // swapBuild overrides build.AppName / build.Version for the duration of the
@@ -43,15 +41,6 @@ func swapBaseURL(t *testing.T, url string) {
 	prev := baseURL
 	baseURL = url
 	t.Cleanup(func() { baseURL = prev })
-}
-
-// stubSkillProbe replaces the skill-version fetcher MaybeNotify uses so
-// tests don't hit the real raw.githubusercontent.com.
-func stubSkillProbe(t *testing.T, rv skill.RemoteVersions) {
-	t.Helper()
-	prev := fetchRemoteSkillVersions
-	fetchRemoteSkillVersions = func(_ context.Context) skill.RemoteVersions { return rv }
-	t.Cleanup(func() { fetchRemoteSkillVersions = prev })
 }
 
 // -- IsReleaseVersion -------------------------------------------------------
@@ -229,7 +218,6 @@ func TestMaybeNotify_FreshCacheSkipsNetwork(t *testing.T) {
 func TestMaybeNotify_StaleCacheRefreshes(t *testing.T) {
 	swapBuild(t, "sprawl", "v0.1.0")
 	useTempConfig(t)
-	stubSkillProbe(t, skill.RemoteVersions{})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/releases/latest") {
@@ -270,7 +258,6 @@ func TestMaybeNotify_StaleCacheRefreshes(t *testing.T) {
 func TestMaybeNotify_NetworkErrorIsSilent(t *testing.T) {
 	swapBuild(t, "sprawl", "v0.1.0")
 	useTempConfig(t)
-	stubSkillProbe(t, skill.RemoteVersions{})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
@@ -290,67 +277,6 @@ func TestMaybeNotify_NetworkErrorIsSilent(t *testing.T) {
 	path, _ := cacheFilePath()
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected cache written even on failure: %v", err)
-	}
-}
-
-func TestMaybeNotify_SkillStale_PrintsBanner(t *testing.T) {
-	swapBuild(t, "sprawl", "v0.5.0")
-	useTempConfig(t)
-	stubSkillProbe(t, skill.RemoteVersions{Skill: "0.9.0"})
-
-	// CLI is current (server returns same tag) so only the skill banner should fire.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.5.0"})
-	}))
-	t.Cleanup(srv.Close)
-	swapBaseURL(t, srv.URL)
-
-	cfg := &config.Config{SkillInstalls: []config.SkillInstall{
-		{Kind: "skill", Name: "sprawl", Tool: "claude", Scope: "global", Path: "/x", Version: "0.1.0"},
-	}}
-	if err := config.Save("sprawl", cfg); err != nil {
-		t.Fatalf("save cfg: %v", err)
-	}
-
-	var buf bytes.Buffer
-	if err := MaybeNotify(context.Background(), &buf); err != nil {
-		t.Fatalf("MaybeNotify: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "skill update available") {
-		t.Fatalf("expected skill banner, got %q", out)
-	}
-	if strings.Contains(out, "sprawl 0.5.0 available") {
-		t.Fatalf("CLI banner shouldn't fire when current = latest: %q", out)
-	}
-}
-
-func TestMaybeNotify_SkillUpToDate_NoBanner(t *testing.T) {
-	swapBuild(t, "sprawl", "v0.5.0")
-	useTempConfig(t)
-	stubSkillProbe(t, skill.RemoteVersions{Skill: "0.1.0"})
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.5.0"})
-	}))
-	t.Cleanup(srv.Close)
-	swapBaseURL(t, srv.URL)
-
-	cfg := &config.Config{SkillInstalls: []config.SkillInstall{
-		{Kind: "skill", Name: "sprawl", Tool: "claude", Scope: "global", Path: "/x", Version: "0.1.0"},
-	}}
-	if err := config.Save("sprawl", cfg); err != nil {
-		t.Fatalf("save cfg: %v", err)
-	}
-
-	var buf bytes.Buffer
-	if err := MaybeNotify(context.Background(), &buf); err != nil {
-		t.Fatalf("MaybeNotify: %v", err)
-	}
-	if buf.Len() != 0 {
-		t.Fatalf("expected silence when nothing stale, got %q", buf.String())
 	}
 }
 

@@ -1,5 +1,3 @@
-# version: 0.1.0
-# Keep the version marker as the first line; install/update bookkeeping reads it.
 name = "sprawl-bookkeeper"
 description = "Background sprawl bookkeeper for reading or writing the sprawl task space."
 model_reasoning_effort = "low"
