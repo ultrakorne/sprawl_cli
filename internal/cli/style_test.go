@@ -38,12 +38,26 @@ func TestStyling_PreservesPlainLayout(t *testing.T) {
 	detail := &client.Task{ID: 17, Status: "blocked", Title: "hello",
 		ChecklistProgress: client.ChecklistProgress{Done: 2, Total: 3}}
 
+	doneNotes := "did it"
+	// A full task (non-nil ChecklistItems) routes to the boxed --full view. Its
+	// border/box-drawing characters are emitted unconditionally and only color
+	// is gated, so stripping ANSI must still reproduce the plain box exactly.
+	full := &client.Task{ID: 77, Status: "in_progress", Title: "Agentic",
+		ChecklistProgress: client.ChecklistProgress{Done: 1, Total: 2},
+		Project:           &client.Project{ID: 3, Name: "Sprawl"},
+		CreatedBy:         &client.Actor{Type: "user", ID: 1},
+		ChecklistItems: []*client.ChecklistItem{
+			{ID: 5, Title: "done step", Completed: true, Notes: &doneNotes},
+			{ID: 6, Title: "todo step", Completed: false},
+		}}
+
 	for _, tc := range []struct {
 		name  string
 		build func() string
 	}{
 		{"task list", func() string { return taskListText(tasks) }},
 		{"task detail", func() string { return taskDetailText(detail) }},
+		{"task full", func() string { return taskDetailText(full) }},
 	} {
 		stylesEnabled = false
 		plain := tc.build()

@@ -92,10 +92,17 @@ func TestTaskDetailText_IncludesDescription(t *testing.T) {
 		CreatedBy:         &client.Actor{Type: "user", ID: 5},
 	}
 	got := taskDetailText(task)
-	for _, want := range []string{"#17 hello", "progress: 2 / 3", "user#5", "body copy"} {
+	// The non-full view is a bordered card: title in the border, a
+	// project/due/progress grid, then the description below.
+	for _, want := range []string{"╭─ ", "#17  hello", "progress", "2/3", "body copy"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+	// created_by / last_actor are intentionally dropped from the human card
+	// (still in the json/toon payload via taskMap).
+	if strings.Contains(got, "user#5") {
+		t.Errorf("created_by should not appear in the human card:\n%s", got)
 	}
 }
 
@@ -105,6 +112,62 @@ func TestTaskDetailText_OmitsBlankDescription(t *testing.T) {
 	// Ends with the created_by line, not with the description body.
 	if strings.Contains(got, "\n\n") {
 		t.Fatalf("blank description should not leave a trailing blank block:\n%s", got)
+	}
+}
+
+// TestTaskFullText_WrapsNotesWithHangingIndent locks in the full view's note
+// reflow: when outputWidth is known, a long note wraps to the remaining width
+// and every continuation line is indented to where the note text starts (under
+// the title), never exceeding the terminal width. Wrapping runs on plain text,
+// so the styled render strips back to the plain one (the package invariant).
+func TestTaskFullText_WrapsNotesWithHangingIndent(t *testing.T) {
+	defer func() { stylesEnabled = false; outputWidth = 0 }()
+
+	const width = 64
+	longNote := "maybe we need some sort of approve state to distinguish between an agent finishing an item and a human approving it"
+	task := &client.Task{
+		ID: 295, Title: "Agentic", Status: "in_progress",
+		ChecklistProgress: client.ChecklistProgress{Done: 0, Total: 1},
+		ChecklistItems: []*client.ChecklistItem{
+			{ID: 295, Title: "approve as agents mark items done", Notes: &longNote},
+		},
+	}
+
+	outputWidth = width
+	stylesEnabled = false
+	plain := taskDetailText(task)
+
+	// id "#295" ⇒ notes indent is 6 + len("#295") = 10 columns.
+	const indent = 10
+	pad := strings.Repeat(" ", indent)
+	var noteLines int
+	for _, ln := range strings.Split(plain, "\n") {
+		// Note lines are the faint, indented ones that aren't the item row
+		// (which contains the checkbox glyph) and aren't blank.
+		if !strings.HasPrefix(ln, pad) || strings.TrimSpace(ln) == "" {
+			continue
+		}
+		if strings.ContainsAny(ln, "☐☑") {
+			continue
+		}
+		noteLines++
+		if w := len([]rune(ln)); w > width {
+			t.Fatalf("wrapped note line exceeds width %d (got %d): %q", width, w, ln)
+		}
+		// Continuation alignment: every note line starts exactly at the indent
+		// column — no more, no less — so the block is flush under the title.
+		if strings.HasPrefix(ln, pad+" ") || !strings.HasPrefix(ln, pad) {
+			t.Fatalf("note line not aligned to the %d-col hanging indent: %q", indent, ln)
+		}
+	}
+	if noteLines < 2 {
+		t.Fatalf("expected the long note to wrap onto multiple lines, got %d:\n%s", noteLines, plain)
+	}
+
+	stylesEnabled = true
+	styled := taskDetailText(task)
+	if got := stripANSI(styled); got != plain {
+		t.Fatalf("wrapping broke stripANSI==plain:\nplain:\n%q\nstripped:\n%q", plain, got)
 	}
 }
 
@@ -328,7 +391,15 @@ func TestRunTaskShow_FullTextRendersChecklistBlock(t *testing.T) {
 		t.Fatalf("runTaskShow: %v", err)
 	}
 	got := stdout.String()
-	for _, want := range []string{"#42 ship it", "checklist:", "[x] #5 done step", "notes: did it", "[ ] #6 todo step", "(no notes)"} {
+	// The --full text view is the boxed header + clean checklist: id/title in
+	// the box, a CHECKLIST section, unicode checkboxes, and notes nested under
+	// each item verbatim (no "notes:" prefix). Empty notes read "(no notes)".
+	for _, want := range []string{
+		"╭─ ", "#42  ship it", // boxed header with title in the border
+		"CHECKLIST",
+		"☑ #5", "done step", "did it", // completed item + its inline note
+		"☐ #6", "todo step", "(no notes)", // open item, no note
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("text output missing %q:\n%s", want, got)
 		}

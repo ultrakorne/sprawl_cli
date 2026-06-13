@@ -53,17 +53,42 @@ var sty = newStyler()
 // output.go — so even on a TTY, NO_COLOR strips the escapes this flag produced.
 var stylesEnabled bool
 
+// outputWidth is the terminal's column count, captured once per Execute next to
+// stylesEnabled. It's 0 when the destination isn't a terminal (pipe / file /
+// test buffer) or its size can't be read. Renderers that wrap text to fit
+// (e.g. the full-task notes) use it; 0 means "don't wrap". Like stylesEnabled
+// it's process-level, so a single Execute decides it before any render — which
+// also keeps it constant across a render, so wrapping can't shear the
+// stripANSI==plain invariant (wrapping runs on plain text either way).
+var outputWidth int
+
 // enableStylingFor decides whether human output to w should be styled: only
 // when w is a real terminal. A strict TTY check (not colorprofile.Detect) keeps
 // it deterministic across test/CI environments — CLICOLOR_FORCE can't flip a
-// buffer into "styled".
+// buffer into "styled". It also records the terminal width for wrap-aware
+// renderers.
 func enableStylingFor(w io.Writer) {
 	stylesEnabled = isTerminal(w)
+	outputWidth = terminalWidth(w)
 }
 
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(interface{ Fd() uintptr })
 	return ok && term.IsTerminal(f.Fd())
+}
+
+// terminalWidth returns w's column count, or 0 when w isn't a terminal or its
+// size is unavailable (so callers treat 0 as "unknown / don't wrap").
+func terminalWidth(w io.Writer) int {
+	f, ok := w.(interface{ Fd() uintptr })
+	if !ok {
+		return 0
+	}
+	cols, _, err := term.GetSize(f.Fd())
+	if err != nil {
+		return 0
+	}
+	return cols
 }
 
 func newStyler() *styler {
@@ -109,6 +134,50 @@ func (s *styler) checkboxStyle(done bool) lipgloss.Style {
 		return s.ok
 	}
 	return s.faint
+}
+
+// checkboxGlyph is the unicode checkbox used by the rich `task <id> --full`
+// view: a filled ballot box when done, an empty one when open. It's distinct
+// from checkbox() ([x]/[ ]), which the list/single-item views still use; only
+// the full-task detail adopts the heavier glyph.
+func checkboxGlyph(done bool) string {
+	if done {
+		return "☑"
+	}
+	return "☐"
+}
+
+// renderTitledBox draws a rounded box with `title` embedded in the top border
+// and `lines` (each already colored, measured ANSI-aware) as the body. `inner`
+// is the content width every body line is padded to; the caller computes it
+// (so a sibling rule can match the box) — it must be ≥ the widest line and
+// ≥ title width + 1.
+//
+// Box-drawing characters, padding, and width are emitted UNCONDITIONALLY; only
+// the border/title color is gated on stylesEnabled (via sty.render, a no-op
+// when off). So stripping ANSI from a styled box yields the exact plain box —
+// the package invariant guarded by TestStyling_PreservesPlainLayout.
+func renderTitledBox(title string, lines []string, inner int) string {
+	titleW := lipgloss.Width(title)
+	dashes := max(inner-1-titleW, 0)
+	var b strings.Builder
+	// Top: ╭─ <title> <fill>╮ — interior (between corners) spans inner+2.
+	b.WriteString(sty.render(sty.accent, "╭─ "))
+	b.WriteString(sty.render(sty.bold, title))
+	b.WriteString(sty.render(sty.accent, " "+strings.Repeat("─", dashes)+"╮"))
+	b.WriteByte('\n')
+	for _, ln := range lines {
+		pad := inner - lipgloss.Width(ln)
+		if pad < 0 {
+			pad = 0
+		}
+		b.WriteString(sty.render(sty.accent, "│"))
+		b.WriteString(" " + ln + strings.Repeat(" ", pad) + " ")
+		b.WriteString(sty.render(sty.accent, "│"))
+		b.WriteByte('\n')
+	}
+	b.WriteString(sty.render(sty.accent, "╰"+strings.Repeat("─", inner+2)+"╯"))
+	return b.String()
 }
 
 // render styles text for free-flowing (non-tabular) output.

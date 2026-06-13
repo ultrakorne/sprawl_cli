@@ -7,6 +7,8 @@ import (
 	"maps"
 	"strings"
 
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
@@ -516,38 +518,201 @@ func taskSearchListText(tasks []*client.Task) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// taskDetailText renders the human view for a single task as a bordered card,
+// identical for the non-full detail (create / update / due / bare show) and the
+// ?full=true read: title in the border, a project · due · progress grid, then
+// the optional description. The full read additionally carries the checklist
+// inline (non-nil slice), which is appended below the card. last_actor /
+// created_by are dropped from the human view — they remain in json/toon via
+// taskMap.
 func taskDetailText(t *client.Task) string {
-	// key faints the label; the literal spacing after each `%s` is preserved
-	// verbatim so the columns line up exactly as before (styling is zero-width
-	// on a terminal and absent everywhere else).
-	key := func(s string) string { return sty.render(sty.faint, s) }
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n", sty.render(sty.bold, fmt.Sprintf("#%d %s", t.ID, t.Title)))
-	// status omitted on purpose: it's in the json/toon payload, and progress
-	// below carries the at-a-glance signal for the human view.
-	fmt.Fprintf(&b, "  %s      %s\n", key("due:"), fallback(t.DueDate, "-"))
-	fmt.Fprintf(&b, "  %s  %s\n", key("project:"), projectLabel(t.Project))
-	fmt.Fprintf(&b, "  %s %s\n", key("progress:"),
-		sty.render(sty.progressStyle(t.ChecklistProgress.Done, t.ChecklistProgress.Total),
-			fmt.Sprintf("%d / %d", t.ChecklistProgress.Done, t.ChecklistProgress.Total)))
-	fmt.Fprintf(&b, "  %s %s\n", key("last_actor:"), actorLabel(t.LastActor))
-	fmt.Fprintf(&b, "  %s %s\n", key("created_by:"), actorLabel(t.CreatedBy))
-	if strings.TrimSpace(t.Description) != "" {
-		fmt.Fprintf(&b, "\n%s", t.Description)
+	card, inner := taskCard(t, taskMetaLines(t))
+	if t.ChecklistItems == nil {
+		return card
 	}
-	out := strings.TrimRight(b.String(), "\n")
-	// On the ?full=true path the task carries its checklist inline. Render it
-	// as an indented block under the detail so notes (possibly multi-line)
-	// stay readable — see fullChecklistText.
-	if t.ChecklistItems != nil {
-		out += "\n\n" + sty.render(sty.bold, "checklist:") + "\n"
-		if len(t.ChecklistItems) == 0 {
-			out += "  " + sty.render(sty.faint, "(no checklist items)")
-		} else {
-			out += fullChecklistText(t.ChecklistItems, "  ")
+	// Rule width inner+2 matches the card's bottom border, so the section's
+	// right edge lines up under the card. Progress isn't repeated on the
+	// CHECKLIST heading — the card above already carries it.
+	return card + "\n\n" + taskChecklistSection(t.ChecklistItems, inner+2)
+}
+
+// Layout constants for the task card's metadata grid. keyGap pads between a key
+// and its value; colGap separates the two key/value columns.
+const (
+	metaKeyGap = 2
+	metaColGap = 3
+)
+
+// taskCard renders the bordered card shared by both detail views: the id/title
+// embedded in the top border, the supplied meta grid as the body, and the
+// optional description below. It returns the card text and the box's inner
+// content width (so a caller can size a matching rule). Structural characters
+// are unconditional and only color is gated — see renderTitledBox.
+func taskCard(t *client.Task, lines []string) (string, int) {
+	title := fmt.Sprintf("#%d  %s", t.ID, t.Title)
+	inner := lipgloss.Width(title) + 1
+	for _, ln := range lines {
+		inner = max(inner, lipgloss.Width(ln))
+	}
+	var b strings.Builder
+	b.WriteString(renderTitledBox(title, lines, inner))
+	if strings.TrimSpace(t.Description) != "" {
+		b.WriteString("\n\n")
+		for i, ln := range strings.Split(t.Description, "\n") {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString("  " + ln)
 		}
 	}
-	return out
+	return b.String(), inner
+}
+
+// metaCell is one key/value pair in the card's grid. style colors the value;
+// the key is always faint.
+type metaCell struct {
+	key   string
+	val   string
+	style lipgloss.Style
+}
+
+// metaGrid lays out left/right key-value columns as card body lines: each row
+// is the left cell (padded to the widest left cell) + a column gap + the right
+// cell. Rows past the shorter column carry only the present side. Padding is
+// measured from plain widths so color can't shear the alignment.
+func metaGrid(left, right []metaCell) []string {
+	leftKeyW, leftValW := cellWidths(left)
+	rightKeyW, _ := cellWidths(right)
+	leftCellW := leftKeyW + metaKeyGap + leftValW
+
+	rows := max(len(left), len(right))
+	lines := make([]string, 0, rows)
+	for i := range rows {
+		var sb strings.Builder
+		if i < len(left) {
+			cell := renderCell(left[i], leftKeyW)
+			sb.WriteString(cell)
+			if i < len(right) {
+				sb.WriteString(strings.Repeat(" ", leftCellW-lipgloss.Width(cell)+metaColGap))
+			}
+		}
+		if i < len(right) {
+			sb.WriteString(renderCell(right[i], rightKeyW))
+		}
+		lines = append(lines, sb.String())
+	}
+	return lines
+}
+
+// taskMetaLines is the card's metadata grid, shared by both detail views:
+// project + due on the left, progress (traffic-light colored) on the right.
+func taskMetaLines(t *client.Task) []string {
+	prog := fmt.Sprintf("%d/%d", t.ChecklistProgress.Done, t.ChecklistProgress.Total)
+	return metaGrid(
+		[]metaCell{
+			boxValCell("project", projectBoxLabel(t.Project)),
+			boxValCell("due", fallback(t.DueDate, "—")),
+		},
+		[]metaCell{{"progress", prog, sty.progressStyle(t.ChecklistProgress.Done, t.ChecklistProgress.Total)}},
+	)
+}
+
+// boxValCell makes a metaCell whose value is plain unless it's the em-dash
+// placeholder, in which case it's faint so empty fields recede.
+func boxValCell(key, val string) metaCell {
+	style := sty.plain
+	if val == "—" {
+		style = sty.faint
+	}
+	return metaCell{key, val, style}
+}
+
+func cellWidths(cells []metaCell) (keyW, valW int) {
+	for _, c := range cells {
+		keyW = max(keyW, len([]rune(c.key)))
+		valW = max(valW, len([]rune(c.val)))
+	}
+	return keyW, valW
+}
+
+// renderCell lays out one key/value pair: faint key padded to keyW, a keyGap,
+// then the colored value. Padding is computed from plain rune widths so color
+// never shears the alignment.
+func renderCell(c metaCell, keyW int) string {
+	pad := strings.Repeat(" ", keyW-len([]rune(c.key))+metaKeyGap)
+	return sty.render(sty.faint, c.key) + pad + sty.render(c.style, c.val)
+}
+
+// taskChecklistSection renders the checklist under the card: a bold CHECKLIST
+// heading, a rule, then one block per item — a colored checkbox + faint id +
+// title, with the item's notes nested underneath (verbatim line breaks, faint).
+// Progress isn't shown here — the card above carries it. ruleWidth sizes the
+// heading rule.
+func taskChecklistSection(items []*client.ChecklistItem, ruleWidth int) string {
+	var b strings.Builder
+	b.WriteString("  " + sty.render(sty.bold, "CHECKLIST") + "\n")
+	b.WriteString("  " + sty.render(sty.accent, strings.Repeat("─", ruleWidth)))
+	if len(items) == 0 {
+		b.WriteString("\n  " + sty.render(sty.faint, "(no checklist items)"))
+		return b.String()
+	}
+
+	idW := 0
+	for _, it := range items {
+		idW = max(idW, len(fmt.Sprintf("#%d", it.ID)))
+	}
+	// Notes align under the title: 2 indent + checkbox + space + id column + 2.
+	indent := 6 + idW
+	notesIndent := strings.Repeat(" ", indent)
+	// Wrap notes to the remaining terminal width so a long line continues under
+	// where the note text starts, not back at the left margin. A wrap below
+	// noteMinWrap columns (very narrow terminal) or an unknown width (outputWidth
+	// 0, e.g. piped) skips wrapping and prints authored lines verbatim. Wrapping
+	// runs on the plain note text, so styled and plain renders break identically.
+	const noteMinWrap = 20
+	wrapAt := 0
+	if w := outputWidth - indent; w >= noteMinWrap {
+		wrapAt = w
+	}
+	emitNote := func(line string) {
+		fmt.Fprintf(&b, "\n%s%s", notesIndent, sty.render(sty.faint, line))
+	}
+	for _, it := range items {
+		id := fmt.Sprintf("#%d", it.ID)
+		fmt.Fprintf(&b, "\n  %s %s%s  %s",
+			sty.render(sty.checkboxStyle(it.Completed), checkboxGlyph(it.Completed)),
+			sty.render(sty.faint, id),
+			strings.Repeat(" ", idW-len(id)),
+			it.Title)
+		notes := ""
+		if it.Notes != nil {
+			notes = *it.Notes
+		}
+		if strings.TrimSpace(notes) == "" {
+			emitNote("(no notes)")
+			continue
+		}
+		// Wrap each authored line independently so the author's own line breaks
+		// (paragraphs) survive, and only over-long lines get re-flowed.
+		for _, ln := range strings.Split(notes, "\n") {
+			if wrapAt > 0 {
+				ln = ansi.Wrap(ln, wrapAt, "")
+			}
+			for _, wl := range strings.Split(ln, "\n") {
+				emitNote(wl)
+			}
+		}
+	}
+	return b.String()
+}
+
+// projectBoxLabel mirrors projectLabel but uses an em dash (not "-") for the
+// empty case, matching the header box's placeholder.
+func projectBoxLabel(p *client.Project) string {
+	if p == nil {
+		return "—"
+	}
+	return p.Name
 }
 
 func projectLabel(p *client.Project) string {
@@ -555,13 +720,6 @@ func projectLabel(p *client.Project) string {
 		return "-"
 	}
 	return p.Name
-}
-
-func actorLabel(a *client.Actor) string {
-	if a == nil {
-		return "-"
-	}
-	return fmt.Sprintf("%s#%d", a.Type, a.ID)
 }
 
 func fallback(s, zero string) string {
