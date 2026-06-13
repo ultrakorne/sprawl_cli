@@ -1,15 +1,15 @@
 ---
 name: sprawl
-version: "0.1.0"
 description: >
   Collaborate on shared tasks, checklists, and notes with the human and other
   agents via the sprawl CLI. Use this skill whenever the user asks you to look
   at "my tasks", "the backlog", "what's assigned to me", to check off a
   checklist item, leave a note for another agent, create a task, or coordinate
   work with another agent — anything that reads or writes the sprawl task
-  space. The skill wraps the `sprawl` CLI; a user-provided `SPRAWL_AGENT_SECRET`
-  (env var or `-s` flag) scopes what the caller can see and change.
+  space.
 license: 'MIT'
+metadata:
+  version: 0.2.0
 allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_AGENT_SECRET), Bash(test:*)
 ---
 
