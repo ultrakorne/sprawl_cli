@@ -448,7 +448,7 @@ func TestGetTask_Success(t *testing.T) {
 		})
 	})
 	c := NewAuthed("tok", "sec")
-	task, err := c.GetTask(context.Background(), "42")
+	task, err := c.GetTask(context.Background(), "42", false)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestGetTask_NotFound(t *testing.T) {
 		writeError(w, 404, "not_found")
 	})
 	c := NewAuthed("tok", "sec")
-	_, err := c.GetTask(context.Background(), "999")
+	_, err := c.GetTask(context.Background(), "999", false)
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		t.Fatalf("want APIError, got %T", err)
@@ -480,7 +480,7 @@ func TestGetTask_Forbidden(t *testing.T) {
 		writeError(w, 403, "forbidden")
 	})
 	c := NewAuthed("tok", "sec")
-	_, err := c.GetTask(context.Background(), "1")
+	_, err := c.GetTask(context.Background(), "1", false)
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		t.Fatalf("want APIError, got %T", err)
@@ -639,7 +639,7 @@ func TestListChecklistItems_Success(t *testing.T) {
 		})
 	})
 	c := NewAuthed("tok", "sec")
-	items, err := c.ListChecklistItems(context.Background(), "77")
+	items, err := c.ListChecklistItems(context.Background(), "77", false)
 	if err != nil {
 		t.Fatalf("ListChecklistItems: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestListChecklistItems_Forbidden(t *testing.T) {
 		writeError(w, 403, "forbidden")
 	})
 	c := NewAuthed("tok", "sec")
-	_, err := c.ListChecklistItems(context.Background(), "3")
+	_, err := c.ListChecklistItems(context.Background(), "3", false)
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != 403 || ae.Code != "forbidden" {
 		t.Fatalf("APIError = %+v err %v", ae, err)
@@ -1184,10 +1184,10 @@ func TestHeaderInvariants(t *testing.T) {
 	if _, err := authed.SearchTasks(context.Background(), "x"); err != nil {
 		t.Fatalf("SearchTasks: %v", err)
 	}
-	if _, err := authed.GetTask(context.Background(), "1"); err != nil {
+	if _, err := authed.GetTask(context.Background(), "1", false); err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if _, err := authed.ListChecklistItems(context.Background(), "1"); err != nil {
+	if _, err := authed.ListChecklistItems(context.Background(), "1", false); err != nil {
 		t.Fatalf("ListChecklistItems: %v", err)
 	}
 	if _, err := authed.GetNotes(context.Background(), "9"); err != nil {

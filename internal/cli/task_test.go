@@ -203,7 +203,7 @@ func TestRunTaskShow_JSONEnvelope(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := runTaskShow(context.Background(), &stdout, &stderr, "42", fx.Opts); err != nil {
+	if err := runTaskShow(context.Background(), &stdout, &stderr, "42", false, fx.Opts); err != nil {
 		t.Fatalf("runTaskShow: %v", err)
 	}
 	var out map[string]any
@@ -211,6 +211,115 @@ func TestRunTaskShow_JSONEnvelope(t *testing.T) {
 	task, ok := out["task"].(map[string]any)
 	if !ok || task["id"] == nil || task["title"] != "hello" {
 		t.Fatalf("task = %+v", out["task"])
+	}
+}
+
+func TestRunTaskShow_FullEmbedsChecklistAndNotes(t *testing.T) {
+	// ?full=true must be sent, and the embedded checklist_items (each with its
+	// notes blob) must survive into the rendered envelope verbatim.
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/42" || r.URL.Query().Get("full") != "true" {
+			t.Errorf("request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": map[string]any{
+				"id": 42, "title": "hello", "description": "d", "status": "done",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 1, "total": 2},
+				"created_by":         nil, "last_actor": nil,
+				"checklist_items": []any{
+					map[string]any{
+						"id": 5, "title": "step one", "completed": true, "position": 0,
+						"has_notes": true, "notes": "do the thing", "last_actor": nil,
+					},
+					map[string]any{
+						"id": 6, "title": "step two", "completed": false, "position": 1,
+						"has_notes": false, "notes": "", "last_actor": nil,
+					},
+				},
+			},
+		})
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := runTaskShow(context.Background(), &stdout, &stderr, "42", true, fx.Opts); err != nil {
+		t.Fatalf("runTaskShow: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	task := out["task"].(map[string]any)
+	items, ok := task["checklist_items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("checklist_items = %+v", task["checklist_items"])
+	}
+	first := items[0].(map[string]any)
+	if first["notes"] != "do the thing" {
+		t.Fatalf("first item notes = %+v", first["notes"])
+	}
+}
+
+func TestRunTaskShow_NonFullOmitsChecklistItems(t *testing.T) {
+	// Without --full the server returns no checklist_items key; the rendered
+	// envelope must not grow one (nil slice ⇒ suppressed by taskMap).
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query().Get("full"); q != "" {
+			t.Errorf("full query should be absent, got %q", q)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": map[string]any{
+				"id": 42, "title": "hello", "description": "", "status": "done",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"created_by":         nil, "last_actor": nil,
+			},
+		})
+	})
+	var stdout, stderr bytes.Buffer
+	if err := runTaskShow(context.Background(), &stdout, &stderr, "42", false, fx.Opts); err != nil {
+		t.Fatalf("runTaskShow: %v", err)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(stdout.Bytes(), &out)
+	if _, present := out["task"].(map[string]any)["checklist_items"]; present {
+		t.Fatalf("checklist_items must be absent on non-full show: %s", stdout.String())
+	}
+}
+
+func TestRunTaskShow_FullTextRendersChecklistBlock(t *testing.T) {
+	fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": map[string]any{
+				"id": 42, "title": "ship it", "description": "", "status": "in_progress",
+				"due_date": nil, "project": nil,
+				"checklist_progress": map[string]any{"done": 1, "total": 2},
+				"created_by":         nil, "last_actor": nil,
+				"checklist_items": []any{
+					map[string]any{
+						"id": 5, "title": "done step", "completed": true, "position": 0,
+						"has_notes": true, "notes": "did it", "last_actor": nil,
+					},
+					map[string]any{
+						"id": 6, "title": "todo step", "completed": false, "position": 1,
+						"has_notes": false, "notes": "", "last_actor": nil,
+					},
+				},
+			},
+		})
+	})
+	var stdout, stderr bytes.Buffer
+	if err := runTaskShow(context.Background(), &stdout, &stderr, "42", true, fx.Opts); err != nil {
+		t.Fatalf("runTaskShow: %v", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{"#42 ship it", "checklist:", "[x] #5 done step", "notes: did it", "[ ] #6 todo step", "(no notes)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("text output missing %q:\n%s", want, got)
+		}
 	}
 }
 

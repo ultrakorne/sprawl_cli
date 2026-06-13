@@ -1,5 +1,5 @@
 name = "sprawl-bookkeeper"
-description = "Background sprawl bookkeeper for reading or writing the sprawl task space."
+description = "Background sprawl bookkeeper for reading or writing the sprawl task space. Run it in the background for fire-and-forget bookkeeping done alongside other work; run it in the foreground when its result — e.g. a new task/item id — is what you're waiting on. It reports back what it did."
 model_reasoning_effort = "low"
 
 developer_instructions = """

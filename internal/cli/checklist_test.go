@@ -71,7 +71,7 @@ func TestRunChecklist_JSONEnvelope(t *testing.T) {
 		})
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runChecklist(context.Background(), &stdout, &stderr, "4", fx.Opts); err != nil {
+	if err := runChecklist(context.Background(), &stdout, &stderr, "4", false, fx.Opts); err != nil {
 		t.Fatalf("runChecklist: %v", err)
 	}
 	var out map[string]any
@@ -81,6 +81,65 @@ func TestRunChecklist_JSONEnvelope(t *testing.T) {
 	items, ok := out["checklist_items"].([]any)
 	if !ok || len(items) != 1 {
 		t.Fatalf("checklist_items = %+v", out["checklist_items"])
+	}
+}
+
+func TestRunChecklist_FullSendsParamAndEmitsNotes(t *testing.T) {
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/4/checklist" || r.URL.Query().Get("full") != "true" {
+			t.Errorf("request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"checklist_items": []any{
+				map[string]any{
+					"id": 5, "title": "step", "completed": false, "position": 0,
+					"has_notes": true, "notes": "the note body", "last_actor": nil,
+				},
+			},
+		})
+	})
+	var stdout, stderr bytes.Buffer
+	if err := runChecklist(context.Background(), &stdout, &stderr, "4", true, fx.Opts); err != nil {
+		t.Fatalf("runChecklist: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	item := out["checklist_items"].([]any)[0].(map[string]any)
+	if item["notes"] != "the note body" {
+		t.Fatalf("notes = %+v", item["notes"])
+	}
+}
+
+func TestRunChecklist_FullTextRendersNotesBlock(t *testing.T) {
+	// Text mode swaps the table for a per-item block; notes (incl. the
+	// empty-notes "(no notes)" case) render under each item.
+	fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"checklist_items": []any{
+				map[string]any{
+					"id": 5, "title": "with notes", "completed": true, "position": 0,
+					"has_notes": true, "notes": "line one\nline two", "last_actor": nil,
+				},
+				map[string]any{
+					"id": 6, "title": "no notes", "completed": false, "position": 1,
+					"has_notes": false, "notes": "", "last_actor": nil,
+				},
+			},
+		})
+	})
+	var stdout, stderr bytes.Buffer
+	if err := runChecklist(context.Background(), &stdout, &stderr, "4", true, fx.Opts); err != nil {
+		t.Fatalf("runChecklist: %v", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{"[x] #5 with notes", "notes: line one", "line two", "[ ] #6 no notes", "(no notes)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("text output missing %q:\n%s", want, got)
+		}
 	}
 }
 

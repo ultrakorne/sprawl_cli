@@ -14,10 +14,12 @@ import (
 )
 
 func newChecklistCmd(opts *runtimeOpts) *cobra.Command {
+	var full bool
 	cmd := &cobra.Command{
 		Use:   "checklist <task_id>",
 		Short: "List or mutate checklist items for a task",
 		Long: "With just a task id, lists checklist items (GET /api/v1/tasks/:task_id/checklist). " +
+			"Pass --full to include each item's notes inline. " +
 			"Use the `add`, `check`, `uncheck`, and `update` subcommands to mutate items. " +
 			"Permission is enforced on the parent task — 403 if the caller can't read/write it, " +
 			"404 if it isn't visible to them at all.",
@@ -28,9 +30,11 @@ func newChecklistCmd(opts *runtimeOpts) *cobra.Command {
 		// through here.
 		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runChecklist(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
+			return runChecklist(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], full, opts)
 		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false,
+		"include each item's notes inline (GET …/tasks/:task_id/checklist?full=true)")
 	cmd.SilenceErrors = true
 	cmd.AddCommand(newChecklistAddCmd(opts))
 	cmd.AddCommand(newChecklistCheckCmd(opts))
@@ -242,7 +246,7 @@ func renderChecklistItem(out io.Writer, item *client.ChecklistItem, opts *runtim
 }
 
 func checklistItemMap(it *client.ChecklistItem) map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"id":         it.ID,
 		"title":      it.Title,
 		"completed":  it.Completed,
@@ -250,23 +254,41 @@ func checklistItemMap(it *client.ChecklistItem) map[string]any {
 		"has_notes":  it.HasNotes,
 		"last_actor": actorMap(it.LastActor),
 	}
+	// notes rides only on the ?full=true read paths. nil ⇒ field absent
+	// (non-full list or a single-item write response) ⇒ suppress so those
+	// payloads keep their shape. Non-nil (including "") ⇒ pass through.
+	if it.Notes != nil {
+		m["notes"] = *it.Notes
+	}
+	return m
 }
 
 func checklistItemLine(it *client.ChecklistItem) string {
 	return fmt.Sprintf("%s #%d %s", checkbox(it.Completed), it.ID, it.Title)
 }
 
-func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string, opts *runtimeOpts) error {
+func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string, full bool, opts *runtimeOpts) error {
 	c, err := newAuthedClient(opts)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	items, err := c.ListChecklistItems(ctx, taskID)
+	items, err := c.ListChecklistItems(ctx, taskID, full)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
 	payload := map[string]any{"checklist_items": checklistMaps(items)}
-	return renderPayload(stdout, payload, checklistItemsText(items), opts)
+	// Full mode swaps the aligned table for a per-item block so multi-line
+	// notes stay readable; the json/toon payload is identical either way
+	// (checklistItemMap emits the notes key only when present).
+	text := checklistItemsText(items)
+	if full {
+		if len(items) == 0 {
+			text = "(no checklist items)"
+		} else {
+			text = fullChecklistText(items, "")
+		}
+	}
+	return renderPayload(stdout, payload, text, opts)
 }
 
 func checklistMaps(items []*client.ChecklistItem) []any {
@@ -295,6 +317,35 @@ func checklistItemsText(items []*client.ChecklistItem) string {
 	}
 	_ = tw.Flush()
 	return strings.TrimRight(buf.String(), "\n")
+}
+
+// fullChecklistText renders the ?full=true item view: one line per item
+// (`<checkbox> #<id> <title>`) followed by its notes. Notes are indented six
+// columns past the item line and printed verbatim — multi-line blobs keep
+// their line breaks. Empty notes render `(no notes)`. indent prefixes every
+// item line so the same helper serves both `checklist <id> --full` (indent
+// "") and the embedded block under `task <id> --full` (indent "  ").
+// Callers handle the empty-slice case before calling.
+func fullChecklistText(items []*client.ChecklistItem, indent string) string {
+	notesIndent := indent + "      "
+	var b strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&b, "%s%s #%d %s\n", indent, checkbox(it.Completed), it.ID, it.Title)
+		notes := ""
+		if it.Notes != nil {
+			notes = *it.Notes
+		}
+		if strings.TrimSpace(notes) == "" {
+			fmt.Fprintf(&b, "%s(no notes)\n", notesIndent)
+			continue
+		}
+		lines := strings.Split(notes, "\n")
+		fmt.Fprintf(&b, "%snotes: %s\n", notesIndent, lines[0])
+		for _, ln := range lines[1:] {
+			fmt.Fprintf(&b, "%s%s\n", notesIndent, ln)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func checkbox(done bool) string {

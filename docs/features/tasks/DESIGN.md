@@ -2,15 +2,17 @@
 
 ## Overview
 
-Six commands wrap the `/api/v1/tasks*` surface. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
+The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows one task from a bare positional id (`task <id>`); list / search / create / update / due / delete are subcommands. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
 
 ## Components
 
 ### `task list`
 `GET /api/v1/tasks`. Lists every task the caller can read. Text fallback is a tabwriter-aligned `ID STATUS DUE PROGRESS PROJECT TITLE` table; `(no tasks)` when empty.
 
-### `task show <id>`
-`GET /api/v1/tasks/:id`. 404 when the id isn't visible to the caller; 403 when visible by scope but denied by the permission resolver. Text fallback is the multi-line detail (id/title, status, due, project, progress, actors, description).
+### `task <id>` (show)
+`GET /api/v1/tasks/:id`. A bare positional id on the `task` parent command shows one task — there is no `show` subcommand (removed for symmetry with `checklist <task_id>`; see Design Decisions). 404 when the id isn't visible to the caller; 403 when visible by scope but denied by the permission resolver. Text fallback is the multi-line detail (id/title, status, due, project, progress, actors, description).
+
+`--full` opts into `GET /api/v1/tasks/:id?full=true`, which embeds the task's checklist under `task.checklist_items: [...]` (ordered by position), each item carrying its `notes` blob inline alongside the usual `has_notes` flag. One server call replaces the old `task <id>` + `checklist <id>` + per-item `note show` fan-out. The CLI decodes the embedded items into `Task.ChecklistItems` (nil ⇒ field absent on a non-full fetch, so it's suppressed in output). Text fallback appends a `checklist:` block under the detail, rendering each item as a line plus its (possibly multi-line) notes indented beneath — `(no notes)` for empty. Without `--full` the response and rendered shape are unchanged.
 
 ### `task search <query>`
 `GET /api/v1/tasks/search?q=<query>`. Case-insensitive substring match on **task title and checklist item titles** (notes are not searched). Each task in the response carries an additional `matched_checklist_items: [{id,title}, …]` field — `[]` when only the title matched (UI hint: "matched on title"), otherwise one entry per checklist item whose title matched. Tasks dedupe: a task whose title and one or more items both match still appears once. Empty / whitespace query → 422 `query_required` from the server; the CLI does not pre-validate.
@@ -32,10 +34,12 @@ Server-side `project_id` validation runs before permission checks:
 `DELETE /api/v1/tasks/:id`. Soft-delete: the row stays in the DB with `hidden=true` and `deleted_at` set, neighbor cards on the canvas are reflowed atomically in the same transaction, and the server broadcasts `task_updated` for each moved neighbor plus a final `task_deleted` on PubSub. **There is no API to restore** — the LiveView trash bin is the only undo path. Server returns 204 No Content; the CLI emits `{id: "<id>", deleted: true}` (json/toon) or `Deleted task #<id>` (text) so structured consumers always get a payload. A 404 `not_found` is treated as success — repeated deletes and deletes against an id that never existed render the same payload, matching the idempotent semantics of HTTP DELETE. Other 4xx (401 unauthenticated, 403 forbidden, malformed) surface through `reportErr` like every other command. The 404 idempotency only matches the bare `not_found` code; codes like `theme_not_found` still surface as errors.
 
 ### `task due <id> <preset>`
-`PATCH /api/v1/tasks/:id/due_date` body `{"due": "<preset>" | null}`. Positional preset, validated locally — one of `yesterday` / `today` / `week` / `none`. `none` wires as JSON null and clears the due date; the other three are passed through verbatim and resolved server-side against the user's timezone and `week_end_day` setting. Response is the same `{"task": {...}}` envelope as `task show`, with `due_date` carrying the resolved ISO date (or null). Server errors: 422 `invalid_due` (only reachable through a CLI bug, since presets are filtered locally), 404 `not_found` (task not visible to the caller), 403 `forbidden` (no `:write` on the task), 401 `unauthenticated`.
+`PATCH /api/v1/tasks/:id/due_date` body `{"due": "<preset>" | null}`. Positional preset, validated locally — one of `yesterday` / `today` / `week` / `none`. `none` wires as JSON null and clears the due date; the other three are passed through verbatim and resolved server-side against the user's timezone and `week_end_day` setting. Response is the same `{"task": {...}}` envelope as `task <id>`, with `due_date` carrying the resolved ISO date (or null). Server errors: 422 `invalid_due` (only reachable through a CLI bug, since presets are filtered locally), 404 `not_found` (task not visible to the caller), 403 `forbidden` (no `:write` on the task), 401 `unauthenticated`.
 
 ## Design Decisions
 
+- **`task <id>` instead of `task show <id>`**: a bare positional id shows the task, matching `checklist <task_id>` so the read syntax is `<noun> <id>` across both. The `show` subcommand was removed outright (no alias) — pre-public, so the churn is acceptable. `task show 42` now falls through to the parent RunE as two positional args and fails the `ExactArgs(1)` check with cobra's generic usage error; no special migration message.
+- **`--full` is opt-in, server-assembled**: the bundled task+items+notes view is one `?full=true` call the server assembles atomically, not a CLI fan-out — keeping the CLI a thin 1:1 wrapper and avoiding partial-failure semantics. Scoped to `task <id>` and `checklist <task_id>` only (not `list` / `search`, which would explode into N server-side fan-outs).
 - **No `--project-id` on update**: server-side changeset ignores it; surfacing it would mislead.
 - **Empty-attrs rejected locally**: prevents no-op POSTs that would otherwise waste a round-trip.
 - **`--description ""` clears**: idiomatic for agents wanting explicit empty, distinguished from the flag being unset.

@@ -33,7 +33,7 @@ for those. sprawl is for collaboration across sessions and agents.
 
 ## Preflight
 
-**For reads, skip it.** `task list` / `task show` / `checklist` / `note show`
+**For reads, skip it.** `task list` / `task <id>` / `checklist` / `note show`
 are already filtered server-side to what your key can see, so just run them.
 Probing first only burns tokens and a round-trip.
 
@@ -217,14 +217,22 @@ Omit `--format` — default toon is what you want here (see [Output formats](#ou
 
 ```bash
 sprawl task list
-sprawl task show <id>
+sprawl task <id>                               # show one task (no `show` subcommand)
+sprawl task <id> --full                        # task + its checklist items + notes, one call
 sprawl task search "<query>"                   # case-insensitive substring on title
 sprawl checklist <task_id>                     # list checklist items for a task
+sprawl checklist <task_id> --full              # items with their notes inline, one call
 sprawl note show <item_id>                     # raw notes blob; empty is valid
 sprawl activity                                # completed tasks + items for today
 sprawl activity --days-ago 1                   # yesterday
 sprawl activity --date 2026-04-29              # specific day
 ```
+
+**`--full` is the read-before-work shortcut.** When you're about to work a
+task, `sprawl task <id> --full` (or `sprawl checklist <task_id> --full`) pulls
+the items *and* their notes in one call — prefer it over listing the checklist
+and then running `note show` per item. Reach for plain `note show` only for a
+single item's notes in isolation.
 
 **Daily activity:** `sprawl activity` returns the calling agent's completed tasks + completed checklist items for a single day, scoped by the same key cascade as `task list`. Default is today in the user's timezone. `--date` (YYYY-MM-DD) and `--days-ago` (`0..365`, `0`=today) are mutually exclusive — passing both is a local error before any HTTP call. Empty days return an empty result, not an error. Useful for daily standup write-ups, weekly summaries (loop over `--days-ago 0..6`), and answering "what did I get done yesterday?".
 
@@ -335,23 +343,27 @@ These are the common shapes of work the skill exists for.
 ```bash
 sprawl task list
 # inspect output, pick tasks you can act on
-sprawl task show <id>
-sprawl checklist <id>
+sprawl task <id> --full        # the task plus every item and its notes, one call
 ```
 
 Filter by what's visible — your key already scopes the list server-side.
 
-**Before you start an item, read its note.** The checklist response shows
-whether an item has a note but not its content. If `has_notes` is true (or
-the text output shows a note marker), pull it — that's where the previous
-agent or the human left the hand-off context:
+**Read the notes before you start.** Notes are where the previous agent or
+the human left hand-off context — skipping them is how you redo work someone
+already did or miss a blocker they flagged. `sprawl task <id> --full` already
+includes every item's notes inline, so prefer it when picking up a task; use
+`sprawl checklist <task_id> --full` if you only need the checklist. Fall back
+to `sprawl note show <item_id>` only for a single item's notes in isolation:
 
 ```bash
-sprawl note show <item_id>
+sprawl task <id> --full        # preferred: task + items + notes together
+sprawl checklist <id> --full   # just the checklist, notes inline
+sprawl note show <item_id>     # one item's notes, when that's all you need
 ```
 
-Skipping this is how you redo work someone already did, or miss a blocker
-they flagged.
+A plain `sprawl checklist <id>` (no `--full`) still shows a `has_notes` marker
+per item without the bodies — fine for a quick glance, but `--full` is the
+one-call way to actually read them.
 
 **When you finish an item, check it off immediately** — see
 [§2](#2-make-progress-on-a-checklist). Don't wait until the end of the task:

@@ -9,6 +9,8 @@ Checklist items are ordered children of a task. Each can carry a free-form `note
 ### `checklist <task_id>` (list)
 `GET /api/v1/tasks/:task_id/checklist`. Text fallback: tabwriter-aligned table with `[x]` / `[ ]` completion boxes and a `notes` marker when `has_notes` is true.
 
+`--full` opts into `GET /api/v1/tasks/:task_id/checklist?full=true`, where each item carries its `notes` string inline (alongside `has_notes`) — one call instead of an N-call `note show` loop over the items. The json/toon envelope is unchanged (`{checklist_items:[…]}`); each item map just gains a `notes` key (`checklistItemMap` emits it only when the decoded `Notes` pointer is non-nil). Text mode drops the table for a per-item block (`fullChecklistText`, shared with `task <id> --full`): one line per item plus its notes indented beneath, `(no notes)` when empty.
+
 ### `checklist add <task_id>`
 `POST /api/v1/tasks/:task_id/checklist` body `{"checklist_item":{…}}`. Flags: `--title`, `--notes`, `--from-json <path|->`. Server appends and assigns position.
 
@@ -37,7 +39,7 @@ Task / checklist create / update endpoints wrap server-side validation:
 ## Design Decisions
 
 - **`check` / `uncheck` instead of `toggle`**: agents don't reliably know current state. Explicit verbs match the server's explicit-bool endpoint and avoid a GET-then-PATCH race.
-- **Notes as a separate endpoint**: keeps list responses small when notes are large; makes clearing notes a distinct, auditable action.
+- **Notes as a separate endpoint**: keeps list responses small when notes are large; makes clearing notes a distinct, auditable action. `--full` is the opt-in escape hatch when a caller genuinely wants every item's notes at once (e.g. an agent reading a whole checklist before starting work) — it's server-assembled (`?full=true`), so the CLI stays a thin wrapper and there's no per-item fan-out or partial-failure handling on the client.
 - **`note set` positional-or-stdin**: supports both interactive (`sprawl note set 8 "…"`) and piped (`cat draft.md | sprawl note set 8 --stdin`). Both paths at once is rejected locally.
 - **Hard delete with no undo (and 404 = success)**: parallels `task delete`'s idempotent contract for the same retry-friendly reason, but the destruction is real — there's no trash-bin equivalent for items, the row simply goes away. Callers that want the row preserved should `checklist uncheck` instead. The `completed_at` flip on the parent task is intentional: removing the last unchecked item legitimately means "all remaining items are done."
 - **Synthetic `{id, deleted: true}` payload on 204**: same reasoning as `task delete` — the server returns no body, but json / toon consumers always need a parseable envelope.

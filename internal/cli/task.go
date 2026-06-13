@@ -14,12 +14,28 @@ import (
 )
 
 func newTaskCmd(opts *runtimeOpts) *cobra.Command {
+	var full bool
 	cmd := &cobra.Command{
-		Use:   "task",
-		Short: "Read or mutate tasks (list, show, search, create, update)",
+		Use:   "task <id>",
+		Short: "Show a task by id, or manage tasks (list, search, create, update, due, delete)",
+		Long: "With just a task id, fetches that task (GET /api/v1/tasks/:id) — mirrors " +
+			"`checklist <task_id>`, so a bare positional id falls through to this show " +
+			"behaviour while the list / search / create / update / due / delete subcommands " +
+			"dispatch first. Pass --full to embed the task's checklist items and their notes " +
+			"in one call.",
+		// The show behaviour is the parent RunE so `sprawl task <id>` works
+		// without a `show` subcommand, matching `checklist <task_id>`. cobra
+		// routes exact subcommand matches (list / search / …) before falling
+		// through here.
+		Args: textArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTaskShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], full, opts)
+		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false,
+		"embed the task's checklist items and their notes inline (GET …/tasks/:id?full=true)")
+	cmd.SilenceErrors = true
 	cmd.AddCommand(newTaskListCmd(opts))
-	cmd.AddCommand(newTaskShowCmd(opts))
 	cmd.AddCommand(newTaskSearchCmd(opts))
 	cmd.AddCommand(newTaskCreateCmd(opts))
 	cmd.AddCommand(newTaskUpdateCmd(opts))
@@ -35,19 +51,6 @@ func newTaskListCmd(opts *runtimeOpts) *cobra.Command {
 		Args:  textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTaskList(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
-		},
-	}
-	cmd.SilenceErrors = true
-	return cmd
-}
-
-func newTaskShowCmd(opts *runtimeOpts) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "show <id>",
-		Short: "Fetch a single task by id (GET /api/v1/tasks/:id)",
-		Args:  textArgs(cobra.ExactArgs(1)),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTaskShow(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
 		},
 	}
 	cmd.SilenceErrors = true
@@ -183,7 +186,7 @@ func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, att
 // newTaskDueCmd wraps PATCH /api/v1/tasks/:id/due_date. The endpoint takes
 // one of four preset names ("yesterday" / "today" / "week") or null to
 // clear; the server resolves the preset against the user's timezone and
-// week_end_day setting and returns the same task envelope as `task show`.
+// week_end_day setting and returns the same task envelope as `task <id>`.
 // The verb is separate from `task update` because the update changeset
 // ignores the due_date key — bundling them would mislead.
 func newTaskDueCmd(opts *runtimeOpts) *cobra.Command {
@@ -336,12 +339,12 @@ func runTaskSearch(ctx context.Context, stdout, stderr io.Writer, query string, 
 	return renderPayload(stdout, payload, taskSearchListText(tasks), opts)
 }
 
-func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string, opts *runtimeOpts) error {
+func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string, full bool, opts *runtimeOpts) error {
 	c, err := newAuthedClient(opts)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	task, err := c.GetTask(ctx, id)
+	task, err := c.GetTask(ctx, id, full)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
@@ -391,6 +394,17 @@ func taskMap(t *client.Task) map[string]any {
 			})
 		}
 		m["matched_checklist_items"] = matched
+	}
+	// checklist_items rides only on ?full=true task responses. nil ⇒ field
+	// absent ⇒ suppress so list/show/create/update payloads keep their shape.
+	// Non-nil (including empty) ⇒ embed each item via checklistItemMap, which
+	// carries the inline notes blob on the full path.
+	if t.ChecklistItems != nil {
+		items := make([]any, 0, len(t.ChecklistItems))
+		for _, it := range t.ChecklistItems {
+			items = append(items, checklistItemMap(it))
+		}
+		m["checklist_items"] = items
 	}
 	return m
 }
@@ -504,7 +518,19 @@ func taskDetailText(t *client.Task) string {
 	if strings.TrimSpace(t.Description) != "" {
 		fmt.Fprintf(&b, "\n%s", t.Description)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	out := strings.TrimRight(b.String(), "\n")
+	// On the ?full=true path the task carries its checklist inline. Render it
+	// as an indented block under the detail so notes (possibly multi-line)
+	// stay readable — see fullChecklistText.
+	if t.ChecklistItems != nil {
+		out += "\n\nchecklist:\n"
+		if len(t.ChecklistItems) == 0 {
+			out += "  (no checklist items)"
+		} else {
+			out += fullChecklistText(t.ChecklistItems, "  ")
+		}
+	}
+	return out
 }
 
 func projectLabel(p *client.Project) string {

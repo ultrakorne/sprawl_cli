@@ -235,16 +235,28 @@ type Task struct {
 	CreatedBy             *Actor                 `json:"created_by"`
 	LastActor             *Actor                 `json:"last_actor"`
 	MatchedChecklistItems []MatchedChecklistItem `json:"matched_checklist_items,omitempty"`
+	// ChecklistItems rides only on GET /tasks/:id?full=true. nil ⇒ the field
+	// was absent on the wire (non-full fetch) so renderers suppress it; a
+	// non-nil (possibly empty) slice means the server embedded the full
+	// checklist. Each item carries its notes inline (ChecklistItem.Notes).
+	ChecklistItems []*ChecklistItem `json:"checklist_items,omitempty"`
 }
 
 // ChecklistItem mirrors checklist_item_json.ex.
+//
+// Notes is populated only on the ?full=true read paths (GET /tasks/:id and
+// GET /tasks/:id/checklist). nil ⇒ field absent (non-full fetch or a
+// single-item write response); a non-nil pointer (including to "") means the
+// server embedded the notes blob. The pointer keeps "no notes field at all"
+// distinct from "notes present but empty".
 type ChecklistItem struct {
-	ID        int64  `json:"id"`
-	Title     string `json:"title"`
-	Completed bool   `json:"completed"`
-	Position  int    `json:"position"`
-	HasNotes  bool   `json:"has_notes"`
-	LastActor *Actor `json:"last_actor"`
+	ID        int64   `json:"id"`
+	Title     string  `json:"title"`
+	Completed bool    `json:"completed"`
+	Position  int     `json:"position"`
+	HasNotes  bool    `json:"has_notes"`
+	Notes     *string `json:"notes,omitempty"`
+	LastActor *Actor  `json:"last_actor"`
 }
 
 type tasksEnvelope struct {
@@ -291,17 +303,31 @@ func (c *Client) SearchTasks(ctx context.Context, query string) ([]*Task, error)
 // GetTask fetches a single task by ID. Server-side IDs are integers; we pass
 // the raw string through so the server produces the canonical 404 on a
 // malformed ID rather than duplicating the rule here.
-func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
+//
+// When full is true the CLI requests ?full=true, which makes the server embed
+// the task's checklist items (each with its notes) under task.checklist_items.
+// Without it the response shape is unchanged (checklist_progress counts only).
+func (c *Client) GetTask(ctx context.Context, id string, full bool) (*Task, error) {
 	var env taskEnvelope
-	if err := c.do(ctx, http.MethodGet, "/api/v1/tasks/"+url.PathEscape(id), nil, &env); err != nil {
+	path := "/api/v1/tasks/" + url.PathEscape(id)
+	if full {
+		path += "?full=true"
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
 	}
 	return env.Task, nil
 }
 
-func (c *Client) ListChecklistItems(ctx context.Context, taskID string) ([]*ChecklistItem, error) {
+// ListChecklistItems fetches a task's checklist items. When full is true the
+// CLI requests ?full=true so each item carries its notes blob inline; without
+// it items carry the has_notes flag only.
+func (c *Client) ListChecklistItems(ctx context.Context, taskID string, full bool) ([]*ChecklistItem, error) {
 	var env checklistEnvelope
 	path := "/api/v1/tasks/" + url.PathEscape(taskID) + "/checklist"
+	if full {
+		path += "?full=true"
+	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
 	}

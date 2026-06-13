@@ -93,12 +93,12 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
 | `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only. |
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
-| `sprawl task show <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. |
+| `sprawl task <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. Add `--full` to embed the task's checklist items and their notes in one call. |
 | `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
 | `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. |
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl task delete <id>` | Soft-deletes a task. Server reflows neighbor cards on the canvas. A 404 (already deleted or never visible) is treated as success — the CLI is idempotent. There is no API to restore a soft-deleted task. |
-| `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. |
+| `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. Add `--full` to include each item's notes inline (one call instead of an N-call `note show` loop). |
 | `sprawl checklist add <task_id>` | Adds an item. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). |
 | `sprawl checklist check <item_id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
 | `sprawl checklist uncheck <item_id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
@@ -131,6 +131,8 @@ curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/agents
 ```
 
 All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`). The two delete commands return `{id:"…", deleted:true}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
+
+`--full` (on `task <id>` and `checklist <task_id>`) opts into the heavier read shape via `?full=true`. `task <id> --full` embeds the checklist under the task as `task.checklist_items: [...]`, and both commands give each item a `notes` string (alongside the usual `has_notes` flag). In `text` mode the full views drop the table for a per-item block so multi-line notes stay readable. Without `--full`, responses are unchanged.
 
 ## Write command examples
 

@@ -37,7 +37,7 @@
 }
 ```
 
-`completed_tasks` reuses the same `Task` shape as `task list` / `task show` so consumers can route both feeds through one renderer. `completed_items` extends a checklist item with `completed_at` (the timestamp the day grouping is built on) and a trimmed parent-task summary (`id`, `title`, `project`) so a client can group items by task without a follow-up fetch.
+`completed_tasks` reuses the same `Task` shape as `task list` / `task <id>` so consumers can route both feeds through one renderer. `completed_items` extends a checklist item with `completed_at` (the timestamp the day grouping is built on) and a trimmed parent-task summary (`id`, `title`, `project`) so a client can group items by task without a follow-up fetch.
 
 The server response is unenveloped; the CLI re-injects `"status":"ok"` so structured output matches the other read commands.
 

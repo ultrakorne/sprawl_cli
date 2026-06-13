@@ -2,7 +2,7 @@
 
 ## Architecture
 
-`internal/client/client.go` exposes `ListChecklistItems`, `CreateChecklistItem`, `SetChecklistItemCompleted`, `UpdateChecklistItem`, `DeleteChecklistItem`, `GetNotes`, `SetNotes`. `internal/cli/checklist.go` wires the `checklist` command tree; the parent `RunE` handles the listing behaviour while `add` / `check` / `uncheck` / `update` / `delete` dispatch as sibling subcommands. `internal/cli/note.go` wires the top-level `note` command.
+`internal/client/client.go` exposes `ListChecklistItems`, `CreateChecklistItem`, `SetChecklistItemCompleted`, `UpdateChecklistItem`, `DeleteChecklistItem`, `GetNotes`, `SetNotes`. `ListChecklistItems(ctx, taskID, full)` appends `?full=true` when `full` is set. `internal/cli/checklist.go` wires the `checklist` command tree; the parent `RunE` handles the listing behaviour (and binds the `--full` bool) while `add` / `check` / `uncheck` / `update` / `delete` dispatch as sibling subcommands. `internal/cli/note.go` wires the top-level `note` command.
 
 ## Source Files
 
@@ -16,8 +16,9 @@
 
 ## Wire Shapes
 
-- `checklist_item` fields: `id`, `title`, `completed`, `position`, `has_notes`, `last_actor`.
-- List envelope: `{"checklist_items": [...]}`. Single-item envelope: `{"checklist_item": {…}}`. Notes envelope: `{"notes": "…"}`.
+- `checklist_item` fields: `id`, `title`, `completed`, `position`, `has_notes`, `last_actor`. On the `?full=true` read paths each item additionally carries `notes` (a string, `""` when none) — decoded into `ChecklistItem.Notes *string` (`nil` ⇒ field absent on a non-full fetch or a single-item write response). `checklistItemMap` emits the `notes` key only when the pointer is non-nil, so non-full and write responses keep their shape.
+- List envelope: `{"checklist_items": [...]}` (same shape full or not — full just adds `notes` per item). Single-item envelope: `{"checklist_item": {…}}`. Notes envelope: `{"notes": "…"}`.
+- `fullChecklistText(items, indent)` renders the shared full text block for both `checklist <id> --full` (indent `""`) and the embedded `checklist:` section under `task <id> --full` (indent `"  "`); notes sit six columns past the item line and keep their line breaks. Callers handle the empty-slice case.
 - `checklist delete` is `DELETE /api/v1/checklist_items/:id` with no request body and a 204 No Content response. The CLI relies on `do()` being 204-safe — it skips the JSON decode when `out` is nil or the body is empty (see `client.go` `doWithStatus`) — so passing `nil` for `out` is the correct shape. `runChecklistDelete` calls `DeleteChecklistItem`, swallows `*client.APIError` with Status 404 + Code `not_found` via `isNotFoundAPIError` (shared with `task delete`, see tasks/TECHNICAL.md), and renders a synthetic `{id, deleted: true}` payload through `renderPayload`.
 
 ## Noteworthy Behavior
