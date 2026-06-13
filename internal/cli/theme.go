@@ -69,7 +69,7 @@ func runThemeSet(ctx context.Context, stdout, stderr io.Writer, id string, opts 
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	return renderThemePayload(stdout, applied, fmt.Sprintf("Theme set to %s", applied), opts)
+	return renderThemePayload(stdout, applied, sty.render(sty.ok, fmt.Sprintf("Theme set to %s", applied)), opts)
 }
 
 // renderThemePayload mirrors the server envelope on the wire: flat

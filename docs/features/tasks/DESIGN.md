@@ -7,10 +7,10 @@ The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows 
 ## Components
 
 ### `task list`
-`GET /api/v1/tasks`. Lists every task the caller can read. Text fallback is a tabwriter-aligned `ID STATUS DUE PROGRESS PROJECT TITLE` table; `(no tasks)` when empty.
+`GET /api/v1/tasks`. Lists every task the caller can read. Text view is an aligned `ID DUE PROGRESS PROJECT TITLE` table; `(no tasks)` when empty. STATUS has no column — PROGRESS (traffic-light colored: red `0/x`, yellow in-progress, green `x/x`) carries that signal for humans, while `status` stays in the json/toon payload for agents.
 
 ### `task <id>` (show)
-`GET /api/v1/tasks/:id`. A bare positional id on the `task` parent command shows one task — there is no `show` subcommand (removed for symmetry with `checklist <task_id>`; see Design Decisions). 404 when the id isn't visible to the caller; 403 when visible by scope but denied by the permission resolver. Text fallback is the multi-line detail (id/title, status, due, project, progress, actors, description).
+`GET /api/v1/tasks/:id`. A bare positional id on the `task` parent command shows one task — there is no `show` subcommand (removed for symmetry with `checklist <task_id>`; see Design Decisions). 404 when the id isn't visible to the caller; 403 when visible by scope but denied by the permission resolver. Text view is the multi-line detail (id/title, due, project, progress, actors, description); status is omitted from text (progress is the human signal) but stays in the json/toon payload.
 
 `--full` opts into `GET /api/v1/tasks/:id?full=true`, which embeds the task's checklist under `task.checklist_items: [...]` (ordered by position), each item carrying its `notes` blob inline alongside the usual `has_notes` flag. One server call replaces the old `task <id>` + `checklist <id>` + per-item `note show` fan-out. The CLI decodes the embedded items into `Task.ChecklistItems` (nil ⇒ field absent on a non-full fetch, so it's suppressed in output). Text fallback appends a `checklist:` block under the detail, rendering each item as a line plus its (possibly multi-line) notes indented beneath — `(no notes)` for empty. Without `--full` the response and rendered shape are unchanged.
 

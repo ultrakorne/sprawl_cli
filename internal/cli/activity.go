@@ -7,7 +7,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -115,37 +114,35 @@ func activityItemMap(it *client.ActivityChecklistItem) map[string]any {
 // one per array, separated by a blank line. Empty-on-both renders as a single
 // line so `(no activity)` is unambiguous.
 func activityText(log *client.ActivityLog) string {
+	title := sty.render(sty.bold, fmt.Sprintf("activity for %s", log.Date))
 	if len(log.CompletedTasks) == 0 && len(log.CompletedItems) == 0 {
-		return fmt.Sprintf("activity for %s\n(no activity)", log.Date)
+		return title + "\n" + sty.render(sty.faint, "(no activity)")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "activity for %s\n", log.Date)
+	fmt.Fprintf(&b, "%s\n", title)
 
 	if len(log.CompletedTasks) > 0 {
-		fmt.Fprintf(&b, "\ncompleted tasks (%d)\n", len(log.CompletedTasks))
-		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, taskListHeader)
-		for _, t := range log.CompletedTasks {
-			fmt.Fprintln(tw, taskRowFields(t))
-		}
-		_ = tw.Flush()
+		section := fmt.Sprintf("completed tasks (%d)", len(log.CompletedTasks))
+		fmt.Fprintf(&b, "\n%s\n", sty.render(sty.bold, section))
+		b.WriteString(renderTable(taskListHeader, taskRows(log.CompletedTasks)))
+		b.WriteByte('\n')
 	}
 
 	if len(log.CompletedItems) > 0 {
-		fmt.Fprintf(&b, "\ncompleted items (%d)\n", len(log.CompletedItems))
-		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tCOMPLETED_AT\tPROJECT\tTASK\tTITLE")
-		for _, it := range log.CompletedItems {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t#%d %s\t%s\n",
-				it.ID,
-				fallback(it.CompletedAt, "-"),
-				projectLabel(it.Task.Project),
-				it.Task.ID,
-				it.Task.Title,
-				it.Title,
-			)
+		section := fmt.Sprintf("completed items (%d)", len(log.CompletedItems))
+		fmt.Fprintf(&b, "\n%s\n", sty.render(sty.bold, section))
+		rows := make([][]col, len(log.CompletedItems))
+		for i, it := range log.CompletedItems {
+			rows[i] = []col{
+				plainCol(fmt.Sprintf("%d", it.ID)),
+				plainCol(fallback(it.CompletedAt, "-")),
+				plainCol(projectLabel(it.Task.Project)),
+				plainCol(fmt.Sprintf("#%d %s", it.Task.ID, it.Task.Title)),
+				plainCol(it.Title),
+			}
 		}
-		_ = tw.Flush()
+		b.WriteString(renderTable([]string{"ID", "COMPLETED_AT", "PROJECT", "TASK", "TITLE"}, rows))
+		b.WriteByte('\n')
 	}
 
 	return strings.TrimRight(b.String(), "\n")

@@ -245,10 +245,11 @@ type Task struct {
 // ChecklistItem mirrors checklist_item_json.ex.
 //
 // Notes is populated only on the ?full=true read paths (GET /tasks/:id and
-// GET /tasks/:id/checklist). nil ⇒ field absent (non-full fetch or a
-// single-item write response); a non-nil pointer (including to "") means the
-// server embedded the notes blob. The pointer keeps "no notes field at all"
-// distinct from "notes present but empty".
+// GET /tasks/:id/checklist). The server omits the field on non-full fetches
+// and single-item write responses, and serializes empty notes as JSON null on
+// the full path — so a nil pointer means either "field absent" or "present but
+// empty", indistinguishable from the wire alone. Renderers use the `full` flag
+// they already carry to decide whether to emit the key (see checklistItemMap).
 type ChecklistItem struct {
 	ID        int64   `json:"id"`
 	Title     string  `json:"title"`
@@ -276,7 +277,18 @@ type checklistItemEnvelope struct {
 }
 
 type notesEnvelope struct {
-	Notes string `json:"notes"`
+	Notes *string `json:"notes"`
+}
+
+// emptyNotesToNil collapses an empty notes blob to nil. The server serializes
+// empty notes as JSON null on every read path, but a pre-rollout server may
+// still echo "". Normalizing both lets callers present a single "empty ⇒ null"
+// contract regardless of which server version they reach.
+func emptyNotesToNil(p *string) *string {
+	if p == nil || *p == "" {
+		return nil
+	}
+	return p
 }
 
 func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
@@ -334,16 +346,17 @@ func (c *Client) ListChecklistItems(ctx context.Context, taskID string, full boo
 	return env.Items, nil
 }
 
-// GetNotes returns the raw notes blob for a checklist item. An empty string
-// is a legitimate result (item exists, no notes). 404 / 403 surface as
-// APIError.
-func (c *Client) GetNotes(ctx context.Context, itemID string) (string, error) {
+// GetNotes returns the notes blob for a checklist item, or nil when the item
+// has no notes. The server serializes empty notes as JSON null; a pre-rollout
+// server may still echo "" — emptyNotesToNil collapses both to nil so callers
+// see one "empty ⇒ nil" contract. 404 / 403 surface as APIError.
+func (c *Client) GetNotes(ctx context.Context, itemID string) (*string, error) {
 	var env notesEnvelope
 	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
-		return "", err
+		return nil, err
 	}
-	return env.Notes, nil
+	return emptyNotesToNil(env.Notes), nil
 }
 
 // ActivityLog mirrors GET /api/v1/activity_log: completed tasks + completed
@@ -493,15 +506,16 @@ func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs m
 }
 
 // SetNotes replaces the notes blob on an item. An empty string is a valid
-// value (clears the notes). Server echoes the saved notes.
-func (c *Client) SetNotes(ctx context.Context, itemID, notes string) (string, error) {
+// value (clears the notes). The server echoes the saved notes — null once
+// cleared — which SetNotes returns as nil (see emptyNotesToNil).
+func (c *Client) SetNotes(ctx context.Context, itemID, notes string) (*string, error) {
 	body := map[string]string{"notes": notes}
 	var env notesEnvelope
 	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
 	if err := c.do(ctx, http.MethodPut, path, body, &env); err != nil {
-		return "", err
+		return nil, err
 	}
-	return env.Notes, nil
+	return emptyNotesToNil(env.Notes), nil
 }
 
 // DeleteTask soft-deletes a task. The server returns 204 No Content on

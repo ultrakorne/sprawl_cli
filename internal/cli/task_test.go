@@ -66,15 +66,21 @@ func TestTaskListText_FormatsRows(t *testing.T) {
 		},
 	}
 	got := taskListText(tasks)
-	for _, want := range []string{"ID", "STATUS", "First", "Second", "Engineering", "1/3"} {
+	for _, want := range []string{"ID", "PROGRESS", "First", "Second", "Engineering", "1/3"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
 	// Empty due date should render as `-`, not an empty column.
 	lines := strings.Split(got, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected header + 2 rows, got %d lines:\n%s", len(lines), got)
+	if len(lines) != 5 {
+		t.Fatalf("expected blank + header + rule + 2 rows, got %d lines:\n%s", len(lines), got)
+	}
+	if lines[0] != "" {
+		t.Fatalf("expected a leading blank line above the header, got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[2], "─") {
+		t.Fatalf("expected a header rule on line 3, got %q", lines[2])
 	}
 }
 
@@ -86,7 +92,7 @@ func TestTaskDetailText_IncludesDescription(t *testing.T) {
 		CreatedBy:         &client.Actor{Type: "user", ID: 5},
 	}
 	got := taskDetailText(task)
-	for _, want := range []string{"#17 hello", "status:   done", "progress: 2 / 3", "user#5", "body copy"} {
+	for _, want := range []string{"#17 hello", "progress: 2 / 3", "user#5", "body copy"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
@@ -235,7 +241,7 @@ func TestRunTaskShow_FullEmbedsChecklistAndNotes(t *testing.T) {
 					},
 					map[string]any{
 						"id": 6, "title": "step two", "completed": false, "position": 1,
-						"has_notes": false, "notes": "", "last_actor": nil,
+						"has_notes": false, "notes": nil, "last_actor": nil,
 					},
 				},
 			},
@@ -258,6 +264,12 @@ func TestRunTaskShow_FullEmbedsChecklistAndNotes(t *testing.T) {
 	first := items[0].(map[string]any)
 	if first["notes"] != "do the thing" {
 		t.Fatalf("first item notes = %+v", first["notes"])
+	}
+	// Empty notes on the full path survive as a present-but-null key — not
+	// omitted, not "" — mirroring the server's null and `note show`.
+	second := items[1].(map[string]any)
+	if v, present := second["notes"]; !present || v != nil {
+		t.Fatalf("second item notes = %+v (present=%v), want null", v, present)
 	}
 }
 
@@ -305,7 +317,7 @@ func TestRunTaskShow_FullTextRendersChecklistBlock(t *testing.T) {
 					},
 					map[string]any{
 						"id": 6, "title": "todo step", "completed": false, "position": 1,
-						"has_notes": false, "notes": "", "last_actor": nil,
+						"has_notes": false, "notes": nil, "last_actor": nil,
 					},
 				},
 			},

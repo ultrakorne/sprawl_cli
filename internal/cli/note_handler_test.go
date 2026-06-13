@@ -43,11 +43,12 @@ func TestRunNoteSet_RoundTrip(t *testing.T) {
 
 // TestRunNoteSet_TextFallbackForEmpty guards the "(notes cleared)" message
 // when the saved blob is empty — in text mode we want a human-readable hint
-// rather than an empty line masquerading as a successful output.
+// rather than an empty line masquerading as a successful output. The server
+// echoes null after a clear.
 func TestRunNoteSet_TextFallbackForEmpty(t *testing.T) {
 	fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"notes": ""})
+		_ = json.NewEncoder(w).Encode(map[string]any{"notes": nil})
 	})
 	var stdout, stderr bytes.Buffer
 	if err := runNoteSet(context.Background(), &stdout, &stderr, "9", "", fx.Opts); err != nil {
@@ -55,6 +56,47 @@ func TestRunNoteSet_TextFallbackForEmpty(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "(notes cleared)") {
 		t.Fatalf("stdout = %q, want (notes cleared) fallback", stdout.String())
+	}
+}
+
+// TestRunNoteSet_EmptyEmitsNullJSON locks in the structured contract: clearing
+// notes surfaces a present-but-null `notes` key (not "", not omitted), matching
+// the server and `task/checklist --full`.
+func TestRunNoteSet_EmptyEmitsNullJSON(t *testing.T) {
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"notes": nil})
+	})
+	var stdout, stderr bytes.Buffer
+	if err := runNoteSet(context.Background(), &stdout, &stderr, "9", "", fx.Opts); err != nil {
+		t.Fatalf("runNoteSet: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	if v, present := out["notes"]; !present || v != nil {
+		t.Fatalf("notes = %+v (present=%v), want null", v, present)
+	}
+}
+
+// TestRunNoteShow_EmptyEmitsNullJSON is the read-path counterpart: an item with
+// no notes shows `notes: null`.
+func TestRunNoteShow_EmptyEmitsNullJSON(t *testing.T) {
+	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"notes": nil})
+	})
+	var stdout, stderr bytes.Buffer
+	if err := runNoteShow(context.Background(), &stdout, &stderr, "9", fx.Opts); err != nil {
+		t.Fatalf("runNoteShow: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
+	}
+	if v, present := out["notes"]; !present || v != nil {
+		t.Fatalf("notes = %+v (present=%v), want null", v, present)
 	}
 }
 

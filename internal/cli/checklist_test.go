@@ -96,6 +96,10 @@ func TestRunChecklist_FullSendsParamAndEmitsNotes(t *testing.T) {
 					"id": 5, "title": "step", "completed": false, "position": 0,
 					"has_notes": true, "notes": "the note body", "last_actor": nil,
 				},
+				map[string]any{
+					"id": 6, "title": "empty", "completed": false, "position": 1,
+					"has_notes": false, "notes": nil, "last_actor": nil,
+				},
 			},
 		})
 	})
@@ -107,9 +111,16 @@ func TestRunChecklist_FullSendsParamAndEmitsNotes(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("not JSON: %v (%q)", err, stdout.String())
 	}
-	item := out["checklist_items"].([]any)[0].(map[string]any)
+	items := out["checklist_items"].([]any)
+	item := items[0].(map[string]any)
 	if item["notes"] != "the note body" {
 		t.Fatalf("notes = %+v", item["notes"])
+	}
+	// Empty notes on the full path emit a present-but-null key (not omitted, not
+	// ""), mirroring the server's null and `note show`.
+	empty := items[1].(map[string]any)
+	if v, present := empty["notes"]; !present || v != nil {
+		t.Fatalf("empty notes = %+v (present=%v), want null", v, present)
 	}
 }
 
@@ -126,7 +137,7 @@ func TestRunChecklist_FullTextRendersNotesBlock(t *testing.T) {
 				},
 				map[string]any{
 					"id": 6, "title": "no notes", "completed": false, "position": 1,
-					"has_notes": false, "notes": "", "last_actor": nil,
+					"has_notes": false, "notes": nil, "last_actor": nil,
 				},
 			},
 		})

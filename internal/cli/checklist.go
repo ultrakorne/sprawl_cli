@@ -6,7 +6,6 @@ import (
 	"io"
 	"maps"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -241,11 +240,13 @@ func runChecklistUpdate(ctx context.Context, stdout, stderr io.Writer, itemID st
 // for json/toon and emits a one-line `[x|] #id title` text fallback that
 // matches the shape of the list view's rows.
 func renderChecklistItem(out io.Writer, item *client.ChecklistItem, opts *runtimeOpts) error {
-	payload := map[string]any{"checklist_item": checklistItemMap(item)}
+	// Single-item write responses (add / update / check / uncheck) never carry
+	// notes, so this is the non-full path: suppress the notes key.
+	payload := map[string]any{"checklist_item": checklistItemMap(item, false)}
 	return renderPayload(out, payload, checklistItemLine(item), opts)
 }
 
-func checklistItemMap(it *client.ChecklistItem) map[string]any {
+func checklistItemMap(it *client.ChecklistItem, full bool) map[string]any {
 	m := map[string]any{
 		"id":         it.ID,
 		"title":      it.Title,
@@ -254,17 +255,25 @@ func checklistItemMap(it *client.ChecklistItem) map[string]any {
 		"has_notes":  it.HasNotes,
 		"last_actor": actorMap(it.LastActor),
 	}
-	// notes rides only on the ?full=true read paths. nil ⇒ field absent
-	// (non-full list or a single-item write response) ⇒ suppress so those
-	// payloads keep their shape. Non-nil (including "") ⇒ pass through.
-	if it.Notes != nil {
-		m["notes"] = *it.Notes
+	// notes rides only on the ?full=true read paths. On non-full lists and
+	// single-item write responses the server omits it, so we suppress the key
+	// to keep those payloads' shape. On the full path the server always
+	// includes notes — null when empty — so we always emit the key, collapsing
+	// empty ("" pre-rollout or null post-rollout) to a literal null for a
+	// uniform "empty ⇒ null" contract that matches `note show`.
+	if full {
+		if it.Notes != nil && *it.Notes != "" {
+			m["notes"] = *it.Notes
+		} else {
+			m["notes"] = nil
+		}
 	}
 	return m
 }
 
 func checklistItemLine(it *client.ChecklistItem) string {
-	return fmt.Sprintf("%s #%d %s", checkbox(it.Completed), it.ID, it.Title)
+	box := sty.render(sty.checkboxStyle(it.Completed), checkbox(it.Completed))
+	return fmt.Sprintf("%s #%d %s", box, it.ID, it.Title)
 }
 
 func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string, full bool, opts *runtimeOpts) error {
@@ -276,7 +285,7 @@ func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string, 
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"checklist_items": checklistMaps(items)}
+	payload := map[string]any{"checklist_items": checklistMaps(items, full)}
 	// Full mode swaps the aligned table for a per-item block so multi-line
 	// notes stay readable; the json/toon payload is identical either way
 	// (checklistItemMap emits the notes key only when present).
@@ -291,32 +300,29 @@ func runChecklist(ctx context.Context, stdout, stderr io.Writer, taskID string, 
 	return renderPayload(stdout, payload, text, opts)
 }
 
-func checklistMaps(items []*client.ChecklistItem) []any {
+func checklistMaps(items []*client.ChecklistItem, full bool) []any {
 	out := make([]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, checklistItemMap(it))
+		out = append(out, checklistItemMap(it, full))
 	}
 	return out
 }
 
 func checklistItemsText(items []*client.ChecklistItem) string {
 	if len(items) == 0 {
-		return "(no checklist items)"
+		return sty.render(sty.faint, "(no checklist items)")
 	}
-	var buf strings.Builder
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tPOS\t \tNOTES\tTITLE")
-	for _, it := range items {
-		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\t%s\n",
-			it.ID,
-			it.Position,
-			checkbox(it.Completed),
-			notesFlag(it.HasNotes),
-			it.Title,
-		)
+	rows := make([][]col, len(items))
+	for i, it := range items {
+		rows[i] = []col{
+			plainCol(fmt.Sprintf("%d", it.ID)),
+			plainCol(fmt.Sprintf("%d", it.Position)),
+			styledCol(checkbox(it.Completed), sty.checkboxStyle(it.Completed)),
+			plainCol(notesFlag(it.HasNotes)),
+			plainCol(it.Title),
+		}
 	}
-	_ = tw.Flush()
-	return strings.TrimRight(buf.String(), "\n")
+	return renderTable([]string{"ID", "POS", " ", "NOTES", "TITLE"}, rows)
 }
 
 // fullChecklistText renders the ?full=true item view: one line per item
@@ -330,17 +336,18 @@ func fullChecklistText(items []*client.ChecklistItem, indent string) string {
 	notesIndent := indent + "      "
 	var b strings.Builder
 	for _, it := range items {
-		fmt.Fprintf(&b, "%s%s #%d %s\n", indent, checkbox(it.Completed), it.ID, it.Title)
+		box := sty.render(sty.checkboxStyle(it.Completed), checkbox(it.Completed))
+		fmt.Fprintf(&b, "%s%s #%d %s\n", indent, box, it.ID, it.Title)
 		notes := ""
 		if it.Notes != nil {
 			notes = *it.Notes
 		}
 		if strings.TrimSpace(notes) == "" {
-			fmt.Fprintf(&b, "%s(no notes)\n", notesIndent)
+			fmt.Fprintf(&b, "%s%s\n", notesIndent, sty.render(sty.faint, "(no notes)"))
 			continue
 		}
 		lines := strings.Split(notes, "\n")
-		fmt.Fprintf(&b, "%snotes: %s\n", notesIndent, lines[0])
+		fmt.Fprintf(&b, "%s%s %s\n", notesIndent, sty.render(sty.faint, "notes:"), lines[0])
 		for _, ln := range lines[1:] {
 			fmt.Fprintf(&b, "%s%s\n", notesIndent, ln)
 		}

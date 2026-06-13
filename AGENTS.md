@@ -42,7 +42,7 @@ Every `/api/v1/*` call sends `Authorization: Bearer <token>` + `X-Agent-Secret: 
 
 ## Invariants (don't break these)
 
-1. Every structured-output subcommand honours `--format=text|json|toon` (persistent flag on root). Default is `toon`; session-wide override via `SPRAWL_OUTPUT`. Login is interactive and stays plain text regardless.
+1. Every structured-output subcommand honours `--format=text|json|toon` (persistent flag on root). Default is `toon`; session-wide override via `SPRAWL_OUTPUT`. `-h` / `--human` is a shorthand for `--format=text` (an explicit `--format` wins). Login is interactive and stays plain text regardless. **Styling is text-only:** human (`text`) output is color-styled with lipgloss using the terminal's own ANSI palette, and only when stdout is a real TTY. `json` / `toon` are machine formats and are never styled; piped / redirected / `$NO_COLOR` output degrades to plain text identical to the unstyled rendering.
 2. No command writes `agent_secret` to any file, log, or flag default.
 3. No command prints the `token` or `agent_secret` to stdout / stderr.
 4. URL is never read from config; only baked-in or `SPRAWL_API_URL` env override.

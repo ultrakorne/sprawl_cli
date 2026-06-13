@@ -68,17 +68,20 @@ func whoamiPayload(w *client.Whoami) map[string]any {
 // command line stays familiar.
 func whoamiText(w *client.Whoami) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "agent: %s #%d\n", agentLabel(w.Agent), w.Agent.ID)
+	fmt.Fprintf(&b, "%s %s\n",
+		sty.render(sty.faint, "agent:"),
+		sty.render(sty.bold, fmt.Sprintf("%s #%d", agentLabel(w.Agent), w.Agent.ID)))
 	if w.Agent.IsOwner {
-		fmt.Fprintln(&b, "  role:    owner")
+		fmt.Fprintf(&b, "  %s    %s\n", sty.render(sty.faint, "role:"), sty.render(sty.ok, "owner"))
 	} else {
-		fmt.Fprintf(&b, "  default: %s\n", fallback(w.Agent.DefaultPermission, "-"))
+		fmt.Fprintf(&b, "  %s %s\n", sty.render(sty.faint, "default:"), fallback(w.Agent.DefaultPermission, "-"))
 	}
+	header := sty.render(sty.bold, "elevated project permissions:")
 	if len(w.ProjectPermissions) == 0 {
-		fmt.Fprint(&b, "elevated project permissions: (none)")
+		fmt.Fprintf(&b, "%s %s", header, sty.render(sty.faint, "(none)"))
 		return b.String()
 	}
-	fmt.Fprintln(&b, "elevated project permissions:")
+	fmt.Fprintln(&b, header)
 	for _, line := range groupedPermissionLines(w.ProjectPermissions) {
 		fmt.Fprintf(&b, "  - %s\n", line)
 	}

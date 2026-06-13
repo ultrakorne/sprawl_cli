@@ -104,7 +104,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl checklist uncheck <item_id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
 | `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `check` / `uncheck` for completion. |
 | `sprawl checklist delete <item_id>` | Hard-deletes a checklist item. May flip the parent task's `completed_at`. Idempotent on 404 like `task delete`. |
-| `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. Empty string is a legitimate success. |
+| `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. An item with no notes is a legitimate success (`notes: null` in json/toon, empty body in text). |
 | `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
 | `sprawl update` | Downloads the latest GitHub release, verifies SHA256, and atomically replaces the running binary. Refuses on `sprawl_dev` and on local builds. Pass `--yes` to skip the confirmation prompt. See [features/auto-update](docs/features/auto-update/INDEX.md). |
 
@@ -130,7 +130,9 @@ curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/agents
   -o ~/.claude/agents/sprawl-bookkeeper.md
 ```
 
-All commands honour the `--format` flag. In `text` mode, list commands render tabwriter-aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`). The two delete commands return `{id:"…", deleted:true}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
+All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, list commands render aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`). The two delete commands return `{id:"…", deleted:true}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
+
+Text (`-h`) output is color-styled with [lipgloss](https://charm.land/lipgloss) using your terminal's own ANSI palette — cyan table headers with a `─` rule beneath them, traffic-light checklist progress (`0/x` red, in-progress yellow, `x/x` green) and colored checkboxes. (Task status isn't shown in text — progress carries the signal — but it's still in the json/toon payload.) Styling is **text-only** and applied **only when writing to a terminal**: `json`/`toon`, pipes, files, and `$NO_COLOR` all stay plain.
 
 `--full` (on `task <id>` and `checklist <task_id>`) opts into the heavier read shape via `?full=true`. `task <id> --full` embeds the checklist under the task as `task.checklist_items: [...]`, and both commands give each item a `notes` string (alongside the usual `has_notes` flag). In `text` mode the full views drop the table for a per-item block so multi-line notes stay readable. Without `--full`, responses are unchanged.
 
@@ -210,6 +212,7 @@ Persistent flags (work on every command):
 | Flag | Description |
 |---|---|
 | `--format text\|json\|toon` | Output format. Default is `toon`. |
+| `-h`, `--human` | Shorthand for `--format=text` (an explicit `--format` wins). `--help` still shows help. |
 | `-s`, `--agent-secret <value>` | Agent secret for `/api/v1/*` calls. Overrides `$SPRAWL_AGENT_SECRET`. |
 
 Environment variables:
@@ -222,7 +225,7 @@ Environment variables:
 | `SPRAWL_API_URL` | One-off API URL override. Use sparingly — the binary is the environment switch. |
 | `SPRAWL_NO_UPDATE_CHECK` | Set to `1` to suppress the once-per-day "newer version available" notice on the prod `sprawl` binary. The notice is otherwise on stderr only and never blocks. |
 
-Why TOON by default? The CLI's output is mostly consumed by LLMs, and TOON is 30–60 % cheaper than JSON in tokens while staying lossless. Pass `--format=text` for a human-friendly string or `--format=json` if you're piping into `jq`.
+Why TOON by default? The CLI's output is mostly consumed by LLMs, and TOON is 30–60 % cheaper than JSON in tokens while staying lossless. Pass `-h` (or `--format=text`) for human-friendly, color-styled output or `--format=json` if you're piping into `jq`.
 
 ## Config file
 

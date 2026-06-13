@@ -9,7 +9,7 @@ Checklist items are ordered children of a task. Each can carry a free-form `note
 ### `checklist <task_id>` (list)
 `GET /api/v1/tasks/:task_id/checklist`. Text fallback: tabwriter-aligned table with `[x]` / `[ ]` completion boxes and a `notes` marker when `has_notes` is true.
 
-`--full` opts into `GET /api/v1/tasks/:task_id/checklist?full=true`, where each item carries its `notes` string inline (alongside `has_notes`) — one call instead of an N-call `note show` loop over the items. The json/toon envelope is unchanged (`{checklist_items:[…]}`); each item map just gains a `notes` key (`checklistItemMap` emits it only when the decoded `Notes` pointer is non-nil). Text mode drops the table for a per-item block (`fullChecklistText`, shared with `task <id> --full`): one line per item plus its notes indented beneath, `(no notes)` when empty.
+`--full` opts into `GET /api/v1/tasks/:task_id/checklist?full=true`, where each item carries its `notes` inline (alongside `has_notes`) — a string, or `null` when the item has no notes — one call instead of an N-call `note show` loop over the items. The json/toon envelope is unchanged (`{checklist_items:[…]}`); each item map gains a `notes` key on the full path (`checklistItemMap` emits it whenever `--full` is set, rendering `null` for empty notes to mirror the server and `note show`). Text mode drops the table for a per-item block (`fullChecklistText`, shared with `task <id> --full`): one line per item plus its notes indented beneath, `(no notes)` when empty.
 
 ### `checklist add <task_id>`
 `POST /api/v1/tasks/:task_id/checklist` body `{"checklist_item":{…}}`. Flags: `--title`, `--notes`, `--from-json <path|->`. Server appends and assigns position.
@@ -31,7 +31,7 @@ Task / checklist create / update endpoints wrap server-side validation:
 - Changeset failures (missing required field, etc.) → shared fallback shape `{"errors": {...}}` with no top-level `error` code; `reportErr` surfaces these as `error: "invalid"` + `details: <errors>` in json / toon output.
 
 ### `note show <item_id>`
-`GET /api/v1/checklist_items/:id/notes`. Text fallback is the raw notes blob so it pipes cleanly into `less` / `rg`. Empty notes is a valid success.
+`GET /api/v1/checklist_items/:id/notes`. Text fallback is the raw notes blob so it pipes cleanly into `less` / `rg`. An item with no notes is a valid success: the server returns `null`, which the CLI surfaces as `notes: null` in json/toon and an empty body in text.
 
 ### `note set <item_id> [<notes>]`
 `PUT /api/v1/checklist_items/:id/notes` body `{"notes":"…"}`. Text via a positional arg OR `--stdin` (mutually exclusive; both → local error before HTTP). Empty string clears notes.

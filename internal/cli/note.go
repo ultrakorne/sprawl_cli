@@ -93,14 +93,17 @@ func runNoteSet(ctx context.Context, stdout, stderr io.Writer, itemID, notes str
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"notes": saved}
-	// Text fallback mirrors `note show`: emit the saved notes blob verbatim
-	// so piping into less / rg stays natural. Fall back to a terse summary
-	// when the server echoed an empty body.
-	text := saved
-	if text == "" {
-		text = "(notes cleared)"
+	// saved == nil ⇒ the notes were cleared ⇒ emit JSON/TOON null, matching the
+	// server and `task/checklist --full`. Text mirrors `note show`: the saved
+	// blob verbatim, or a terse "(notes cleared)" line when empty so piping
+	// into less / rg stays natural.
+	var savedVal any
+	text := sty.render(sty.faint, "(notes cleared)")
+	if saved != nil {
+		savedVal = *saved
+		text = *saved
 	}
+	payload := map[string]any{"notes": savedVal}
 	return renderPayload(stdout, payload, text, opts)
 }
 
@@ -113,8 +116,16 @@ func runNoteShow(ctx context.Context, stdout, stderr io.Writer, itemID string, o
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"notes": notes}
-	// Text fallback is the raw notes blob — this is the whole point of the
-	// endpoint, and wrapping it would only get in the way of `| less` etc.
-	return renderPayload(stdout, payload, notes, opts)
+	// notes == nil ⇒ the item has no notes ⇒ emit JSON/TOON null, matching the
+	// server and `task/checklist --full`. Text fallback is the raw blob (empty
+	// when nil) — the whole point of the endpoint, and wrapping it would only
+	// get in the way of `| less` etc.
+	var notesVal any
+	text := ""
+	if notes != nil {
+		notesVal = *notes
+		text = *notes
+	}
+	payload := map[string]any{"notes": notesVal}
+	return renderPayload(stdout, payload, text, opts)
 }

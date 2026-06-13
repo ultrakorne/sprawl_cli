@@ -6,7 +6,6 @@ import (
 	"io"
 	"maps"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -253,7 +252,7 @@ func runTaskDelete(ctx context.Context, stdout, stderr io.Writer, id string, opt
 // distinct from a real delete in --format=text output.
 func deletedText(kind, id string, existed bool) string {
 	if existed {
-		return fmt.Sprintf("Deleted %s #%s", kind, id)
+		return sty.render(sty.ok, fmt.Sprintf("Deleted %s #%s", kind, id))
 	}
 	// Capitalize the first byte of `kind` for sentence start. All current
 	// callers pass ASCII ("task", "checklist item") so byte-level upper is
@@ -262,7 +261,7 @@ func deletedText(kind, id string, existed bool) string {
 	if len(upper) > 0 && upper[0] >= 'a' && upper[0] <= 'z' {
 		upper = string(upper[0]-32) + upper[1:]
 	}
-	return fmt.Sprintf("%s #%s already gone (no change)", upper, id)
+	return sty.render(sty.faint, fmt.Sprintf("%s #%s already gone (no change)", upper, id))
 }
 
 func runTaskDue(ctx context.Context, stdout, stderr io.Writer, id, preset string, opts *runtimeOpts) error {
@@ -402,7 +401,9 @@ func taskMap(t *client.Task) map[string]any {
 	if t.ChecklistItems != nil {
 		items := make([]any, 0, len(t.ChecklistItems))
 		for _, it := range t.ChecklistItems {
-			items = append(items, checklistItemMap(it))
+			// checklist_items rides only on the ?full=true task read, so each
+			// item is on the full path: emit notes (null when empty).
+			items = append(items, checklistItemMap(it, true))
 		}
 		m["checklist_items"] = items
 	}
@@ -439,32 +440,43 @@ func actorMap(a *client.Actor) any {
 // stdlib cost.
 func taskListText(tasks []*client.Task) string {
 	if len(tasks) == 0 {
-		return "(no tasks)"
+		return sty.render(sty.faint, "(no tasks)")
 	}
-	var buf strings.Builder
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, taskListHeader)
-	for _, t := range tasks {
-		fmt.Fprintln(tw, taskRowFields(t))
-	}
-	_ = tw.Flush()
-	return strings.TrimRight(buf.String(), "\n")
+	return renderTable(taskListHeader, taskRows(tasks))
 }
 
-const taskListHeader = "ID\tSTATUS\tDUE\tPROGRESS\tPROJECT\tTITLE"
+// STATUS is intentionally absent from the human list view: the PROGRESS column
+// (done/total, green once complete) already conveys it. Status still rides in
+// the json/toon payload (taskMap) and the single-task detail view for agents
+// and full reads.
+var taskListHeader = []string{"ID", "DUE", "PROGRESS", "PROJECT", "TITLE"}
 
-// taskRowFields returns one tab-separated row matching taskListHeader.
-// Shared with the search renderer so both views build their tables from
-// the same source — no cross-function line-layout coupling.
-func taskRowFields(t *client.Task) string {
-	return fmt.Sprintf("%d\t%s\t%s\t%d/%d\t%s\t%s",
-		t.ID,
-		fallback(t.Status, "-"),
-		fallback(t.DueDate, "-"),
-		t.ChecklistProgress.Done, t.ChecklistProgress.Total,
-		projectLabel(t.Project),
-		t.Title,
-	)
+func taskRows(tasks []*client.Task) [][]col {
+	rows := make([][]col, len(tasks))
+	for i, t := range tasks {
+		rows[i] = taskRowFields(t)
+	}
+	return rows
+}
+
+// taskRowFields returns one row of columns matching taskListHeader. Shared with
+// the search and activity renderers so every task table is built from the same
+// source.
+func taskRowFields(t *client.Task) []col {
+	return []col{
+		plainCol(fmt.Sprintf("%d", t.ID)),
+		plainCol(fallback(t.DueDate, "-")),
+		progressCol(t.ChecklistProgress),
+		plainCol(projectLabel(t.Project)),
+		plainCol(t.Title),
+	}
+}
+
+// progressCol renders done/total, traffic-light colored (see progressStyle) so
+// completion state reads at a glance — this is the list's status signal.
+func progressCol(p client.ChecklistProgress) col {
+	text := fmt.Sprintf("%d/%d", p.Done, p.Total)
+	return styledCol(text, sty.progressStyle(p.Done, p.Total))
 }
 
 // taskSearchListText renders the list view and interleaves a
@@ -475,30 +487,28 @@ func taskRowFields(t *client.Task) string {
 // for itself.
 func taskSearchListText(tasks []*client.Task) string {
 	if len(tasks) == 0 {
-		return "(no tasks)"
+		return sty.render(sty.faint, "(no tasks)")
 	}
-	// Render the aligned table to a buffer, then split header + rows
-	// (Fprintln writes exactly one newline per call, so the line count
-	// is guaranteed to be 1 + len(tasks) — no layout assumption).
-	var table strings.Builder
-	tw := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, taskListHeader)
-	for _, t := range tasks {
-		fmt.Fprintln(tw, taskRowFields(t))
-	}
-	_ = tw.Flush()
-	lines := strings.Split(strings.TrimRight(table.String(), "\n"), "\n")
+	// Render the aligned table, then weave each task's matched-checklist block in
+	// under its row. renderTable emits its header lines (column header + rule)
+	// first, then exactly one line per task, so the data rows are the last
+	// len(tasks) lines regardless of how many header lines there are.
+	lines := strings.Split(renderTable(taskListHeader, taskRows(tasks)), "\n")
+	head := len(lines) - len(tasks)
 
 	var b strings.Builder
-	b.WriteString(lines[0])
-	b.WriteByte('\n')
+	for _, hl := range lines[:head] {
+		b.WriteString(hl)
+		b.WriteByte('\n')
+	}
 	for i, t := range tasks {
-		b.WriteString(lines[1+i])
+		b.WriteString(lines[head+i])
 		b.WriteByte('\n')
 		if len(t.MatchedChecklistItems) == 0 {
 			continue
 		}
-		b.WriteString("      matched checklist:\n")
+		b.WriteString(sty.render(sty.faint, "      matched checklist:"))
+		b.WriteByte('\n')
 		for _, it := range t.MatchedChecklistItems {
 			fmt.Fprintf(&b, "        - %s\n", it.Title)
 		}
@@ -507,14 +517,21 @@ func taskSearchListText(tasks []*client.Task) string {
 }
 
 func taskDetailText(t *client.Task) string {
+	// key faints the label; the literal spacing after each `%s` is preserved
+	// verbatim so the columns line up exactly as before (styling is zero-width
+	// on a terminal and absent everywhere else).
+	key := func(s string) string { return sty.render(sty.faint, s) }
 	var b strings.Builder
-	fmt.Fprintf(&b, "#%d %s\n", t.ID, t.Title)
-	fmt.Fprintf(&b, "  status:   %s\n", fallback(t.Status, "-"))
-	fmt.Fprintf(&b, "  due:      %s\n", fallback(t.DueDate, "-"))
-	fmt.Fprintf(&b, "  project:  %s\n", projectLabel(t.Project))
-	fmt.Fprintf(&b, "  progress: %d / %d\n", t.ChecklistProgress.Done, t.ChecklistProgress.Total)
-	fmt.Fprintf(&b, "  last_actor: %s\n", actorLabel(t.LastActor))
-	fmt.Fprintf(&b, "  created_by: %s\n", actorLabel(t.CreatedBy))
+	fmt.Fprintf(&b, "%s\n", sty.render(sty.bold, fmt.Sprintf("#%d %s", t.ID, t.Title)))
+	// status omitted on purpose: it's in the json/toon payload, and progress
+	// below carries the at-a-glance signal for the human view.
+	fmt.Fprintf(&b, "  %s      %s\n", key("due:"), fallback(t.DueDate, "-"))
+	fmt.Fprintf(&b, "  %s  %s\n", key("project:"), projectLabel(t.Project))
+	fmt.Fprintf(&b, "  %s %s\n", key("progress:"),
+		sty.render(sty.progressStyle(t.ChecklistProgress.Done, t.ChecklistProgress.Total),
+			fmt.Sprintf("%d / %d", t.ChecklistProgress.Done, t.ChecklistProgress.Total)))
+	fmt.Fprintf(&b, "  %s %s\n", key("last_actor:"), actorLabel(t.LastActor))
+	fmt.Fprintf(&b, "  %s %s\n", key("created_by:"), actorLabel(t.CreatedBy))
 	if strings.TrimSpace(t.Description) != "" {
 		fmt.Fprintf(&b, "\n%s", t.Description)
 	}
@@ -523,9 +540,9 @@ func taskDetailText(t *client.Task) string {
 	// as an indented block under the detail so notes (possibly multi-line)
 	// stay readable — see fullChecklistText.
 	if t.ChecklistItems != nil {
-		out += "\n\nchecklist:\n"
+		out += "\n\n" + sty.render(sty.bold, "checklist:") + "\n"
 		if len(t.ChecklistItems) == 0 {
-			out += "  (no checklist items)"
+			out += "  " + sty.render(sty.faint, "(no checklist items)")
 		} else {
 			out += fullChecklistText(t.ChecklistItems, "  ")
 		}

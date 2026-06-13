@@ -678,17 +678,33 @@ func TestGetNotes_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNotes: %v", err)
 	}
-	if notes != "hello\nworld" {
-		t.Fatalf("notes = %q", notes)
+	if notes == nil || *notes != "hello\nworld" {
+		t.Fatalf("notes = %v", notes)
 	}
 	if ts.Requests()[0].Path != "/api/v1/checklist_items/9/notes" {
 		t.Fatalf("path = %q", ts.Requests()[0].Path)
 	}
 }
 
-func TestGetNotes_EmptyStringIsValid(t *testing.T) {
-	// A checklist item with no notes returns {"notes": ""} — that's success,
-	// not an error.
+func TestGetNotes_EmptyIsNil(t *testing.T) {
+	// A checklist item with no notes returns {"notes": null} — that's success,
+	// not an error, and GetNotes reports it as a nil pointer.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"notes": nil})
+	})
+	c := NewAuthed("tok", "sec")
+	notes, err := c.GetNotes(context.Background(), "9")
+	if err != nil {
+		t.Fatalf("GetNotes: %v", err)
+	}
+	if notes != nil {
+		t.Fatalf("notes = %q, want nil", *notes)
+	}
+}
+
+func TestGetNotes_LegacyEmptyStringIsNil(t *testing.T) {
+	// A pre-rollout server may still echo "" — GetNotes collapses it to nil so
+	// callers see one "empty ⇒ nil" contract regardless of server version.
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"notes": ""})
 	})
@@ -697,8 +713,8 @@ func TestGetNotes_EmptyStringIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNotes: %v", err)
 	}
-	if notes != "" {
-		t.Fatalf("notes = %q, want empty", notes)
+	if notes != nil {
+		t.Fatalf("notes = %q, want nil", *notes)
 	}
 }
 
@@ -966,8 +982,8 @@ func TestSetNotes_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetNotes: %v", err)
 	}
-	if got != "line one\nline two" {
-		t.Fatalf("notes = %q", got)
+	if got == nil || *got != "line one\nline two" {
+		t.Fatalf("notes = %v", got)
 	}
 	r := ts.Requests()[0]
 	if r.Method != "PUT" || r.Path != "/api/v1/checklist_items/9/notes" {
@@ -983,13 +999,19 @@ func TestSetNotes_RoundTrip(t *testing.T) {
 }
 
 func TestSetNotes_EmptyStringAccepted(t *testing.T) {
-	// Clearing notes is a valid operation — round-trip an empty string.
+	// Clearing notes is a valid operation — the server echoes null, which
+	// SetNotes reports as nil. The cleared "" must still round-trip in the
+	// request body.
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"notes": ""})
+		writeJSON(w, 200, map[string]any{"notes": nil})
 	})
 	c := NewAuthed("tok", "sec")
-	if _, err := c.SetNotes(context.Background(), "9", ""); err != nil {
+	got, err := c.SetNotes(context.Background(), "9", "")
+	if err != nil {
 		t.Fatalf("SetNotes: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("notes = %q, want nil", *got)
 	}
 	var sent struct {
 		Notes string `json:"notes"`

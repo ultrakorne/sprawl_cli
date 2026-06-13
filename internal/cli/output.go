@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alpkeskin/gotoon"
+	"github.com/charmbracelet/colorprofile"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
@@ -22,9 +23,13 @@ const (
 )
 
 // resolveFormat picks the output format in this order:
-// --format flag → SPRAWL_OUTPUT env → toon.
+// --format flag → -h/--human → SPRAWL_OUTPUT env → toon.
+// An explicit --format wins over -h so `--format=json -h` stays json.
 func resolveFormat(opts *runtimeOpts) (Format, error) {
 	v := strings.ToLower(strings.TrimSpace(opts.format))
+	if v == "" && opts.human {
+		v = string(FormatText)
+	}
 	if v == "" {
 		v = strings.ToLower(strings.TrimSpace(os.Getenv("SPRAWL_OUTPUT")))
 	}
@@ -39,6 +44,17 @@ func resolveFormat(opts *runtimeOpts) (Format, error) {
 	}
 }
 
+// writeHuman emits text-format (human / -h) output through a colorprofile
+// writer bound to the destination. On a TTY this keeps the lipgloss styling;
+// on a pipe, a file, a test buffer, or under $NO_COLOR it strips every escape
+// sequence so the output is plain text — identical to what it was before
+// styling existed. This is the single choke point that guarantees styling
+// never reaches non-human (json/toon) output or a non-terminal.
+func writeHuman(w io.Writer, s string) error {
+	_, err := io.WriteString(colorprofile.NewWriter(w, os.Environ()), s)
+	return err
+}
+
 // renderPayload writes structured success data in the resolved format. For
 // `text`, the caller supplies a pre-formatted human line via textFallback.
 func renderPayload(out io.Writer, payload map[string]any, textFallback string, opts *runtimeOpts) error {
@@ -48,8 +64,7 @@ func renderPayload(out io.Writer, payload map[string]any, textFallback string, o
 	}
 	switch f {
 	case FormatText:
-		_, err := fmt.Fprintln(out, textFallback)
-		return err
+		return writeHuman(out, textFallback+"\n")
 	case FormatJSON:
 		return json.NewEncoder(out).Encode(payload)
 	case FormatTOON:
@@ -110,7 +125,7 @@ func reportErr(stdout, stderr io.Writer, err error, opts *runtimeOpts) error {
 		return err
 	}
 	if f == FormatText {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		_ = writeHuman(stderr, fmt.Sprintf("%s %v\n", sty.errTag.Render("error:"), err))
 		return err
 	}
 

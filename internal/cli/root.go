@@ -14,6 +14,7 @@ import (
 // embedder can run commands concurrently without sharing mutable state.
 type runtimeOpts struct {
 	format      string // --format / $SPRAWL_OUTPUT, resolved by resolveFormat
+	human       bool   // -h / --human: shorthand for --format=text
 	agentSecret string // --agent-secret / -s, fallback $SPRAWL_AGENT_SECRET
 }
 
@@ -32,6 +33,12 @@ func NewRootCmd() *cobra.Command {
 		// `update` subcommand to avoid printing "update available" right
 		// before running the update itself.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Styling lights up only when human (text) output is headed to a
+			// real terminal; everything else (json/toon, pipes, files) stays
+			// plain. Decided once here, before any command renders.
+			if f, err := resolveFormat(opts); err == nil && f == FormatText {
+				enableStylingFor(cmd.OutOrStdout())
+			}
 			if cmd.Name() == "update" {
 				return nil
 			}
@@ -42,8 +49,16 @@ func NewRootCmd() *cobra.Command {
 
 	root.PersistentFlags().StringVar(&opts.format, "format", "",
 		"output format: text|json|toon (default: toon, or $SPRAWL_OUTPUT)")
+	root.PersistentFlags().BoolVarP(&opts.human, "human", "h", false,
+		"shorthand for --format=text: human-readable, color-styled output")
 	root.PersistentFlags().StringVarP(&opts.agentSecret, "agent-secret", "s", "",
 		"agent secret value (overrides $SPRAWL_AGENT_SECRET)")
+
+	// Reclaim -h for --human. cobra normally auto-registers --help with a -h
+	// shorthand; defining our own --help flag (long form only) makes cobra skip
+	// that, freeing -h while keeping --help working everywhere. Persistent so
+	// every subcommand inherits it and likewise skips adding its own -h.
+	root.PersistentFlags().Bool("help", false, "show help")
 
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newLoginCmd())
