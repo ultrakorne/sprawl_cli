@@ -35,6 +35,7 @@ One codebase produces two binaries. The *only* difference is linker-injected val
 | `agent_secret` | `SPRAWL_AGENT_SECRET` env var or `--agent-secret` / `-s` flag. **Never persisted to disk by sprawl.** |
 
 Resolution order per request:
+
 1. `SPRAWL_TOKEN` env → `config.toml` `token`. Missing → "not logged in, run `sprawl login`".
 2. `--agent-secret` flag → `SPRAWL_AGENT_SECRET` env. Missing → **fail before the HTTP call**.
 
@@ -98,7 +99,7 @@ single static, cgo-free binary promise is preserved.
 
 ## Collaboration rules
 
-do not commit to git
+Do not write co authoted by claude or anything like that if you commit
 
 **Test before claiming done.** Every code change must pass `make check` (fmt-check + vet + test) before it's reported as complete. If `check` fails, the change isn't finished — fix it, don't wave it off. Never bypass hooks with `--no-verify` unless the user explicitly says so. Tests are mocked with `httptest`; no running backend is required.
 

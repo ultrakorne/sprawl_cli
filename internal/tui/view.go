@@ -115,19 +115,77 @@ func (m *Model) frame(title string, body []string, hints string) string {
 	return strings.Join(lines, "\n")
 }
 
-// windowStart centers a scrolling window on sel within a list of n rows.
-func windowStart(sel, height, n int) int {
-	if height <= 0 || n <= height {
-		return 0
+// rowLines renders one logical row as one or more display lines: the fixed
+// prefix on the first line, then `title` word-wrapped into the remaining width
+// with continuation lines hanging-indented under the title column (so a long
+// title flows onto a second line instead of being truncated with an ellipsis).
+// prefix may already carry ANSI styling; prefixW is its PLAIN display width.
+// style, when non-nil, is applied to each finished display line (used to
+// highlight the whole selected row). On a terminal too narrow to wrap sensibly
+// the title is left on the first line for frame() to clip.
+func rowLines(prefix string, prefixW, width int, title string, style func(...string) string) []string {
+	apply := func(s string) string {
+		if style == nil {
+			return s
+		}
+		return style(s)
 	}
-	start := sel - height/2
+	segs := []string{title}
+	if avail := width - prefixW; avail >= 8 {
+		if wrapped := wrapLines(title, avail); len(wrapped) > 0 {
+			segs = wrapped
+		}
+	}
+	indent := strings.Repeat(" ", prefixW)
+	out := make([]string, 0, len(segs))
+	for i, seg := range segs {
+		if i == 0 {
+			out = append(out, apply(prefix+seg))
+		} else {
+			out = append(out, apply(indent+seg))
+		}
+	}
+	return out
+}
+
+// wrapAndWindow flattens per-item display-line groups (each 1+ wrapped lines)
+// into a scrolling window exactly bodyH lines tall, keeping the selected item's
+// lines visible — preferring its top when the item alone is taller than the
+// viewport. Windowing over display lines (not logical items) keeps wrapped rows
+// from being sheared at the window edge.
+func wrapAndWindow(groups [][]string, sel, bodyH int) []string {
+	var all []string
+	starts := make([]int, len(groups))
+	for i, g := range groups {
+		starts[i] = len(all)
+		all = append(all, g...)
+	}
+	if bodyH <= 0 || len(all) <= bodyH {
+		return all
+	}
+	selStart, selEnd := 0, len(all)
+	if sel >= 0 && sel < len(groups) {
+		selStart = starts[sel]
+		selEnd = selStart + len(groups[sel])
+	}
+	start := selStart - (bodyH-(selEnd-selStart))/2
+	lo := selEnd - bodyH // keep the selected item's bottom in view
+	hi := selStart       // keep its top in view
+	switch {
+	case lo > hi: // taller than the viewport — pin to its top
+		start = hi
+	case start < lo:
+		start = lo
+	case start > hi:
+		start = hi
+	}
 	if start < 0 {
 		start = 0
 	}
-	if start > n-height {
-		start = n - height
+	if start > len(all)-bodyH {
+		start = len(all) - bodyH
 	}
-	return start
+	return all[start : start+bodyH]
 }
 
 // -- list screen ------------------------------------------------------------
@@ -171,19 +229,14 @@ func (m *Model) listRows(vis []*client.Task) []string {
 		}
 	}
 
+	w := m.effWidth()
 	bodyH := m.effHeight() - 4
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	start := windowStart(m.listSel, bodyH, len(vis))
-	end := start + bodyH
-	if end > len(vis) {
-		end = len(vis)
-	}
 
-	rows := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		t := vis[i]
+	groups := make([][]string, len(vis))
+	for i, t := range vis {
 		id := padRight("#"+itoa(t.ID), idW)
 		prog := fmt.Sprintf("%d/%d", t.ChecklistProgress.Done, t.ChecklistProgress.Total)
 		project := projectLabel(t.Project)
@@ -191,29 +244,32 @@ func (m *Model) listRows(vis []*client.Task) []string {
 		if strings.TrimSpace(due) == "" {
 			due = "—"
 		}
+		plainPrefix := fmt.Sprintf("  %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project)
+		prefixW := lipgloss.Width(plainPrefix)
 
-		selected := i == m.listSel
-		var line string
-		if selected {
+		var group []string
+		if i == m.listSel {
 			// Selected: cursor + whole row bold+cyan (spec's selection style).
-			plain := fmt.Sprintf("› %s  %s  %s  %s  %s", id, padRight(prog, progW), padRight(due, 10), project, t.Title)
-			line = m.styles.sel.Render(plain)
+			cursorPrefix := fmt.Sprintf("› %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project)
+			group = rowLines(cursorPrefix, prefixW, w, t.Title, m.styles.sel.Render)
 		} else {
 			progStyled := m.styles.progress(t.ChecklistProgress.Done, t.ChecklistProgress.Total).Render(padRight(prog, progW))
-			line = fmt.Sprintf("  %s  %s  %s  %s  %s",
-				m.styles.faint.Render(id), progStyled, m.styles.faint.Render(padRight(due, 10)), project, t.Title)
+			displayPrefix := fmt.Sprintf("  %s  %s  %s  %s  ",
+				m.styles.faint.Render(id), progStyled, m.styles.faint.Render(padRight(due, 10)), project)
+			group = rowLines(displayPrefix, prefixW, w, t.Title, nil)
 		}
-		// Search-result annotation: surface matched checklist-item titles.
+		// Search-result annotation: surface matched checklist-item titles on their
+		// own indented line under the task.
 		if m.searchLabel != "" && len(t.MatchedChecklistItems) > 0 {
 			var names []string
 			for _, it := range t.MatchedChecklistItems {
 				names = append(names, it.Title)
 			}
-			line += "  " + m.styles.faint.Render("↳ "+strings.Join(names, ", "))
+			group = append(group, "      "+m.styles.faint.Render("↳ "+strings.Join(names, ", ")))
 		}
-		rows = append(rows, line)
+		groups[i] = group
 	}
-	return rows
+	return wrapAndWindow(groups, m.listSel, bodyH)
 }
 
 // -- checklist screen -------------------------------------------------------
@@ -249,37 +305,34 @@ func (m *Model) checklistRows(items []*client.ChecklistItem) []string {
 			idW = l
 		}
 	}
+	w := m.effWidth()
 	bodyH := m.effHeight() - 4
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	start := windowStart(m.itemSel, bodyH, len(items))
-	end := start + bodyH
-	if end > len(items) {
-		end = len(items)
-	}
 
-	rows := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		it := items[i]
+	groups := make([][]string, len(items))
+	for i, it := range items {
 		box := mdCheckbox(it.Completed)
 		id := padRight("#"+itoa(it.ID), idW)
-		notes := ""
+		// The note flag rides at the end of the title so it wraps with it; the 🗒
+		// emoji renders in its own color, so no separate faint styling is needed.
+		title := it.Title
 		if it.HasNotes {
-			notes = " 🗒"
+			title += " 🗒"
 		}
-		selected := i == m.itemSel
-		if selected {
-			plain := fmt.Sprintf("› %s %s %s%s", box, id, it.Title, notes)
-			rows = append(rows, m.styles.sel.Render(plain))
+		plainPrefix := fmt.Sprintf("  %s %s ", box, id)
+		prefixW := lipgloss.Width(plainPrefix)
+		if i == m.itemSel {
+			cursorPrefix := fmt.Sprintf("› %s %s ", box, id)
+			groups[i] = rowLines(cursorPrefix, prefixW, w, title, m.styles.sel.Render)
 		} else {
-			line := fmt.Sprintf("  %s %s %s%s",
-				m.styles.checkbox(it.Completed).Render(box), m.styles.faint.Render(id), it.Title,
-				m.styles.faint.Render(notes))
-			rows = append(rows, line)
+			displayPrefix := fmt.Sprintf("  %s %s ",
+				m.styles.checkbox(it.Completed).Render(box), m.styles.faint.Render(id))
+			groups[i] = rowLines(displayPrefix, prefixW, w, title, nil)
 		}
 	}
-	return rows
+	return wrapAndWindow(groups, m.itemSel, bodyH)
 }
 
 // -- note screen ------------------------------------------------------------

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
@@ -139,6 +140,58 @@ func TestTaskLoaded_NilTaskDoesNotPanic(t *testing.T) {
 	m.send(taskLoadedMsg{task: nil, wantID: 5}) // must not panic
 	if m.current() != screenList {
 		t.Fatalf("nil drill-in should pop back to the list, at %v", m.current())
+	}
+}
+
+// wrap — a long title wraps onto continuation lines instead of truncating with …
+func TestListRows_WrapsLongTitle(t *testing.T) {
+	long := "this is a very long task title that should wrap onto a second line instead of being cut off"
+	m := newListModel(&fakeClient{}, []*client.Task{{ID: 1, Title: long}})
+	m.width, m.height = 44, 20 // narrow
+
+	rows := m.listRows(m.visibleTasks())
+	joined := strings.Join(rows, "\n")
+	if strings.Contains(joined, "…") {
+		t.Fatalf("narrow list should wrap the title, not truncate it:\n%s", joined)
+	}
+	if len(rows) < 2 {
+		t.Fatalf("a long title on a 44-col terminal should span >=2 lines, got %d:\n%s", len(rows), joined)
+	}
+	for _, wrd := range []string{"very", "wrap", "second", "cut", "off"} {
+		if !strings.Contains(joined, wrd) {
+			t.Fatalf("word %q lost after wrapping:\n%s", wrd, joined)
+		}
+	}
+	// continuation line is hanging-indented (starts with spaces, not text) —
+	// strip styling first since the lone task is the selected (styled) row.
+	if !strings.HasPrefix(ansi.Strip(rows[1]), "    ") {
+		t.Fatalf("continuation line should be indented under the title column:\n%q", rows[1])
+	}
+}
+
+// wrap — the selected item stays visible even when earlier items wrap to many
+// display lines (windowing is over display lines, not logical items).
+func TestChecklistRows_WrapsAndKeepsSelectionVisible(t *testing.T) {
+	_, m, detail := checklistFixture()
+	longTitle := strings.Repeat("word ", 40)
+	detail.ChecklistItems = []*client.ChecklistItem{
+		{ID: 10, Title: longTitle},
+		{ID: 11, Title: longTitle},
+		{ID: 12, Title: "target item"},
+	}
+	m.width, m.height = 40, 10 // body height ~6, first two items wrap past it
+	m.itemSel = 2
+
+	rows := m.checklistRows(detail.ChecklistItems)
+	joined := strings.Join(rows, "\n")
+	if strings.Contains(joined, "…") {
+		t.Fatalf("checklist should wrap, not truncate:\n%s", joined)
+	}
+	if !strings.Contains(joined, "target item") {
+		t.Fatalf("selected item must stay visible despite earlier wrapped items:\n%s", joined)
+	}
+	if len(rows) > 6 {
+		t.Fatalf("window should be clamped to the body height (~6), got %d lines", len(rows))
 	}
 }
 
