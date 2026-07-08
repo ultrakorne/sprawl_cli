@@ -81,11 +81,20 @@ Change the prod URL at build time without editing the Makefile: `make build PROD
 
 ## Interactive prompts
 
-The CLI is non-interactive apart from `sprawl login`, which uses
+Command output stays non-interactive apart from `sprawl login`, which uses
 plain `bufio.Scanner`-style line prompts (see `internal/updater/github.go`
-`confirm` for the pattern). If a future command genuinely needs a multi-line
-TUI, keep the dependency cost in mind — `bubbletea` was vendored in for
-`sprawl skill install` and removed alongside it.
+`confirm` for the pattern).
+
+The interactive terminal UI lives in `internal/tui` (built on
+`charm.land/bubbletea/v2`). It launches on a bare `sprawl` when stdin+stdout are
+a TTY, and via the explicit `sprawl tui` subcommand (`sprawl tui` on a non-TTY
+errors clearly; a bare non-TTY `sprawl` still prints help). The TUI reuses
+`internal/client` and the `internal/cli` credential resolvers; its colors come
+exclusively from the terminal's ANSI palette (indices 0–15), same as the CLI's
+text styling. The agent-secret prompt is masked and kept in memory only — never
+written to disk, logged, or echoed (invariants #2/#3). Clipboard copy uses
+OSC 52 (`tea.SetClipboard`) and `$EDITOR` editing uses `tea.ExecProcess`, so the
+single static, cgo-free binary promise is preserved.
 
 ## Collaboration rules
 

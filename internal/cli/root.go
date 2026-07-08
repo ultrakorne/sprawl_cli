@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
+	"github.com/ultrakorne/sprawl_cli/internal/tui"
 	"github.com/ultrakorne/sprawl_cli/internal/updater"
 )
 
@@ -45,6 +46,17 @@ func NewRootCmd() *cobra.Command {
 			_ = updater.MaybeNotify(cmd.Context(), cmd.ErrOrStderr())
 			return nil
 		},
+		// Bare `sprawl` launches the interactive TUI when stdin+stdout are a
+		// terminal; otherwise it prints help (today's behavior for pipes /
+		// redirects / CI). `--help` still short-circuits to help before RunE
+		// runs (cobra reads the help flag first), and unknown subcommands still
+		// error before reaching here.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && tui.IsTTY() {
+				return launchTUI(cmd.Context(), cmd.ErrOrStderr(), opts)
+			}
+			return cmd.Help()
+		},
 	}
 
 	root.PersistentFlags().StringVar(&opts.format, "format", "",
@@ -69,6 +81,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newChecklistCmd(opts))
 	root.AddCommand(newNoteCmd(opts))
 	root.AddCommand(newUpdateCmd())
+	root.AddCommand(newTUICmd(opts))
 	return root
 }
 

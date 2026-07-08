@@ -1,0 +1,715 @@
+package tui
+
+import (
+	"strconv"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+// Update is the bubbletea reducer. It never blocks — every network call is a
+// tea.Cmd, and every error arrives as a message routed to the footer, so the
+// TUI can't crash on an API failure.
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
+	case tea.KeyPressMsg:
+		return m.handleKey(msg)
+
+	case tasksLoadedMsg:
+		m.loading = false
+		if msg.validated {
+			m.validated = true
+			m.secretBusy = false
+			m.stack = []screen{screenList}
+		}
+		m.tasks = msg.tasks
+		m.searchLabel = ""
+		m.clampListSel()
+		return m, nil
+
+	case searchResultMsg:
+		m.loading = false
+		m.tasks = msg.tasks
+		m.searchLabel = msg.query
+		m.listSel = 0
+		return m, nil
+
+	case taskLoadedMsg:
+		m.loading = false
+		if msg.forCopy {
+			md := taskMarkdown(msg.task)
+			return m, tea.Batch(tea.SetClipboard(md), m.setTransient("✓ copied task #"+itoa(msg.task.ID)))
+		}
+		m.detail = msg.task
+		m.clampItemSel()
+		return m, nil
+
+	case itemToggledMsg:
+		if m.detail != nil {
+			for _, it := range m.detail.ChecklistItems {
+				if it.ID == msg.item.ID {
+					it.Completed = msg.item.Completed
+					it.HasNotes = msg.item.HasNotes
+					break
+				}
+			}
+			m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+			m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+		}
+		return m, nil
+
+	case toggleFailedMsg:
+		if m.detail != nil {
+			for _, it := range m.detail.ChecklistItems {
+				if it.ID == msg.itemID {
+					it.Completed = msg.prev
+					break
+				}
+			}
+			m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+			m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+		}
+		m.setError("toggle", msg.err)
+		return m, nil
+
+	case taskMutatedMsg:
+		return m.onTaskMutated(msg)
+
+	case taskDeletedMsg:
+		m.removeTask(msg.id)
+		if m.detail != nil && m.detail.ID == msg.id {
+			m.popTo(screenList)
+			m.detail = nil
+		}
+		m.clampListSel()
+		return m, m.setTransient("✓ deleted task #" + itoa(msg.id))
+
+	case itemMutatedMsg:
+		return m.onItemMutated(msg)
+
+	case itemDeletedMsg:
+		if m.detail != nil {
+			m.detail.ChecklistItems = removeItemByID(m.detail.ChecklistItems, msg.id)
+			m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+			m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+			m.clampItemSel()
+		}
+		return m, m.setTransient("✓ deleted item #" + itoa(msg.id))
+
+	case notesSetMsg:
+		if m.detail != nil {
+			for _, it := range m.detail.ChecklistItems {
+				if it.ID == msg.itemID {
+					it.Notes = msg.notes
+					it.HasNotes = msg.notes != nil
+					break
+				}
+			}
+		}
+		return m, m.setTransient("✓ saved note")
+
+	case editorDoneMsg:
+		if msg.err != nil {
+			m.setError("editor", msg.err)
+			return m, nil
+		}
+		body := strings.TrimRight(msg.body, "\n")
+		switch msg.kind {
+		case editTaskDesc:
+			m.loading = true
+			return m, updateTaskCmd(m.ctx, m.client, msg.id, map[string]any{"description": body})
+		case editItemNote:
+			return m, setNotesCmd(m.ctx, m.client, msg.id, body)
+		}
+		return m, nil
+
+	case errMsg:
+		m.loading = false
+		m.setError(msg.context, msg.err)
+		// A failed drill-in leaves an empty detail screen on the stack; pop back.
+		if (m.current() == screenChecklist || m.current() == screenNote) && m.detail == nil {
+			m.popTo(screenList)
+		}
+		return m, nil
+
+	case authFailedMsg:
+		m.loading = false
+		m.validated = false
+		m.secretBusy = false
+		m.secret = ""
+		m.client = nil
+		m.detail = nil
+		m.secretInput.reset()
+		m.secretErr = "secret rejected — try again"
+		m.stack = []screen{screenSecret}
+		return m, nil
+
+	case clearStatusMsg:
+		if msg.tok == m.statusTok {
+			m.status = ""
+			m.statusErr = false
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *Model) onTaskMutated(msg taskMutatedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if msg.created {
+		// Reload the list so ordering matches the server and the new task shows.
+		m.loading = true
+		return m, tea.Batch(
+			listTasksCmd(m.ctx, m.client),
+			m.setTransient("✓ created task #"+itoa(msg.task.ID)),
+		)
+	}
+	m.upsertTask(msg.task)
+	if m.detail != nil && m.detail.ID == msg.task.ID {
+		m.detail.Title = msg.task.Title
+		m.detail.Description = msg.task.Description
+		m.detail.DueDate = msg.task.DueDate
+		m.detail.Status = msg.task.Status
+		m.detail.Project = msg.task.Project
+	}
+	return m, m.setTransient("✓ updated task #" + itoa(msg.task.ID))
+}
+
+func (m *Model) onItemMutated(msg itemMutatedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if m.detail == nil {
+		return m, nil
+	}
+	if msg.created {
+		m.detail.ChecklistItems = append(m.detail.ChecklistItems, msg.item)
+	} else {
+		for i, it := range m.detail.ChecklistItems {
+			if it.ID == msg.item.ID {
+				// The title-update response carries no notes; keep the loaded body
+				// so copy/note still work.
+				msg.item.Notes = it.Notes
+				m.detail.ChecklistItems[i] = msg.item
+				break
+			}
+		}
+	}
+	m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+	m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+	m.clampItemSel()
+	if msg.created {
+		return m, m.setTransient("✓ added item #" + itoa(msg.item.ID))
+	}
+	return m, m.setTransient("✓ updated item #" + itoa(msg.item.ID))
+}
+
+// -- key routing ------------------------------------------------------------
+
+func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	// ctrl+c always quits, even inside inputs/overlays.
+	if key == "ctrl+c" {
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	if m.overlay != ovNone {
+		return m.handleOverlayKey(key)
+	}
+
+	switch m.current() {
+	case screenSecret:
+		return m.handleSecretKey(key)
+	case screenNotLoggedIn:
+		if key == "q" || key == "esc" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		return m, nil
+	case screenList:
+		if m.searching {
+			return m.handleSearchKey(key)
+		}
+		return m.handleBaseKey(key)
+	default:
+		return m.handleBaseKey(key)
+	}
+}
+
+func (m *Model) handleSecretKey(key string) (tea.Model, tea.Cmd) {
+	if m.secretBusy {
+		return m, nil
+	}
+	switch key {
+	case "esc":
+		m.quitting = true
+		return m, tea.Quit
+	case "enter":
+		val := m.secretInput.String()
+		if val == "" {
+			m.secretErr = "secret required"
+			return m, nil
+		}
+		m.secret = val
+		m.client = m.newClient(val)
+		m.secretBusy = true
+		m.secretErr = ""
+		return m, validateAndListCmd(m.ctx, m.client)
+	default:
+		m.secretInput.handleKey(key)
+		return m, nil
+	}
+}
+
+func (m *Model) handleSearchKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		m.searching = false
+		m.searchInput.reset()
+		if m.searchLabel != "" {
+			// A server search had replaced the list — restore the full list.
+			m.searchLabel = ""
+			m.loading = true
+			return m, listTasksCmd(m.ctx, m.client)
+		}
+		m.clampListSel()
+		return m, nil
+	case "enter":
+		q := strings.TrimSpace(m.searchInput.String())
+		m.searching = false
+		m.searchInput.reset()
+		if q == "" {
+			m.clampListSel()
+			return m, nil
+		}
+		m.loading = true
+		return m, searchTasksCmd(m.ctx, m.client, q)
+	case "up":
+		m.moveSel(-1)
+		return m, nil
+	case "down":
+		m.moveSel(1)
+		return m, nil
+	default:
+		m.searchInput.handleKey(key)
+		m.clampListSel()
+		return m, nil
+	}
+}
+
+// handleBaseKey dispatches a key on the list / checklist / note screens.
+func (m *Model) handleBaseKey(key string) (tea.Model, tea.Cmd) {
+	switch dispatch(m.current(), key) {
+	case actQuitHard, actQuit:
+		m.quitting = true
+		return m, tea.Quit
+	case actBack:
+		// esc on the list clears an active server-search (reloads the full list)
+		// before it would pop — matching the spec's "esc clears" for search.
+		if m.current() == screenList && m.searchLabel != "" {
+			m.searchLabel = ""
+			m.loading = true
+			return m, listTasksCmd(m.ctx, m.client)
+		}
+		m.pop()
+		return m, nil
+	case actHelp:
+		m.overlay = ovHelp
+		return m, nil
+	case actRefresh:
+		return m.refresh()
+	case actUp:
+		m.moveSel(-1)
+		return m, nil
+	case actDown:
+		m.moveSel(1)
+		return m, nil
+	case actTop:
+		m.jumpSel(true)
+		return m, nil
+	case actBottom:
+		m.jumpSel(false)
+		return m, nil
+	case actOpen:
+		return m.open()
+	case actToggle:
+		return m.toggle()
+	case actSearch:
+		m.searching = true
+		m.searchInput.reset()
+		return m, nil
+	case actCopy:
+		return m.copy()
+	case actNewTask:
+		m.openInput(inNewTaskTitle, "New task title", "")
+		return m, nil
+	case actEditTitle:
+		return m.editTitle()
+	case actEditDesc:
+		return m.editDescription()
+	case actSetDue:
+		return m.openDuePicker()
+	case actDelete:
+		return m.openDelete()
+	case actAddItem:
+		m.openInput(inAddItem, "New item title", "")
+		return m, nil
+	case actEditNote:
+		return m.editNote()
+	}
+	return m, nil
+}
+
+// -- navigation -------------------------------------------------------------
+
+func (m *Model) moveSel(delta int) {
+	switch m.current() {
+	case screenList:
+		n := len(m.visibleTasks())
+		if n > 0 {
+			m.listSel = clamp(m.listSel+delta, 0, n-1)
+		}
+	case screenChecklist:
+		n := m.itemCount()
+		if n > 0 {
+			m.itemSel = clamp(m.itemSel+delta, 0, n-1)
+		}
+	case screenNote:
+		m.noteOff = maxInt(0, m.noteOff+delta)
+	}
+}
+
+func (m *Model) jumpSel(top bool) {
+	switch m.current() {
+	case screenList:
+		if top {
+			m.listSel = 0
+		} else {
+			m.listSel = maxInt(0, len(m.visibleTasks())-1)
+		}
+	case screenChecklist:
+		if top {
+			m.itemSel = 0
+		} else {
+			m.itemSel = maxInt(0, m.itemCount()-1)
+		}
+	case screenNote:
+		if top {
+			m.noteOff = 0
+		} else {
+			m.noteOff = 1 << 20 // clamped to content length at render time
+		}
+	}
+}
+
+// -- actions ----------------------------------------------------------------
+
+func (m *Model) refresh() (tea.Model, tea.Cmd) {
+	switch m.current() {
+	case screenList:
+		m.loading = true
+		if m.searchLabel != "" {
+			return m, searchTasksCmd(m.ctx, m.client, m.searchLabel)
+		}
+		return m, listTasksCmd(m.ctx, m.client)
+	case screenChecklist, screenNote:
+		if m.detail == nil {
+			return m, nil
+		}
+		m.loading = true
+		return m, getTaskCmd(m.ctx, m.client, m.detail.ID, false)
+	}
+	return m, nil
+}
+
+func (m *Model) open() (tea.Model, tea.Cmd) {
+	switch m.current() {
+	case screenList:
+		t := m.selectedTask()
+		if t == nil {
+			return m, nil
+		}
+		m.detail = nil
+		m.itemSel = 0
+		m.loading = true
+		m.push(screenChecklist)
+		return m, getTaskCmd(m.ctx, m.client, t.ID, false)
+	case screenChecklist:
+		if m.selectedItem() == nil {
+			return m, nil
+		}
+		m.noteOff = 0
+		m.push(screenNote)
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *Model) toggle() (tea.Model, tea.Cmd) {
+	it := m.selectedItem()
+	if it == nil {
+		return m, nil
+	}
+	prev := it.Completed
+	want := !prev
+	it.Completed = want // optimistic
+	m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+	m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+	return m, toggleItemCmd(m.ctx, m.client, it.ID, want, prev)
+}
+
+func (m *Model) copy() (tea.Model, tea.Cmd) {
+	switch m.current() {
+	case screenList:
+		t := m.selectedTask()
+		if t == nil {
+			return m, nil
+		}
+		// The list never carries checklist items; fetch the full task, then copy.
+		return m, getTaskCmd(m.ctx, m.client, t.ID, true)
+	case screenChecklist, screenNote:
+		it := m.selectedItem()
+		if it == nil {
+			return m, nil
+		}
+		md := itemMarkdown(it, m.detail)
+		return m, tea.Batch(tea.SetClipboard(md), m.setTransient("✓ copied item #"+itoa(it.ID)))
+	}
+	return m, nil
+}
+
+func (m *Model) editTitle() (tea.Model, tea.Cmd) {
+	switch m.current() {
+	case screenList:
+		t := m.selectedTask()
+		if t == nil {
+			return m, nil
+		}
+		m.inputTargetID = t.ID
+		m.openInput(inEditTaskTitle, "Edit task title", t.Title)
+	case screenChecklist:
+		it := m.selectedItem()
+		if it == nil {
+			return m, nil
+		}
+		m.inputTargetID = it.ID
+		m.openInput(inEditItemTitle, "Edit item title", it.Title)
+	}
+	return m, nil
+}
+
+func (m *Model) editDescription() (tea.Model, tea.Cmd) {
+	t := m.selectedTask()
+	if t == nil {
+		return m, nil
+	}
+	return m, editInEditorCmd(editTaskDesc, t.ID, t.Description)
+}
+
+func (m *Model) editNote() (tea.Model, tea.Cmd) {
+	it := m.selectedItem()
+	if it == nil {
+		return m, nil
+	}
+	body := ""
+	if it.Notes != nil {
+		body = *it.Notes
+	}
+	return m, editInEditorCmd(editItemNote, it.ID, body)
+}
+
+func (m *Model) openDuePicker() (tea.Model, tea.Cmd) {
+	t := m.selectedTask()
+	if t == nil {
+		return m, nil
+	}
+	m.inputTargetID = t.ID
+	m.overlay = ovPicker
+	m.pickerKind = pickDue
+	m.pickerTitle = "Set due date for #" + itoa(t.ID)
+	m.pickerItems = []pickerItem{
+		{label: "yesterday", value: "yesterday"},
+		{label: "today", value: "today"},
+		{label: "this week", value: "week"},
+		{label: "clear (none)", value: "none"},
+	}
+	m.pickerSel = 0
+	return m, nil
+}
+
+func (m *Model) openDelete() (tea.Model, tea.Cmd) {
+	switch m.current() {
+	case screenList:
+		t := m.selectedTask()
+		if t == nil {
+			return m, nil
+		}
+		m.overlay = ovConfirm
+		m.confirmKind = confirmDeleteTask
+		m.confirmID = t.ID
+		m.confirmName = t.Title
+	case screenChecklist:
+		it := m.selectedItem()
+		if it == nil {
+			return m, nil
+		}
+		m.overlay = ovConfirm
+		m.confirmKind = confirmDeleteItem
+		m.confirmID = it.ID
+		m.confirmName = it.Title
+	}
+	return m, nil
+}
+
+func (m *Model) openInput(kind inputKind, prompt, prefill string) {
+	m.overlay = ovInput
+	m.inputKind = kind
+	m.inputPrompt = prompt
+	m.input.reset()
+	if prefill != "" {
+		m.input.setValue(prefill)
+	}
+}
+
+// -- overlay key routing ----------------------------------------------------
+
+func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
+	switch m.overlay {
+	case ovHelp:
+		m.overlay = ovNone
+		return m, nil
+
+	case ovConfirm:
+		switch key {
+		case "y", "Y", "enter":
+			return m.confirmYes()
+		case "n", "N", "esc":
+			m.overlay = ovNone
+		}
+		return m, nil
+
+	case ovInput:
+		switch key {
+		case "esc":
+			m.overlay = ovNone
+			m.input.reset()
+			return m, nil
+		case "enter":
+			return m.submitInput()
+		default:
+			m.input.handleKey(key)
+			return m, nil
+		}
+
+	case ovPicker:
+		switch key {
+		case "esc":
+			m.overlay = ovNone
+			return m, nil
+		case "up", "k":
+			if m.pickerSel > 0 {
+				m.pickerSel--
+			}
+			return m, nil
+		case "down", "j":
+			if m.pickerSel < len(m.pickerItems)-1 {
+				m.pickerSel++
+			}
+			return m, nil
+		case "enter":
+			return m.submitPicker()
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *Model) confirmYes() (tea.Model, tea.Cmd) {
+	kind := m.confirmKind
+	id := m.confirmID
+	m.overlay = ovNone
+	switch kind {
+	case confirmDeleteTask:
+		return m, deleteTaskCmd(m.ctx, m.client, id)
+	case confirmDeleteItem:
+		return m, deleteItemCmd(m.ctx, m.client, id)
+	}
+	return m, nil
+}
+
+func (m *Model) submitInput() (tea.Model, tea.Cmd) {
+	val := strings.TrimSpace(m.input.String())
+	kind := m.inputKind
+	target := m.inputTargetID
+	m.overlay = ovNone
+	m.input.reset()
+
+	switch kind {
+	case inNewTaskTitle:
+		if val == "" {
+			return m, nil
+		}
+		if projs := m.distinctProjects(); len(projs) > 0 {
+			m.pendingTaskTitle = val
+			m.overlay = ovPicker
+			m.pickerKind = pickProject
+			m.pickerTitle = "Project for new task"
+			m.pickerItems = append([]pickerItem{{label: "(none)", value: ""}}, projs...)
+			m.pickerSel = 0
+			return m, nil
+		}
+		m.loading = true
+		return m, createTaskCmd(m.ctx, m.client, map[string]any{"title": val})
+	case inEditTaskTitle:
+		if val == "" {
+			return m, nil
+		}
+		return m, updateTaskCmd(m.ctx, m.client, target, map[string]any{"title": val})
+	case inAddItem:
+		if val == "" || m.detail == nil {
+			return m, nil
+		}
+		return m, addItemCmd(m.ctx, m.client, m.detail.ID, val)
+	case inEditItemTitle:
+		if val == "" {
+			return m, nil
+		}
+		return m, updateItemCmd(m.ctx, m.client, target, val)
+	}
+	return m, nil
+}
+
+func (m *Model) submitPicker() (tea.Model, tea.Cmd) {
+	if m.pickerSel < 0 || m.pickerSel >= len(m.pickerItems) {
+		m.overlay = ovNone
+		return m, nil
+	}
+	sel := m.pickerItems[m.pickerSel]
+	kind := m.pickerKind
+	m.overlay = ovNone
+
+	switch kind {
+	case pickDue:
+		var due *string
+		if sel.value != "none" {
+			v := sel.value
+			due = &v
+		}
+		return m, setDueCmd(m.ctx, m.client, m.inputTargetID, due)
+	case pickProject:
+		attrs := map[string]any{"title": m.pendingTaskTitle}
+		m.pendingTaskTitle = ""
+		if sel.value != "" {
+			if id, err := strconv.ParseInt(sel.value, 10, 64); err == nil {
+				attrs["project_id"] = id
+			}
+		}
+		m.loading = true
+		return m, createTaskCmd(m.ctx, m.client, attrs)
+	}
+	return m, nil
+}

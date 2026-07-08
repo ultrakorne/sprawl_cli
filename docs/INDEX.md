@@ -23,8 +23,10 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 | [whoami](features/whoami/INDEX.md) | `whoami` identity probe — caller agent + elevated project permissions. |
 | [activity](features/activity/INDEX.md) | `activity` — daily completion log (completed tasks + completed checklist items) for a single day. |
 | [auto-update](features/auto-update/INDEX.md) | Once-per-day update notice + `sprawl update` (download, verify, atomic replace). |
+| [interactive-tui](features/interactive-tui/INDEX.md) | Full-screen terminal UI (bare `sprawl` / `sprawl tui`) to browse tasks, work checklists, edit notes, and copy Markdown context for LLMs. |
 
 ## Quick Links
 
+- [CONTEXT.md](CONTEXT.md) — glossary of shared terms (terminal palette vs app theme, task vs checklist item, note)
 - [README](../README.md) — install + usage
 - [RELEASING](RELEASING.md) — tag, build, and publish a new version with goreleaser
