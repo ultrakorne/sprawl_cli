@@ -1,11 +1,17 @@
 package tui
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// errEmptyTask is surfaced when the server returns a 2xx whose body decodes to a
+// nil task (e.g. `{"task": null}`), so the copy/drill-in paths report it instead
+// of dereferencing nil and crashing the TUI.
+var errEmptyTask = errors.New("empty task response")
 
 // Update is the bubbletea reducer. It never blocks — every network call is a
 // tea.Cmd, and every error arrives as a message routed to the footer, so the
@@ -18,6 +24,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		// In v2 bracketed-paste arrives here, not as KeyPressMsg. Route it into
+		// the active text field so pasting an agent secret / search / title works.
+		m.handlePaste(msg.Content)
+		return m, nil
 
 	case tasksLoadedMsg:
 		m.loading = false
@@ -39,10 +51,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case taskLoadedMsg:
-		m.loading = false
 		if msg.forCopy {
+			m.loading = false
+			if msg.task == nil {
+				m.setError("copy task", errEmptyTask)
+				return m, nil
+			}
 			md := taskMarkdown(msg.task)
 			return m, tea.Batch(tea.SetClipboard(md), m.setTransient("✓ copied task #"+itoa(msg.task.ID)))
+		}
+		// Drop a stale out-of-order response (opened A, backed out, opened B):
+		// leave `loading` set for the request that's still in flight.
+		if msg.wantID != m.pendingTaskID {
+			return m, nil
+		}
+		m.loading = false
+		if msg.task == nil {
+			m.setError("open task", errEmptyTask)
+			if m.current() == screenChecklist || m.current() == screenNote {
+				m.popTo(screenList)
+			}
+			m.detail = nil
+			return m, nil
 		}
 		m.detail = msg.task
 		m.clampItemSel()
@@ -72,6 +102,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
 			m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+		}
+		// A toggle that failed on a bad/revoked secret bounces to the masked
+		// prompt (the optimistic state was just reverted above).
+		if isSecretAuthErr(msg.err) {
+			return m.Update(authFailedMsg{err: msg.err})
 		}
 		m.setError("toggle", msg.err)
 		return m, nil
@@ -129,6 +164,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.loading = false
+		// On the secret prompt a non-auth validation failure (500, timeout, VPN
+		// blip) must re-enable the prompt — otherwise secretBusy stays set and
+		// every key but ctrl+c is dead. The secret screen shows secretErr, not
+		// the footer status, so surface it there.
+		if m.current() == screenSecret {
+			m.secretBusy = false
+			m.secretErr = "couldn't validate: " + msg.err.Error()
+			return m, nil
+		}
 		m.setError(msg.context, msg.err)
 		// A failed drill-in leaves an empty detail screen on the stack; pop back.
 		if (m.current() == screenChecklist || m.current() == screenNote) && m.detail == nil {
@@ -237,6 +281,25 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleBaseKey(key)
 	default:
 		return m.handleBaseKey(key)
+	}
+}
+
+// handlePaste routes bracketed-paste text into whichever text field is focused.
+// Ignored when no field is active (confirm/picker/help overlays, or a browse
+// screen). The masked secret prompt is included, so pasting a secret works.
+func (m *Model) handlePaste(s string) {
+	switch {
+	case m.overlay == ovInput:
+		m.input.insertString(s)
+	case m.overlay != ovNone:
+		// confirm / picker / help overlays have no text field
+	case m.current() == screenSecret:
+		if !m.secretBusy {
+			m.secretInput.insertString(s)
+		}
+	case m.current() == screenList && m.searching:
+		m.searchInput.insertString(s)
+		m.clampListSel()
 	}
 }
 
@@ -379,7 +442,7 @@ func (m *Model) moveSel(delta int) {
 			m.itemSel = clamp(m.itemSel+delta, 0, n-1)
 		}
 	case screenNote:
-		m.noteOff = maxInt(0, m.noteOff+delta)
+		m.noteOff = clamp(m.noteOff+delta, 0, m.noteMaxOff())
 	}
 }
 
@@ -401,7 +464,7 @@ func (m *Model) jumpSel(top bool) {
 		if top {
 			m.noteOff = 0
 		} else {
-			m.noteOff = 1 << 20 // clamped to content length at render time
+			m.noteOff = m.noteMaxOff()
 		}
 	}
 }
@@ -421,6 +484,7 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
+		m.pendingTaskID = m.detail.ID
 		return m, getTaskCmd(m.ctx, m.client, m.detail.ID, false)
 	}
 	return m, nil
@@ -436,6 +500,7 @@ func (m *Model) open() (tea.Model, tea.Cmd) {
 		m.detail = nil
 		m.itemSel = 0
 		m.loading = true
+		m.pendingTaskID = t.ID
 		m.push(screenChecklist)
 		return m, getTaskCmd(m.ctx, m.client, t.ID, false)
 	case screenChecklist:

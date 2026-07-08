@@ -334,6 +334,26 @@ func wrapLines(text string, width int) []string {
 	return out
 }
 
+// noteMaxOff is the largest valid scroll offset for the currently selected
+// item's note, so the last screenful still fills the body. The reducer clamps
+// m.noteOff to this (instead of a sentinel), keeping scroll-up responsive after
+// G / over-scrolling. 0 when there's no note or it fits on one screen.
+func (m *Model) noteMaxOff() int {
+	it := m.selectedItem()
+	if it == nil || it.Notes == nil {
+		return 0
+	}
+	note := *it.Notes
+	if strings.TrimSpace(note) == "" {
+		return 0
+	}
+	bodyH := m.effHeight() - 4
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return maxInt(0, len(wrapLines(note, m.effWidth()))-bodyH)
+}
+
 // -- secret / not-logged-in screens -----------------------------------------
 
 func (m *Model) viewSecret() string {

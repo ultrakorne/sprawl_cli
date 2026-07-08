@@ -45,7 +45,7 @@ The TUI is an Elm-architecture `*Model`:
 - **Secret prompt** (`viewSecret`) — masked `textInput`; Enter sets `secretBusy` and fires `validateAndListCmd`.
 - **Not logged in** (`viewNotLoggedIn`) — static; quit only.
 - **List** (`viewList` / `listRows`) — column-aligned task rows with a centered scroll window (`windowStart`); traffic-light progress; search title/annotations.
-- **Checklist** (`viewChecklist` / `checklistRows`) — header from the cached full task; item rows with checkbox, id, title, `✎` note flag.
+- **Checklist** (`viewChecklist` / `checklistRows`) — header from the cached full task; item rows with checkbox, id, title, `🗒` note flag.
 - **Note** (`viewNote` / `wrapLines`) — soft-wrapped, scrollable note body with a `noteOff` line offset.
 - **Overlays** (`viewOverlay`) — confirm, single-line input, picker, help.
 
@@ -87,8 +87,8 @@ Key details:
 
 Copy actions build a Markdown string with the pure formatters in `markdown.go`, then hand it to bubbletea's `tea.SetClipboard(md)` (an OSC 52 escape — no external clipboard binary, works over SSH):
 
-- **Whole task** (`taskMarkdown`): `# Task #<id> — <title>`, a status/due/project/progress line, the description (if any), and a `## Checklist` section with `- [x] #<id> <title>` rows and indented note lines. Emitted on `c` from the list; if the full task isn't loaded it is fetched first (`getTaskCmd(forCopy)`).
-- **Single item** (`itemMarkdown`): `## Item #<id> — <title> ([x]|[ ])`, a `task: #<id> <title>` reference, and the note body (or `(none)`). Emitted on `c` from the checklist / note screens.
+- **Whole task** (`taskMarkdown`): `# Sprawl Task #<id> — <title>`, a status/due/project/progress line, the description (if any), and a `## Checklist` section with `- [x] #<id> <title>` rows and indented note lines. Emitted on `c` from the list; if the full task isn't loaded it is fetched first (`getTaskCmd(forCopy)`).
+- **Single item** (`itemMarkdown`): a `sprawl task: #<id> <title>` parent-context line, then the item as a `- [ ]`/`- [x] #<id> <title>` task-list line with its note indented underneath. The item line + note are rendered by the shared `writeItemMarkdown` helper, so single-item and whole-task copies stay identical. Emitted on `c` from the checklist / note screens.
 
 Both are followed by a transient footer confirmation (`✓ copied task #123` / `✓ copied item #45`), batched with the clipboard command.
 

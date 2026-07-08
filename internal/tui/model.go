@@ -84,6 +84,10 @@ type Model struct {
 	// checklist detail (full task with items + notes)
 	detail  *client.Task
 	itemSel int
+	// pendingTaskID is the task id of the in-flight drill-in/refresh fetch, so a
+	// stale out-of-order taskLoadedMsg (opened A, backed out, opened B) can be
+	// discarded instead of overwriting the task the user is actually viewing.
+	pendingTaskID int64
 
 	// note screen scroll offset (lines)
 	noteOff int

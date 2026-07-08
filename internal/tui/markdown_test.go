@@ -24,7 +24,7 @@ func TestTaskMarkdown_FullTemplate(t *testing.T) {
 		},
 	}
 	got := taskMarkdown(task)
-	want := "# Task #1 — Ship it\n" +
+	want := "# Sprawl Task #1 — Ship it\n" +
 		"status: todo  due: 2026-07-10  project: Core  progress: 1/2\n" +
 		"\n" +
 		"line one\nline two\n" +
@@ -54,19 +54,18 @@ func TestItemMarkdown_WithAndWithoutNote(t *testing.T) {
 	task := &client.Task{ID: 2, Title: "Parent"}
 	withNote := &client.ChecklistItem{ID: 20, Title: "has note", Completed: true, Notes: strptr("hello")}
 	got := itemMarkdown(withNote, task)
-	want := "## Item #20 — has note  [x]\n" +
-		"task: #2 Parent\n" +
-		"note:\nhello\n"
+	want := "sprawl task: #2 Parent\n" +
+		"- [x] #20 has note\n" +
+		"      hello\n"
 	if got != want {
 		t.Fatalf("itemMarkdown mismatch:\n got: %q\nwant: %q", got, want)
 	}
 
 	noNote := &client.ChecklistItem{ID: 21, Title: "no note", Completed: false}
 	got2 := itemMarkdown(noNote, task)
-	if !strings.Contains(got2, "## Item #21 — no note  [ ]") {
-		t.Fatalf("missing header/checkbox:\n%s", got2)
-	}
-	if !strings.Contains(got2, "note:\n(none)\n") {
-		t.Fatalf("empty note should render (none):\n%s", got2)
+	want2 := "sprawl task: #2 Parent\n" +
+		"- [ ] #21 no note\n"
+	if got2 != want2 {
+		t.Fatalf("itemMarkdown (no note) mismatch:\n got: %q\nwant: %q", got2, want2)
 	}
 }

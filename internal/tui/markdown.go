@@ -39,7 +39,7 @@ func mdProject(p *client.Project) string {
 // full task (ChecklistItems populated, each with its Notes) as fetched by
 // GetTask(full=true); the checklist section is omitted when there are no items.
 //
-//	# Task #<id> — <title>
+//	# Sprawl Task #<id> — <title>
 //	status: <status>  due: <due|—>  project: <name|—>  progress: <done>/<total>
 //
 //	<description, if present>
@@ -50,7 +50,7 @@ func mdProject(p *client.Project) string {
 //	- [ ] #<itemid> <title>
 func taskMarkdown(t *client.Task) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Task #%d — %s\n", t.ID, t.Title)
+	fmt.Fprintf(&b, "# Sprawl Task #%d — %s\n", t.ID, t.Title)
 	fmt.Fprintf(&b, "status: %s  due: %s  project: %s  progress: %d/%d\n",
 		mdDash(t.Status), mdDash(t.DueDate), mdProject(t.Project),
 		t.ChecklistProgress.Done, t.ChecklistProgress.Total)
@@ -64,40 +64,40 @@ func taskMarkdown(t *client.Task) string {
 	if len(t.ChecklistItems) > 0 {
 		b.WriteString("\n## Checklist\n")
 		for _, it := range t.ChecklistItems {
-			fmt.Fprintf(&b, "- %s #%d %s\n", mdCheckbox(it.Completed), it.ID, it.Title)
-			if it.Notes != nil && strings.TrimSpace(*it.Notes) != "" {
-				for _, ln := range strings.Split(strings.TrimRight(*it.Notes, "\n"), "\n") {
-					fmt.Fprintf(&b, "      %s\n", ln)
-				}
-			}
+			writeItemMarkdown(&b, it)
 		}
 	}
 	return b.String()
 }
 
-// itemMarkdown formats a single checklist item as Markdown for the clipboard.
-// task carries the parent's id/title for context (may be nil defensively).
+// writeItemMarkdown writes one checklist item as a Markdown task-list line
+// (`- [x] #<id> <title>`) followed by its note indented underneath. Shared by
+// the whole-task and single-item copy formats so both stay identical.
+func writeItemMarkdown(b *strings.Builder, it *client.ChecklistItem) {
+	fmt.Fprintf(b, "- %s #%d %s\n", mdCheckbox(it.Completed), it.ID, it.Title)
+	if it.Notes != nil && strings.TrimSpace(*it.Notes) != "" {
+		for _, ln := range strings.Split(strings.TrimRight(*it.Notes, "\n"), "\n") {
+			fmt.Fprintf(b, "      %s\n", ln)
+		}
+	}
+}
+
+// itemMarkdown formats a single checklist item as Markdown for the clipboard,
+// led by a one-line parent-task context header so a model has the surrounding
+// task. task carries the parent's id/title (may be nil defensively).
 //
-//	## Item #<id> — <title>  ([x]|[ ])
-//	task: #<taskid> <tasktitle>
-//	note:
-//	<note body, or "(none)">
+//	sprawl task: #<taskid> <tasktitle>
+//	- [ ] #<itemid> <title>
+//	      <note lines, indented> (if any)
 func itemMarkdown(it *client.ChecklistItem, task *client.Task) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "## Item #%d — %s  %s\n", it.ID, it.Title, mdCheckbox(it.Completed))
 	var taskID int64
 	var taskTitle string
 	if task != nil {
 		taskID = task.ID
 		taskTitle = task.Title
 	}
-	fmt.Fprintf(&b, "task: #%d %s\n", taskID, taskTitle)
-	b.WriteString("note:\n")
-	note := "(none)"
-	if it.Notes != nil && strings.TrimSpace(*it.Notes) != "" {
-		note = strings.TrimRight(*it.Notes, "\n")
-	}
-	b.WriteString(note)
-	b.WriteString("\n")
+	fmt.Fprintf(&b, "sprawl task: #%d %s\n", taskID, taskTitle)
+	writeItemMarkdown(&b, it)
 	return b.String()
 }

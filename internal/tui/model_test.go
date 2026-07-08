@@ -529,7 +529,7 @@ func TestCopyItem_SetsStatus(t *testing.T) {
 	if got != want {
 		t.Fatalf("clipboard payload mismatch:\n got=%q\nwant=%q", got, want)
 	}
-	if !strings.Contains(got, "## Item #10") || !strings.Contains(got, "task: #1 T") {
+	if !strings.Contains(got, "- [ ] #10 a") || !strings.Contains(got, "sprawl task: #1 T") {
 		t.Fatalf("clipboard should carry item #10 under task #1, got:\n%s", got)
 	}
 }
@@ -558,7 +558,7 @@ func TestCopyTask_FromList(t *testing.T) {
 	if got != want {
 		t.Fatalf("clipboard payload should equal taskMarkdown(full task):\n got=%q\nwant=%q", got, want)
 	}
-	if !strings.Contains(got, "# Task #3 — Whole") || !strings.Contains(got, "do it") {
+	if !strings.Contains(got, "# Sprawl Task #3 — Whole") || !strings.Contains(got, "do it") {
 		t.Fatalf("clipboard should carry the full task incl. item notes, got:\n%s", got)
 	}
 }

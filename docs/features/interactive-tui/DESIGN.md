@@ -39,7 +39,7 @@ Screens form a back stack; `esc` pops one.
 1. **Agent-secret prompt** (conditional) — masked input; Enter validates via the list fetch.
 2. **Not logged in** — message + quit (token missing).
 3. **Task list** (home) — one row per task: `#id · progress (done/total, traffic-light color) · due · project · title`. Cursor is `›` + bold + cyan. Empty state: `(no tasks) — n to create`.
-4. **Checklist** (task detail) — header (`#id title · progress · due · project`); item rows `[ ]`/`[x] · #id · title` with a `✎` flag when the item has a note. Empty state: `(no checklist items) — a to add`.
+4. **Checklist** (task detail) — header (`#id title · progress · due · project`); item rows `[ ]`/`[x] · #id · title` with a `🗒` flag when the item has a note. Empty state: `(no checklist items) — a to add`.
 5. **Note view** — the selected checklist item's note body, scrollable. Empty state: `(no notes) — e to add`.
 
 ### Overlays

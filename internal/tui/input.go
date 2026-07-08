@@ -36,6 +36,18 @@ func (t *textInput) insertRune(r rune) {
 	t.cursor++
 }
 
+// insertString inserts s at the cursor, dropping control characters (newlines,
+// tabs) so a bracketed-paste of a secret/title with a trailing newline can't
+// corrupt this single-line field. Used by the paste handler.
+func (t *textInput) insertString(s string) {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		t.insertRune(r)
+	}
+}
+
 // handleKey applies a key (in bubbletea String() form) to the input. It returns
 // true when the key was consumed as editing input. Navigation/submit keys the
 // caller handles first (enter/esc/tab) fall through as not-consumed if passed.

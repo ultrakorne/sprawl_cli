@@ -27,9 +27,12 @@ type searchResultMsg struct {
 }
 
 // taskLoadedMsg carries a single full task (checklist + notes). forCopy routes
-// it to the clipboard formatter instead of the checklist screen.
+// it to the clipboard formatter instead of the checklist screen. wantID is the
+// task id that was requested, so the reducer can drop a stale out-of-order
+// response that no longer matches the open task.
 type taskLoadedMsg struct {
 	task    *client.Task
+	wantID  int64
 	forCopy bool
 }
 
@@ -75,8 +78,9 @@ type errMsg struct {
 	context string
 }
 
-// authFailedMsg drops the model to the masked secret prompt (401/403 during
-// credential validation, or 401 mid-session).
+// authFailedMsg drops the model to the masked secret prompt: any 401/403 during
+// credential validation, or a mid-session secret-auth failure (see
+// isSecretAuthErr — 401 or a secret-coded 403).
 type authFailedMsg struct{ err error }
 
 // clearStatusMsg clears the transient footer status when tok still matches the
@@ -110,12 +114,24 @@ func isAuthErr(err error) bool {
 	return false
 }
 
-// isUnauthorized reports specifically a 401 (bad/absent secret), used to decide
-// whether a mid-session failure should bounce back to the secret prompt.
-func isUnauthorized(err error) bool {
+// isSecretAuthErr reports whether err means the AGENT SECRET is bad / missing /
+// revoked, so a mid-session failure should bounce back to the masked prompt.
+// Per the server's error contract that's a 401, or a 403 whose code names a
+// secret problem. A plain 403 "forbidden" is an ordinary permission denial —
+// NOT included — so it stays a footer error instead of demanding a new secret.
+func isSecretAuthErr(err error) bool {
 	var ae *client.APIError
-	if errors.As(err, &ae) {
-		return ae.Status == 401
+	if !errors.As(err, &ae) {
+		return false
+	}
+	if ae.Status == 401 {
+		return true
+	}
+	if ae.Status == 403 {
+		switch ae.Code {
+		case "agent_secret_required", "invalid_agent_secret", "agent_key_revoked":
+			return true
+		}
 	}
 	return false
 }
@@ -129,11 +145,12 @@ func validationErrMsg(err error) tea.Msg {
 	return errMsg{err: err, context: "validate"}
 }
 
-// opErrMsg turns a post-validation op's error into the right message: a 401
-// bounces to the secret prompt (secret revoked); everything else (including a
-// 403 permission error) stays a footer error.
+// opErrMsg turns a post-validation op's error into the right message: a
+// secret-auth failure (401, or a secret-coded 403) bounces to the masked prompt
+// so the user can re-enter a revoked/invalid secret; everything else (including
+// a plain 403 "forbidden" permission error) stays a footer error.
 func opErrMsg(err error, ctx string) tea.Msg {
-	if isUnauthorized(err) {
+	if isSecretAuthErr(err) {
 		return authFailedMsg{err}
 	}
 	return errMsg{err: err, context: ctx}
@@ -180,7 +197,7 @@ func getTaskCmd(ctx context.Context, c Client, id int64, forCopy bool) tea.Cmd {
 		if err != nil {
 			return opErrMsg(err, "open task")
 		}
-		return taskLoadedMsg{task: task, forCopy: forCopy}
+		return taskLoadedMsg{task: task, wantID: id, forCopy: forCopy}
 	}
 }
 
