@@ -34,9 +34,9 @@ func newTUICmd(opts *runtimeOpts) *cobra.Command {
 
 // launchTUI resolves credentials (reusing the CLI's resolvers) and starts the
 // TUI. A missing token is not fatal here — the TUI renders a not-logged-in
-// screen. A missing agent secret is also fine — the TUI prompts for it, masked,
-// unless a project key already narrows the session, in which case it starts
-// straight on the list. Neither the token nor the secret is ever printed.
+// screen. Missing narrowing factors are also fine — the TUI prompts for an
+// agent secret *or* a project key, whichever the user has; with either one
+// already resolved it starts straight on the list. The token is never printed.
 func launchTUI(ctx context.Context, stderr io.Writer, opts *runtimeOpts) error {
 	token, tokenErr := resolveToken()
 	loggedIn := tokenErr == nil && token != ""
@@ -51,8 +51,8 @@ func launchTUI(ctx context.Context, stderr io.Writer, opts *runtimeOpts) error {
 		Secret:         secret,
 		SecretProvided: secret != "",
 		ProjectKey:     projectKey,
-		NewClient: func(s string) tui.Client {
-			return client.NewAuthed(token, s, client.WithProjectKey(projectKey))
+		NewClient: func(secret, key string) tui.Client {
+			return client.NewAuthed(token, secret, client.WithProjectKey(key))
 		},
 	}
 

@@ -4,8 +4,8 @@
 // ANSI palette (indices 0-15) so the UI adopts the user's terminal theme, the
 // same philosophy as the CLI's text output.
 //
-// The agent secret, when prompted for, is masked and held in memory only — it is
-// never written to disk, logged, or echoed (AGENTS.md invariants #2/#3).
+// The agent secret and project key, when prompted for, are held in memory only
+// — neither is written to disk or logged (AGENTS.md invariants #2/#3).
 package tui
 
 import (
@@ -32,14 +32,14 @@ type Deps struct {
 	// ProjectKey is the project key resolved from --project-key /
 	// $SPRAWL_PROJECT_KEY. When set, the session is confined to that project
 	// (pre-filtered lists, creates landing there) and the agent secret becomes
-	// optional, so the masked prompt is skipped. Shown in the header so it's
-	// obvious which project the UI is looking at.
+	// optional, so the credentials prompt is skipped. Shown in the header so
+	// it's obvious which project the UI is looking at.
 	ProjectKey string
-	// NewClient builds an authed client for a candidate secret. The bearer token
-	// and project key are captured by the closure; the secret is supplied per
-	// call so the masked prompt can retry with a fresh secret without leaking it
-	// anywhere.
-	NewClient func(secret string) Client
+	// NewClient builds an authed client for a candidate secret and project key.
+	// Only the bearer token is captured by the closure; both narrowing factors
+	// are supplied per call so the credentials prompt can retry with either one
+	// without leaking it anywhere.
+	NewClient func(secret, projectKey string) Client
 }
 
 // ErrNotATTY is returned when the TUI is asked to run without a terminal.

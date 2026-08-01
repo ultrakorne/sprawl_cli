@@ -100,18 +100,12 @@ func (t *textInput) handleKey(key string) bool {
 	return false
 }
 
-// render draws the input value with a block cursor. When masked, characters are
-// shown as bullets (used by the agent-secret prompt, which must never echo the
-// secret).
-func (t *textInput) render(masked bool) string {
+// render draws the input value with a block cursor. Values are always echoed in
+// the clear — including on the credentials prompt: a mistyped secret or project
+// key is only fixable if you can see it, and neither ever leaves memory.
+func (t *textInput) render() string {
 	display := make([]rune, len(t.value))
-	for i := range t.value {
-		if masked {
-			display[i] = '•'
-		} else {
-			display[i] = t.value[i]
-		}
-	}
+	copy(display, t.value)
 	// Cursor as a trailing block; when mid-string, underline the char by wrapping
 	// with reverse-ish brackets is overkill — a simple caret suffices for a
 	// one-line field.

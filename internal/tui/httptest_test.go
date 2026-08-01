@@ -13,7 +13,7 @@ import (
 // *client.Client wired to an httptest server (the pattern from
 // internal/client/testhelper_test.go), proving the concrete client satisfies
 // the injected Client interface end-to-end, including auth-header propagation
-// and the 401→secret-prompt path.
+// and the 401→credentials-prompt path.
 func TestModel_WithRealClientOverHTTPTest(t *testing.T) {
 	var gotSecret string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,9 +29,11 @@ func TestModel_WithRealClientOverHTTPTest(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("SPRAWL_API_URL", srv.URL)
 
-	newClient := func(secret string) Client { return client.NewAuthed("tok", secret) }
+	newClient := func(secret, key string) Client {
+		return client.NewAuthed("tok", secret, client.WithProjectKey(key))
+	}
 
-	// Wrong secret from env → validation fetch → 401 → secret prompt.
+	// Wrong secret from env → validation fetch → 401 → credentials prompt.
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, Secret: "bad", SecretProvided: true, NewClient: newClient,
 	})
@@ -39,7 +41,7 @@ func TestModel_WithRealClientOverHTTPTest(t *testing.T) {
 	for _, msg := range runCmd(m.Init()) {
 		m.send(msg)
 	}
-	if m.current() != screenSecret {
+	if m.current() != screenCreds {
 		t.Fatalf("a rejected env secret should drop to the prompt, got screen %d", m.current())
 	}
 

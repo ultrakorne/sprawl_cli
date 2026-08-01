@@ -20,8 +20,8 @@ func (m *Model) View() tea.View {
 		s = m.viewOverlay()
 	} else {
 		switch m.current() {
-		case screenSecret:
-			s = m.viewSecret()
+		case screenCreds:
+			s = m.viewCreds()
 		case screenNotLoggedIn:
 			s = m.viewNotLoggedIn()
 		case screenList:
@@ -199,7 +199,7 @@ func (m *Model) viewList() string {
 		title = "sprawl · tasks · " + m.projectKey
 	}
 	if m.searching {
-		title = "search: " + m.searchInput.render(false)
+		title = "search: " + m.searchInput.render()
 	} else if m.searchLabel != "" {
 		title = fmt.Sprintf("sprawl · search %q (%d)", m.searchLabel, len(m.tasks))
 	}
@@ -413,22 +413,40 @@ func (m *Model) noteMaxOff() int {
 	return maxInt(0, len(wrapLines(note, m.effWidth()))-bodyH)
 }
 
-// -- secret / not-logged-in screens -----------------------------------------
+// -- credentials / not-logged-in screens ------------------------------------
 
-func (m *Model) viewSecret() string {
+// viewCreds renders the two-field credentials prompt. Both values are shown in
+// the clear: either is fixable only if you can see what you typed, and neither
+// is written to disk, logged, or set as a flag default.
+func (m *Model) viewCreds() string {
 	body := []string{
 		"",
-		m.styles.bold.Render("Enter your agent secret"),
-		m.styles.faint.Render("(input is masked and kept in memory only — never written to disk)"),
+		m.styles.bold.Render("Enter an agent secret or a project key"),
 		"",
-		"  " + m.styles.accent.Render("secret: ") + m.secretInput.render(true),
+		m.credRow("agent secret", &m.secretInput, credSecret),
+		m.credRow("project key", &m.keyInput, credProjectKey),
 	}
-	if m.secretBusy {
+	if m.credBusy {
 		body = append(body, "", m.styles.faint.Render("validating…"))
-	} else if m.secretErr != "" {
-		body = append(body, "", m.styles.danger.Render(m.secretErr))
+	} else if m.credErr != "" {
+		body = append(body, "", m.styles.danger.Render(m.credErr))
 	}
-	return m.frame("sprawl · agent secret", body, "enter submit · esc quit")
+	return m.frame("sprawl · credentials", body, "tab switch field · enter submit · esc quit")
+}
+
+// credRow renders one field of the credentials prompt; the focused one carries
+// the cursor and the `›` marker.
+func (m *Model) credRow(label string, in *textInput, field credField) string {
+	focused := m.credFocus == field && !m.credBusy
+	marker := "  "
+	if focused {
+		marker = m.styles.accent.Render("› ")
+	}
+	value := in.String()
+	if focused {
+		value = in.render() // cursor only on the focused field
+	}
+	return marker + m.styles.accent.Render(padRight(label+":", 13)+" ") + value
 }
 
 func (m *Model) viewNotLoggedIn() string {
@@ -467,7 +485,7 @@ func (m *Model) viewOverlay() string {
 			"",
 			m.styles.bold.Render(m.inputPrompt),
 			"",
-			"  " + m.styles.accent.Render("› ") + m.input.render(false),
+			"  " + m.styles.accent.Render("› ") + m.input.render(),
 		}
 		return m.frame("Input", body, "enter submit · esc cancel")
 

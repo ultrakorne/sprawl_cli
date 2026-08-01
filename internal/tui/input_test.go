@@ -62,15 +62,16 @@ func TestTextInput_IgnoresNamedKeys(t *testing.T) {
 	}
 }
 
-func TestTextInput_MaskedRender(t *testing.T) {
+func TestTextInput_RenderEchoesValue(t *testing.T) {
 	var in textInput
 	in.setValue("secret")
-	masked := in.render(true)
-	// masked render must not contain the raw secret
-	if strings.Contains(masked, "secret") {
-		t.Fatalf("masked render leaked the value: %q", masked)
+	got := in.render()
+	// Nothing is masked: the credentials prompt shows what was typed so a typo
+	// can be seen and corrected.
+	if !strings.Contains(got, "secret") {
+		t.Fatalf("render should echo the value, got %q", got)
 	}
-	if !strings.Contains(masked, "••••••") {
-		t.Fatalf("masked render should show bullets, got %q", masked)
+	if strings.Contains(got, "•") {
+		t.Fatalf("render must not mask the value, got %q", got)
 	}
 }

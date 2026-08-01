@@ -16,15 +16,15 @@ func projectKeyModel(fc *fakeClient, key string) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn:   true,
 		ProjectKey: key,
-		NewClient:  func(string) Client { return fc },
+		NewClient:  func(string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	return m
 }
 
-// A project key is a narrowing factor on its own, so the masked secret prompt
+// A project key is a narrowing factor on its own, so the credentials prompt
 // has nothing to ask for: go straight to the (server-filtered) list.
-func TestProjectKey_SkipsSecretPrompt(t *testing.T) {
+func TestProjectKey_SkipsCredsPrompt(t *testing.T) {
 	m := projectKeyModel(&fakeClient{}, "acme")
 	if m.current() != screenList {
 		t.Fatalf("current screen = %v, want screenList", m.current())
@@ -38,29 +38,77 @@ func TestProjectKey_SkipsSecretPrompt(t *testing.T) {
 }
 
 // Without either factor the prompt is still the entry point.
-func TestNoProjectKey_StillPromptsForSecret(t *testing.T) {
+func TestNoProjectKey_StillPromptsForCreds(t *testing.T) {
 	m := projectKeyModel(&fakeClient{}, "")
-	if m.current() != screenSecret {
-		t.Fatalf("current screen = %v, want screenSecret", m.current())
+	if m.current() != screenCreds {
+		t.Fatalf("current screen = %v, want screenCreds", m.current())
 	}
 }
 
-// A bad key / bad bearer under project-key-only mode must not drop the user
-// into a masked prompt they can't use — surface the error where they are.
-func TestProjectKey_AuthFailureStaysOnList(t *testing.T) {
+// A typo'd key under project-key-only mode is fixable at the prompt now that it
+// takes either factor: bounce there with the bad key pre-filled and focused.
+func TestProjectKey_AuthFailureReturnsToPromptWithKey(t *testing.T) {
 	fc := &fakeClient{listErr: &client.APIError{Status: 403, Code: "invalid_project_key"}}
 	m := projectKeyModel(fc, "acmee")
 	for _, msg := range runCmd(m.initCmd) {
 		m.send(msg)
 	}
-	if m.current() == screenSecret {
-		t.Fatal("project-key-only mode must not bounce to the secret prompt")
+	if m.current() != screenCreds {
+		t.Fatalf("current screen = %v, want screenCreds", m.current())
 	}
-	if !m.statusErr || !strings.Contains(m.status, "invalid_project_key") {
-		t.Fatalf("expected the failure on the status line, got %q", m.status)
+	if m.credFocus != credProjectKey {
+		t.Fatal("the project key is the only factor in play — it should hold focus")
+	}
+	if got := m.keyInput.String(); got != "acmee" {
+		t.Fatalf("key field = %q, want the rejected key pre-filled for editing", got)
+	}
+	if m.credErr == "" {
+		t.Fatal("expected an inline error on the prompt")
 	}
 	if m.loading {
 		t.Fatal("loading should be cleared after the failure")
+	}
+
+	// Correcting the key re-validates with it — and only it.
+	m.press("backspace")
+	m.press("enter")
+	if m.projectKey != "acme" || m.secret != "" {
+		t.Fatalf("submit should send the corrected key alone: key=%q secret=%q", m.projectKey, m.secret)
+	}
+	if !m.credBusy {
+		t.Fatal("submit should set credBusy")
+	}
+}
+
+// The prompt takes either factor: tab moves to the project-key field and a key
+// alone is a valid submission (no secret required).
+func TestCredsPrompt_ProjectKeyOnly(t *testing.T) {
+	fc := &fakeClient{}
+	m := projectKeyModel(fc, "")
+	if m.credFocus != credSecret {
+		t.Fatal("a cold start should focus the agent secret field")
+	}
+	m.press("tab")
+	if m.credFocus != credProjectKey {
+		t.Fatal("tab should move focus to the project key field")
+	}
+	for _, k := range []string{"a", "c", "m", "e"} {
+		m.press(k)
+	}
+	if m.secretInput.String() != "" {
+		t.Fatalf("typing after tab must not land in the secret field: %q", m.secretInput.String())
+	}
+	m.press("enter")
+	if m.projectKey != "acme" || m.secret != "" {
+		t.Fatalf("key-only submit: key=%q secret=%q", m.projectKey, m.secret)
+	}
+	if !m.credBusy || m.client == nil {
+		t.Fatal("submit should build the client and mark the prompt busy")
+	}
+	// Both fields are shown in the clear so a wrong value can be spotted.
+	got := ansi.Strip(m.viewCreds())
+	if !strings.Contains(got, "acme") {
+		t.Fatalf("prompt should echo the typed key:\n%s", got)
 	}
 }
 
@@ -73,14 +121,14 @@ func TestProjectKey_WithSecretStillBouncesToPrompt(t *testing.T) {
 		Secret:         "K7X2M9QA",
 		SecretProvided: true,
 		ProjectKey:     "acme",
-		NewClient:      func(string) Client { return fc },
+		NewClient:      func(string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	for _, msg := range runCmd(m.initCmd) {
 		m.send(msg)
 	}
-	if m.current() != screenSecret {
-		t.Fatalf("current screen = %v, want screenSecret", m.current())
+	if m.current() != screenCreds {
+		t.Fatalf("current screen = %v, want screenCreds", m.current())
 	}
 }
 
@@ -97,7 +145,7 @@ func TestProjectKey_ShownInListHeader(t *testing.T) {
 func TestNoProjectKey_HeaderUnchanged(t *testing.T) {
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, Secret: "sek", SecretProvided: true,
-		NewClient: func(string) Client { return &fakeClient{} },
+		NewClient: func(string, string) Client { return &fakeClient{} },
 	})
 	m.width, m.height = 100, 30
 	got := ansi.Strip(m.viewList())

@@ -35,7 +35,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.validated {
 			m.validated = true
-			m.secretBusy = false
+			m.credBusy = false
 			m.stack = []screen{screenList}
 		}
 		m.tasks = msg.tasks
@@ -103,8 +103,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
 			m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
 		}
-		// A toggle that failed on a bad/revoked secret bounces to the masked
-		// prompt (the optimistic state was just reverted above).
+		// A toggle that failed on a bad/revoked secret bounces to the
+		// credentials prompt (the optimistic state was just reverted above).
 		if isSecretAuthErr(msg.err) {
 			return m.Update(authFailedMsg{err: msg.err})
 		}
@@ -164,13 +164,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.loading = false
-		// On the secret prompt a non-auth validation failure (500, timeout, VPN
-		// blip) must re-enable the prompt — otherwise secretBusy stays set and
-		// every key but ctrl+c is dead. The secret screen shows secretErr, not
-		// the footer status, so surface it there.
-		if m.current() == screenSecret {
-			m.secretBusy = false
-			m.secretErr = "couldn't validate: " + msg.err.Error()
+		// On the credentials prompt a non-auth validation failure (500, timeout,
+		// VPN blip) must re-enable the prompt — otherwise credBusy stays set and
+		// every key but ctrl+c is dead. That screen shows credErr, not the
+		// footer status, so surface it there.
+		if m.current() == screenCreds {
+			m.credBusy = false
+			m.credErr = "couldn't validate: " + msg.err.Error()
 			return m, nil
 		}
 		m.setError(msg.context, msg.err)
@@ -181,23 +181,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case authFailedMsg:
-		// Under a project key with no secret in play there is nothing to
-		// re-type: the failure is the bearer or the key itself, and the masked
-		// prompt would be a dead end. Keep the user where they are and show it.
-		if m.projectKey != "" && m.secret == "" {
-			m.loading = false
-			m.setError("auth", msg.err)
-			return m, nil
-		}
+		// Both narrowing factors are re-typeable at the prompt, so every auth
+		// failure routes there. The rejected secret is dropped (it has to be
+		// re-entered); the project key is kept in its field so a typo'd key can
+		// be corrected rather than retyped from scratch.
 		m.loading = false
 		m.validated = false
-		m.secretBusy = false
+		m.credBusy = false
+		m.focusCreds()
 		m.secret = ""
 		m.client = nil
 		m.detail = nil
 		m.secretInput.reset()
-		m.secretErr = "secret rejected — try again"
-		m.stack = []screen{screenSecret}
+		m.keyInput.setValue(m.projectKey)
+		m.credErr = "credentials rejected — try again"
+		m.stack = []screen{screenCreds}
 		return m, nil
 
 	case clearStatusMsg:
@@ -274,8 +272,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.current() {
-	case screenSecret:
-		return m.handleSecretKey(key)
+	case screenCreds:
+		return m.handleCredsKey(key)
 	case screenNotLoggedIn:
 		if key == "q" || key == "esc" {
 			m.quitting = true
@@ -294,16 +292,17 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // handlePaste routes bracketed-paste text into whichever text field is focused.
 // Ignored when no field is active (confirm/picker/help overlays, or a browse
-// screen). The masked secret prompt is included, so pasting a secret works.
+// screen). The credentials prompt is included, so pasting a secret or a project
+// key works.
 func (m *Model) handlePaste(s string) {
 	switch {
 	case m.overlay == ovInput:
 		m.input.insertString(s)
 	case m.overlay != ovNone:
 		// confirm / picker / help overlays have no text field
-	case m.current() == screenSecret:
-		if !m.secretBusy {
-			m.secretInput.insertString(s)
+	case m.current() == screenCreds:
+		if !m.credBusy {
+			m.credInput().insertString(s)
 		}
 	case m.current() == screenList && m.searching:
 		m.searchInput.insertString(s)
@@ -311,27 +310,41 @@ func (m *Model) handlePaste(s string) {
 	}
 }
 
-func (m *Model) handleSecretKey(key string) (tea.Model, tea.Cmd) {
-	if m.secretBusy {
+// handleCredsKey drives the credentials prompt. The two fields are switched
+// with tab / ↑↓; enter submits whatever is filled in. The server needs at least
+// one narrowing factor, so an empty submit is refused here rather than sent.
+func (m *Model) handleCredsKey(key string) (tea.Model, tea.Cmd) {
+	if m.credBusy {
 		return m, nil
 	}
 	switch key {
 	case "esc":
 		m.quitting = true
 		return m, tea.Quit
+	case "tab", "shift+tab", "up", "down":
+		if m.credFocus == credSecret {
+			m.credFocus = credProjectKey
+		} else {
+			m.credFocus = credSecret
+		}
+		return m, nil
 	case "enter":
-		val := m.secretInput.String()
-		if val == "" {
-			m.secretErr = "secret required"
+		secret := strings.TrimSpace(m.secretInput.String())
+		// The server trims and case-folds the key anyway (see the CLI's
+		// resolveProjectKey), so trim here too and don't second-guess the rest.
+		projectKey := strings.TrimSpace(m.keyInput.String())
+		if secret == "" && projectKey == "" {
+			m.credErr = "enter an agent secret or a project key"
 			return m, nil
 		}
-		m.secret = val
-		m.client = m.newClient(val)
-		m.secretBusy = true
-		m.secretErr = ""
+		m.secret = secret
+		m.projectKey = projectKey
+		m.client = m.newClient(secret, projectKey)
+		m.credBusy = true
+		m.credErr = ""
 		return m, validateAndListCmd(m.ctx, m.client)
 	default:
-		m.secretInput.handleKey(key)
+		m.credInput().handleKey(key)
 		return m, nil
 	}
 }

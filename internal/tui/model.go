@@ -15,7 +15,7 @@ import (
 type screen int
 
 const (
-	screenSecret screen = iota
+	screenCreds screen = iota
 	screenNotLoggedIn
 	screenList
 	screenChecklist
@@ -61,19 +61,30 @@ type pickerItem struct {
 	value string
 }
 
+// credField is the focused field on the credentials prompt. The server needs
+// the bearer plus at least ONE of the two, so the prompt offers both and
+// submits whichever the user filled in (both is legal too — the server
+// intersects them).
+type credField int
+
+const (
+	credSecret credField = iota
+	credProjectKey
+)
+
 // Model is the bubbletea model for the interactive TUI.
 type Model struct {
 	ctx    context.Context
 	styles styles
 
-	newClient func(secret string) Client
+	newClient func(secret, projectKey string) Client
 	client    Client
 	secret    string
 	loggedIn  bool
 	validated bool
 	// projectKey is the confinement this session runs under (empty = none). It
-	// is display + routing state only: the header shows it, and it decides
-	// whether an auth failure can be fixed at the masked secret prompt.
+	// comes from the flag/env or from the credentials prompt, and the list
+	// header shows it.
 	projectKey string
 
 	width, height int
@@ -98,10 +109,12 @@ type Model struct {
 
 	loading bool
 
-	// secret prompt
+	// credentials prompt (agent secret / project key — either one will do)
 	secretInput textInput
-	secretErr   string
-	secretBusy  bool
+	keyInput    textInput
+	credFocus   credField
+	credErr     string
+	credBusy    bool
 
 	// live search (list screen)
 	searching   bool
@@ -145,19 +158,38 @@ func newModel(ctx context.Context, deps Deps) *Model {
 		m.stack = []screen{screenNotLoggedIn}
 	case (deps.SecretProvided && deps.Secret != "") || deps.ProjectKey != "":
 		// A narrowing factor is already configured — a supplied secret, a
-		// project key, or both. Validate straight away by fetching the list.
-		// With a secret in play a 401/403 drops to the masked prompt; under a
-		// project key alone there is nothing to re-type, so failures surface as
-		// errors instead (see the authFailedMsg handler).
+		// project key, or both. Validate straight away by fetching the list; a
+		// 401/403 drops to the credentials prompt, where either factor can be
+		// (re-)entered.
 		m.secret = deps.Secret
-		m.client = m.newClient(deps.Secret)
+		m.client = m.newClient(deps.Secret, deps.ProjectKey)
 		m.stack = []screen{screenList}
 		m.loading = true
 		m.initCmd = validateAndListCmd(ctx, m.client)
 	default:
-		m.stack = []screen{screenSecret}
+		// Neither factor configured: ask for one or the other.
+		m.stack = []screen{screenCreds}
 	}
 	return m
+}
+
+// focusCreds points the credentials prompt at the field the user is most likely
+// to want: the project key when that is the only factor in play, the agent
+// secret otherwise (it's the usual answer, and the default on a cold start).
+func (m *Model) focusCreds() {
+	if m.projectKey != "" && m.secret == "" {
+		m.credFocus = credProjectKey
+		return
+	}
+	m.credFocus = credSecret
+}
+
+// credInput returns the focused field of the credentials prompt.
+func (m *Model) credInput() *textInput {
+	if m.credFocus == credProjectKey {
+		return &m.keyInput
+	}
+	return &m.secretInput
 }
 
 func (m *Model) Init() tea.Cmd { return m.initCmd }

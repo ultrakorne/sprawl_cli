@@ -14,7 +14,7 @@ import (
 
 // tasksLoadedMsg carries a task-list (or search) result. validated marks the
 // message as the successful outcome of a credential-validating fetch, which the
-// model uses to leave the secret prompt.
+// model uses to leave the credentials prompt.
 type tasksLoadedMsg struct {
 	tasks     []*client.Task
 	validated bool
@@ -78,7 +78,7 @@ type errMsg struct {
 	context string
 }
 
-// authFailedMsg drops the model to the masked secret prompt: any 401/403 during
+// authFailedMsg drops the model to the credentials prompt: any 401/403 during
 // credential validation, or a mid-session secret-auth failure (see
 // isSecretAuthErr — 401 or a secret-coded 403).
 type authFailedMsg struct{ err error }
@@ -115,7 +115,7 @@ func isAuthErr(err error) bool {
 }
 
 // isSecretAuthErr reports whether err means the AGENT SECRET is bad / missing /
-// revoked, so a mid-session failure should bounce back to the masked prompt.
+// revoked, so a mid-session failure should bounce back to the credentials prompt.
 // Per the server's error contract that's a 401, or a 403 whose code names a
 // secret problem. A plain 403 "forbidden" is an ordinary permission denial —
 // NOT included — so it stays a footer error instead of demanding a new secret.
@@ -137,7 +137,8 @@ func isSecretAuthErr(err error) bool {
 }
 
 // validationErrMsg turns a validating fetch's error into the right message:
-// 401 OR 403 → secret prompt (spec: both are auth failures at validation time).
+// 401 OR 403 → credentials prompt (spec: both are auth failures at validation
+// time), where either narrowing factor can be re-entered.
 func validationErrMsg(err error) tea.Msg {
 	if isAuthErr(err) {
 		return authFailedMsg{err}
@@ -146,8 +147,8 @@ func validationErrMsg(err error) tea.Msg {
 }
 
 // opErrMsg turns a post-validation op's error into the right message: a
-// secret-auth failure (401, or a secret-coded 403) bounces to the masked prompt
-// so the user can re-enter a revoked/invalid secret; everything else (including
+// secret-auth failure (401, or a secret-coded 403) bounces to the credentials
+// prompt so the user can re-enter a revoked/invalid secret; everything else (incl.
 // a plain 403 "forbidden" permission error) stays a footer error.
 func opErrMsg(err error, ctx string) tea.Msg {
 	if isSecretAuthErr(err) {
@@ -159,7 +160,7 @@ func opErrMsg(err error, ctx string) tea.Msg {
 // -- command builders -------------------------------------------------------
 
 // validateAndListCmd performs the first authed call (task list) with the given
-// client. On 401/403 it routes to the secret prompt; on success it marks the
+// client. On 401/403 it routes to the credentials prompt; on success it marks the
 // result validated so the model leaves the prompt.
 func validateAndListCmd(ctx context.Context, c Client) tea.Cmd {
 	return func() tea.Msg {

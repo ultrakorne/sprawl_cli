@@ -11,35 +11,35 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
-func secretModel(fc *fakeClient) *Model {
+func credsModel(fc *fakeClient) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn:  true,
-		NewClient: func(string) Client { return fc },
+		NewClient: func(string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
-	return m // starts on screenSecret (no secret provided)
+	return m // starts on screenCreds (neither narrowing factor provided)
 }
 
 // #1 — a non-auth validation error must re-enable the prompt, not soft-lock it.
 func TestSecretPrompt_NonAuthErrorReenablesPrompt(t *testing.T) {
 	fc := &fakeClient{listErr: &client.APIError{Status: 500, Body: "boom"}}
-	m := secretModel(fc)
+	m := credsModel(fc)
 	m.secretInput.setValue("mysecret")
 
 	cmd := m.press("enter")
-	if !m.secretBusy {
+	if !m.credBusy {
 		t.Fatal("submitting should set secretBusy")
 	}
 	for _, msg := range runCmd(cmd) {
 		m.send(msg)
 	}
-	if m.secretBusy {
+	if m.credBusy {
 		t.Fatal("a non-auth validation error must reset secretBusy (soft-lock bug)")
 	}
-	if m.current() != screenSecret {
+	if m.current() != screenCreds {
 		t.Fatalf("should stay on the secret screen, got %v", m.current())
 	}
-	if m.secretErr == "" {
+	if m.credErr == "" {
 		t.Fatal("expected an error message on the prompt")
 	}
 	// Prompt is live again: a keypress edits the field instead of being dead.
@@ -49,13 +49,13 @@ func TestSecretPrompt_NonAuthErrorReenablesPrompt(t *testing.T) {
 	}
 }
 
-// #5 — bracketed paste routes into the active field (incl. the masked prompt).
+// #5 — bracketed paste routes into the active field (incl. the creds prompt).
 func TestPaste_RoutesToActiveField(t *testing.T) {
 	fc := &fakeClient{}
-	m := secretModel(fc)
+	m := credsModel(fc)
 	m.send(tea.PasteMsg{Content: "secret-from-manager\n"}) // trailing newline dropped
 	if got := m.secretInput.String(); got != "secret-from-manager" {
-		t.Fatalf("paste into secret prompt = %q, want %q", got, "secret-from-manager")
+		t.Fatalf("paste into creds prompt = %q, want %q", got, "secret-from-manager")
 	}
 
 	lm := newListModel(&fakeClient{}, []*client.Task{{ID: 1, Title: "A"}})
@@ -102,7 +102,7 @@ func TestToggle_SecretAuthErrorBouncesToPrompt(t *testing.T) {
 	for _, msg := range runCmd(cmd) {
 		m.send(msg)
 	}
-	if m.current() != screenSecret {
+	if m.current() != screenCreds {
 		t.Fatalf("secret-auth toggle failure should bounce to the prompt, at %v", m.current())
 	}
 	if m.validated {

@@ -13,7 +13,7 @@ The TUI lives in its own package, `internal/tui/`, keeping cobra concerns in `in
 | `internal/tui/msgs.go` | Message types, error classification (`isAuthErr`/`isUnauthorized`/`isNotFound`), and the `tea.Cmd` command builders that call the client. |
 | `internal/tui/client.go` | `Client` interface — the subset of `*client.Client` the model depends on (for test injection). |
 | `internal/tui/style.go` | `styles` (terminal-palette lipgloss styles), traffic-light `progress`, `checkbox`. |
-| `internal/tui/input.go` | `textInput` — hand-rolled single-line editor with masked rendering. |
+| `internal/tui/input.go` | `textInput` — hand-rolled single-line editor (values always echoed in the clear). |
 | `internal/tui/keymap.go` | `action` enum + pure `dispatch(screen, key)` key→action mapping. |
 | `internal/tui/markdown.go` | Pure Markdown formatters `taskMarkdown` / `itemMarkdown` for clipboard payloads. |
 | `internal/tui/editor.go` | `editInEditorCmd` — `$EDITOR` suspend/resume via `tea.ExecProcess`. |
@@ -38,11 +38,11 @@ The TUI is an Elm-architecture `*Model`:
 
 ### Back stack
 
-`Model.stack []screen` with `push` / `pop` / `popTo`. `esc` pops one screen (ignored at the root). Screens: `screenSecret`, `screenNotLoggedIn`, `screenList`, `screenChecklist`, `screenNote`. Overlays (`ovConfirm`, `ovInput`, `ovPicker`, `ovHelp`) are a separate `Model.overlay` field rendered instead of the base screen, not stack entries.
+`Model.stack []screen` with `push` / `pop` / `popTo`. `esc` pops one screen (ignored at the root). Screens: `screenCreds`, `screenNotLoggedIn`, `screenList`, `screenChecklist`, `screenNote`. Overlays (`ovConfirm`, `ovInput`, `ovPicker`, `ovHelp`) are a separate `Model.overlay` field rendered instead of the base screen, not stack entries.
 
 ## Screens and overlays
 
-- **Secret prompt** (`viewSecret`) — masked `textInput`; Enter sets `secretBusy` and fires `validateAndListCmd`.
+- **Credentials prompt** (`viewCreds` / `credRow`) — two unmasked `textInput`s (agent secret, project key) with `credFocus` selecting the active one; `tab`/↑↓ switch, Enter sets `credBusy` and fires `validateAndListCmd`.
 - **Not logged in** (`viewNotLoggedIn`) — static; quit only.
 - **List** (`viewList` / `listRows`) — column-aligned task rows with a centered scroll window (`windowStart`); traffic-light progress; search title/annotations.
 - **Checklist** (`viewChecklist` / `checklistRows`) — header from the cached full task; item rows with checkbox, id, title, `🗒` note flag.
@@ -78,11 +78,11 @@ Key details:
 `launchTUI` (in `internal/cli/interactive.go`) resolves credentials with the existing CLI resolvers and passes them to the TUI via `tui.Deps`:
 
 - A missing token is **not** fatal: `Deps.LoggedIn=false` → the model starts on `screenNotLoggedIn`.
-- A missing agent secret is **not** fatal: the model starts on `screenSecret` (masked prompt) — unless `Deps.ProjectKey` is set, which is a complete narrowing factor, in which case it starts on `screenList` and validates immediately.
-- `Deps.NewClient(secret string) Client` is a closure that captures the bearer token **and the project key** (`client.NewAuthed(token, secret, client.WithProjectKey(key))`) and takes the secret per call, so the masked prompt can retry with a fresh secret without the secret leaking into a shared field.
-- Validation happens on the first `ListTasks`. `validationErrMsg` routes a `401`/`403` to `authFailedMsg` (→ secret prompt); post-validation, `opErrMsg` routes only a `401` back to the prompt and keeps other errors (incl. `403`) on the footer. The `authFailedMsg` handler short-circuits when `m.projectKey != "" && m.secret == ""` — it sets a footer error and stays put instead of wiping state for a prompt that couldn't fix anything.
-- `Model.projectKey` is display + routing state only (list header title, the short-circuit above); the header is the sole place the key is rendered.
-- The secret lives only in `Model.secret` / the masked `secretInput` — never persisted, logged, or echoed (the input renders with `•` bullets when masked). Upholds AGENTS.md invariants #2/#3.
+- A missing agent secret is **not** fatal: the model starts on `screenCreds`, which asks for a secret **or** a project key — unless either factor is already resolved (`Deps.Secret` / `Deps.ProjectKey`), in which case it starts on `screenList` and validates immediately. An empty submit is refused inline (`credErr`) instead of being sent.
+- `Deps.NewClient(secret, projectKey string) Client` is a closure that captures **only** the bearer token (`client.NewAuthed(token, secret, client.WithProjectKey(key))`); both narrowing factors are supplied per call, so the prompt can retry with either one without them leaking into a shared field.
+- Validation happens on the first `ListTasks`. `validationErrMsg` routes a `401`/`403` to `authFailedMsg` (→ credentials prompt); post-validation, `opErrMsg` routes only a secret-auth failure (`401`, or a secret-coded `403`) back to the prompt and keeps other errors (incl. a plain `403 forbidden`) on the footer. `authFailedMsg` clears `m.secret` but re-seeds `keyInput` from `m.projectKey` and calls `focusCreds()`, which focuses the key field when that was the only factor in play.
+- `Model.projectKey` is set from `Deps` or from the prompt and feeds the client built by `NewClient`; it is also rendered in the list header title.
+- The secret lives only in `Model.secret` / `secretInput` — never persisted or logged. It *is* echoed on the prompt (deliberately: an invisible value can't be proofread), which does not weaken AGENTS.md invariants #2/#3 — those are about not writing it to disk or into flag defaults.
 
 ## OSC 52 copy
 

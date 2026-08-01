@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
@@ -197,7 +198,7 @@ func clipboardPayload(t *testing.T, cmd tea.Cmd) string {
 func newListModel(fc *fakeClient, tasks []*client.Task) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, Secret: "sek", SecretProvided: true,
-		NewClient: func(string) Client { return fc },
+		NewClient: func(string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	m.Update(tasksLoadedMsg{tasks: tasks, validated: true})
@@ -259,41 +260,41 @@ func TestRecomputeProgress(t *testing.T) {
 	}
 }
 
-// -- secret prompt state machine --------------------------------------------
+// -- credentials prompt state machine ---------------------------------------
 
-func TestSecretPrompt_StateMachine(t *testing.T) {
+func TestCredsPrompt_StateMachine(t *testing.T) {
 	fc := &fakeClient{}
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, SecretProvided: false,
-		NewClient: func(string) Client { return fc },
+		NewClient: func(string, string) Client { return fc },
 	})
 	m.width, m.height = 80, 24
-	if m.current() != screenSecret {
-		t.Fatalf("start screen = %d, want secret", m.current())
+	if m.current() != screenCreds {
+		t.Fatalf("start screen = %d, want credentials", m.current())
 	}
 
-	// enter with empty input → error, stays on secret
+	// enter with both fields empty → error, stays on the prompt
 	m.press("enter")
-	if m.secretErr == "" || m.current() != screenSecret {
-		t.Fatalf("empty submit should error and stay: err=%q screen=%d", m.secretErr, m.current())
+	if m.credErr == "" || m.current() != screenCreds {
+		t.Fatalf("empty submit should error and stay: err=%q screen=%d", m.credErr, m.current())
 	}
 
-	// type a secret; it must never render in the clear (use a distinctive value
-	// so we don't collide with the static "secret" labels on the prompt)
+	// type a secret; it is echoed in the clear so a typo can be spotted and
+	// fixed (it still never leaves memory)
 	for _, k := range []string{"h", "u", "n", "t", "e", "r"} {
 		m.press(k)
 	}
 	if got := m.secretInput.String(); got != "hunter" {
 		t.Fatalf("secret buffer = %q, want hunter", got)
 	}
-	if strings.Contains(m.viewSecret(), "hunter") {
-		t.Fatalf("secret prompt view leaked the secret:\n%s", m.viewSecret())
+	if !strings.Contains(ansi.Strip(m.viewCreds()), "hunter") {
+		t.Fatalf("prompt should echo the typed secret:\n%s", m.viewCreds())
 	}
 
 	// submit → busy + client built
 	m.press("enter")
-	if !m.secretBusy {
-		t.Fatal("submit should set secretBusy")
+	if !m.credBusy {
+		t.Fatal("submit should set credBusy")
 	}
 	if m.client == nil {
 		t.Fatal("submit should build the client from the secret")
@@ -301,10 +302,10 @@ func TestSecretPrompt_StateMachine(t *testing.T) {
 
 	// server rejects → back to prompt with inline error, buffer cleared
 	m.send(authFailedMsg{err: &client.APIError{Status: 403}})
-	if m.current() != screenSecret || m.secretErr == "" {
-		t.Fatalf("rejection should return to prompt with error: screen=%d err=%q", m.current(), m.secretErr)
+	if m.current() != screenCreds || m.credErr == "" {
+		t.Fatalf("rejection should return to prompt with error: screen=%d err=%q", m.current(), m.credErr)
 	}
-	if m.secretBusy || m.secretInput.String() != "" {
+	if m.credBusy || m.secretInput.String() != "" {
 		t.Fatal("rejection should clear busy + buffer")
 	}
 
@@ -787,12 +788,12 @@ func TestMidSession401_BouncesToSecretPrompt(t *testing.T) {
 	m := newListModel(fc, []*client.Task{{ID: 1, Title: "T"}})
 	// opErrMsg classifies a 401 as an auth failure that returns to the prompt.
 	m.send(opErrMsg(&client.APIError{Status: 401}, "load tasks"))
-	if m.current() != screenSecret {
-		t.Fatalf("a mid-session 401 should bounce to the secret prompt, got screen %d", m.current())
+	if m.current() != screenCreds {
+		t.Fatalf("a mid-session 401 should bounce to the creds prompt, got screen %d", m.current())
 	}
-	if m.validated || m.secret != "" || m.client != nil || m.secretErr == "" {
+	if m.validated || m.secret != "" || m.client != nil || m.credErr == "" {
 		t.Fatalf("bounce should clear creds and show an inline error: validated=%v secret=%q client=%v err=%q",
-			m.validated, m.secret, m.client, m.secretErr)
+			m.validated, m.secret, m.client, m.credErr)
 	}
 }
 
@@ -848,7 +849,7 @@ func TestFrame_ClampsToTinyWindow(t *testing.T) {
 }
 
 func TestNotLoggedIn_QuitKey(t *testing.T) {
-	m := newModel(context.Background(), Deps{LoggedIn: false, NewClient: func(string) Client { return &fakeClient{} }})
+	m := newModel(context.Background(), Deps{LoggedIn: false, NewClient: func(string, string) Client { return &fakeClient{} }})
 	if m.current() != screenNotLoggedIn {
 		t.Fatalf("no token should land on not-logged-in, got %d", m.current())
 	}
