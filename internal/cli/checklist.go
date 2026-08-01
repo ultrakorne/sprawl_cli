@@ -197,7 +197,7 @@ func runChecklistDelete(ctx context.Context, stdout, stderr io.Writer, itemID st
 		existed = false
 	}
 	payload := map[string]any{"id": itemID, "deleted": true, "existed": existed}
-	return renderPayload(stdout, payload, deletedText("checklist item", itemID, existed), opts)
+	return renderPayload(stdout, payload, deletedText("checklist item", itemID, existed, resolveProjectKey(opts)), opts)
 }
 
 func runChecklistAdd(ctx context.Context, stdout, stderr io.Writer, taskID string, attrs map[string]any, opts *runtimeOpts) error {

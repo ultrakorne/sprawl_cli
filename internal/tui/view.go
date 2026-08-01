@@ -192,6 +192,12 @@ func wrapAndWindow(groups [][]string, sel, bodyH int) []string {
 
 func (m *Model) viewList() string {
 	title := "sprawl · tasks"
+	// Under a project key the list is server-filtered to one project, which is
+	// invisible otherwise — name it so an empty list reads as "this project has
+	// no tasks" rather than "sprawl is broken".
+	if m.projectKey != "" {
+		title = "sprawl · tasks · " + m.projectKey
+	}
 	if m.searching {
 		title = "search: " + m.searchInput.render(false)
 	} else if m.searchLabel != "" {

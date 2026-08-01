@@ -29,13 +29,31 @@ When a command fails in `json` or `toon` mode, the error is rendered as a struct
 {"status": "error", "error": "<message>", "http_status": 403}
 ```
 
-`http_status` is omitted for errors that never made it to the wire (e.g. missing agent secret). In `text` mode, errors go to stderr and nothing is written to stdout.
+`http_status` is omitted for errors that never made it to the wire (e.g. no narrowing factor configured). In `text` mode, errors go to stderr and nothing is written to stdout.
 
 When the server responds with the shared changeset fallback shape `{"errors": {...}}` (used for validation failures like missing / invalid fields), the CLI emits `error: "invalid"` alongside a `details` field carrying the raw errors map — so agents can act on per-field messages without re-parsing a JSON-in-string blob:
 
 ```json
 {"status": "error", "http_status": 422, "error": "invalid", "details": {"title": ["can't be blank"]}}
 ```
+
+### `hint` on auth / scope failures
+
+The auth and scope error codes (`unauthenticated`, `second_factor_required`, `invalid_project_key`, `invalid_agent_secret`, `forbidden`) carry an extra `hint` string — a plain-language reading of the code plus the fix:
+
+```json
+{"status": "error", "http_status": 403, "error": "invalid_project_key",
+ "hint": "project key \"acmee\" doesn't match any of your projects — check the Project key field on the project's side panel in /tasks (matched case-insensitively, whitespace trimmed)"}
+```
+
+The key is **additive**: `status` / `error` / `http_status` keep their meaning and shape, and `hint` is absent on every error without guidance. In `text` mode the same guidance replaces the raw `http 403: invalid_project_key` line and prints the remedy indented beneath it:
+
+```
+error: project key "acmee" doesn't match any of your projects
+  check the Project key field on the project's side panel in /tasks (matched case-insensitively, whitespace trimmed)
+```
+
+`invalid_project_key` and `forbidden` are deliberately worded differently: the first is a typo, the second is a permissions boundary.
 
 ## Precedence
 

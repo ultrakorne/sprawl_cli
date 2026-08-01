@@ -38,7 +38,10 @@ func newThemeSetCmd(opts *runtimeOpts) *cobra.Command {
 		Long: "Set the active theme by id. Theme ids are lowercase kebab-case " +
 			"(e.g. `tokyo-night`, `catppuccin-latte`, `gruvbox`). No client-side " +
 			"normalization happens — an unknown or mis-cased id is rejected by " +
-			"the server as 404 theme_not_found. Non-owner agent → 403 forbidden.",
+			"the server as 404 theme_not_found. Non-owner agent → 403 forbidden.\n\n" +
+			"The theme is a user-level setting, so this is the one command a project key " +
+			"cannot authorize: it always sends the agent secret and never the project key. " +
+			"Without --agent-secret / $SPRAWL_AGENT_SECRET it fails before the request.",
 		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runThemeSet(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
@@ -61,7 +64,10 @@ func runThemeGet(ctx context.Context, stdout, stderr io.Writer, opts *runtimeOpt
 }
 
 func runThemeSet(ctx context.Context, stdout, stderr io.Writer, id string, opts *runtimeOpts) error {
-	c, err := newAuthedClient(opts)
+	// User-level write: the server rejects PATCH /settings/theme outright when
+	// a project key is present, so this path drops the key and insists on an
+	// agent secret rather than shipping a request that can only 403.
+	c, err := newUserScopedClient(opts, "the theme")
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}

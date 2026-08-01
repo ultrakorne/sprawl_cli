@@ -15,8 +15,13 @@ import (
 func newWhoamiCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "whoami",
-		Short: "Show the calling agent and its elevated project permissions (GET /api/v1/whoami)",
-		Args:  textArgs(cobra.NoArgs),
+		Short: "Show the calling agent, the project it's confined to, and its elevated project permissions (GET /api/v1/whoami)",
+		Long: "Show who the server thinks you are. Under a project key (--project-key / " +
+			"$SPRAWL_PROJECT_KEY) the output also names the project this session is confined " +
+			"to and the permission level you resolve to there — including `none`, which means " +
+			"the key is valid but this agent has no access to that project (why every list " +
+			"would come back empty).",
+		Args: textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWhoami(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
 		},
@@ -38,7 +43,7 @@ func runWhoami(ctx context.Context, stdout, stderr io.Writer, opts *runtimeOpts)
 	return renderPayload(stdout, payload, whoamiText(w), opts)
 }
 
-// whoamiPayload preserves the wire shape (`status: ok`, `agent`,
+// whoamiPayload preserves the wire shape (`status: ok`, `agent`, `project`,
 // `project_permissions`) for json / toon. We re-encode `agent` as a map so
 // gotoon and json see the same structure other commands hand them.
 func whoamiPayload(w *client.Whoami) map[string]any {
@@ -59,7 +64,23 @@ func whoamiPayload(w *client.Whoami) map[string]any {
 			"is_owner":           w.Agent.IsOwner,
 			"default_permission": w.Agent.DefaultPermission,
 		},
+		"project":             whoamiProjectMap(w.Project),
 		"project_permissions": perms,
+	}
+}
+
+// whoamiProjectMap mirrors the server's `project` key: the confinement this
+// call ran under, or a literal null when no project key was sent (which is
+// also what a pre-project-keys server reports).
+func whoamiProjectMap(p *client.WhoamiProject) any {
+	if p == nil {
+		return nil
+	}
+	return map[string]any{
+		"id":    p.ID,
+		"name":  p.Name,
+		"key":   p.Key,
+		"level": p.Level,
 	}
 }
 
@@ -75,6 +96,23 @@ func whoamiText(w *client.Whoami) string {
 		fmt.Fprintf(&b, "  %s    %s\n", sty.render(sty.faint, "role:"), sty.render(sty.ok, "owner"))
 	} else {
 		fmt.Fprintf(&b, "  %s %s\n", sty.render(sty.faint, "default:"), fallback(w.Agent.DefaultPermission, "-"))
+	}
+	// Only printed when the call ran under a project key — an unconfined
+	// whoami reads exactly as it did before project keys existed.
+	if p := w.Project; p != nil {
+		fmt.Fprintf(&b, "%s %s\n",
+			sty.render(sty.faint, "working in:"),
+			sty.render(sty.bold, fmt.Sprintf("%s (%s)", fallback(p.Name, "(unnamed)"), p.Key)))
+		if p.Level == "" || p.Level == "none" {
+			// A valid key naming a project this agent can't reach: not an auth
+			// error server-side, so say it plainly rather than letting the user
+			// puzzle over empty task lists.
+			fmt.Fprintf(&b, "  %s   %s\n",
+				sty.render(sty.faint, "access:"),
+				sty.render(sty.warn, "none — the key is valid but this agent has no access to that project"))
+		} else {
+			fmt.Fprintf(&b, "  %s   %s\n", sty.render(sty.faint, "access:"), p.Level)
+		}
 	}
 	header := sty.render(sty.bold, "elevated project permissions:")
 	if len(w.ProjectPermissions) == 0 {

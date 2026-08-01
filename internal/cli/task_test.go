@@ -33,6 +33,9 @@ func newAuthedFixture(t *testing.T, format string, handler http.HandlerFunc) *au
 	}
 	t.Setenv("SPRAWL_TOKEN", "the-token")
 	t.Setenv("SPRAWL_AGENT_SECRET", "")
+	// Keep the fixture hermetic: a project key exported in the developer's
+	// shell must not leak into tests and change which headers go out.
+	t.Setenv("SPRAWL_PROJECT_KEY", "")
 
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)

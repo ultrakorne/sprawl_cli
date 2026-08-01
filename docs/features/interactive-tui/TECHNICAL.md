@@ -78,9 +78,10 @@ Key details:
 `launchTUI` (in `internal/cli/interactive.go`) resolves credentials with the existing CLI resolvers and passes them to the TUI via `tui.Deps`:
 
 - A missing token is **not** fatal: `Deps.LoggedIn=false` → the model starts on `screenNotLoggedIn`.
-- A missing agent secret is **not** fatal: the model starts on `screenSecret` (masked prompt).
-- `Deps.NewClient(secret string) Client` is a closure that captures the bearer token and takes the secret per call, so the masked prompt can retry with a fresh secret (via `client.NewAuthed(token, secret)`) without the secret leaking into a shared field.
-- Validation happens on the first `ListTasks`. `validationErrMsg` routes a `401`/`403` to `authFailedMsg` (→ secret prompt); post-validation, `opErrMsg` routes only a `401` back to the prompt and keeps other errors (incl. `403`) on the footer.
+- A missing agent secret is **not** fatal: the model starts on `screenSecret` (masked prompt) — unless `Deps.ProjectKey` is set, which is a complete narrowing factor, in which case it starts on `screenList` and validates immediately.
+- `Deps.NewClient(secret string) Client` is a closure that captures the bearer token **and the project key** (`client.NewAuthed(token, secret, client.WithProjectKey(key))`) and takes the secret per call, so the masked prompt can retry with a fresh secret without the secret leaking into a shared field.
+- Validation happens on the first `ListTasks`. `validationErrMsg` routes a `401`/`403` to `authFailedMsg` (→ secret prompt); post-validation, `opErrMsg` routes only a `401` back to the prompt and keeps other errors (incl. `403`) on the footer. The `authFailedMsg` handler short-circuits when `m.projectKey != "" && m.secret == ""` — it sets a footer error and stays put instead of wiping state for a prompt that couldn't fix anything.
+- `Model.projectKey` is display + routing state only (list header title, the short-circuit above); the header is the sole place the key is rendered.
 - The secret lives only in `Model.secret` / the masked `secretInput` — never persisted, logged, or echoed (the input renders with `•` bullets when masked). Upholds AGENTS.md invariants #2/#3.
 
 ## OSC 52 copy

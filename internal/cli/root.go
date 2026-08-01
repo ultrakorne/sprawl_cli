@@ -17,6 +17,7 @@ type runtimeOpts struct {
 	format      string // --format / $SPRAWL_OUTPUT, resolved by resolveFormat
 	human       bool   // -h / --human: shorthand for --format=text
 	agentSecret string // --agent-secret / -s, fallback $SPRAWL_AGENT_SECRET
+	projectKey  string // --project-key / -p, fallback $SPRAWL_PROJECT_KEY
 }
 
 func NewRootCmd() *cobra.Command {
@@ -26,7 +27,10 @@ func NewRootCmd() *cobra.Command {
 		Use:   build.AppName,
 		Short: "CLI for the sprawl API",
 		Long: "sprawl — HTTP client for the sprawl API.\n\n" +
-			"Output: --format=text|json|toon (default toon; override session-wide with $SPRAWL_OUTPUT).",
+			"Output: --format=text|json|toon (default toon; override session-wide with $SPRAWL_OUTPUT).\n\n" +
+			"Scope: every call needs the bearer from `login` plus at least one narrowing factor —\n" +
+			"a project key (--project-key / $SPRAWL_PROJECT_KEY) to work inside a single project,\n" +
+			"an agent secret (--agent-secret / $SPRAWL_AGENT_SECRET) to act as an agent key, or both.",
 		SilenceUsage: true,
 		// PersistentPreRunE runs the daily version check on the prod binary
 		// (no-op everywhere else). Errors are swallowed inside MaybeNotify
@@ -65,6 +69,8 @@ func NewRootCmd() *cobra.Command {
 		"shorthand for --format=text: human-readable, color-styled output")
 	root.PersistentFlags().StringVarP(&opts.agentSecret, "agent-secret", "s", "",
 		"agent secret value (overrides $SPRAWL_AGENT_SECRET)")
+	root.PersistentFlags().StringVarP(&opts.projectKey, "project-key", "p", "",
+		"confine this request to one project by its key (overrides $SPRAWL_PROJECT_KEY)")
 
 	// Reclaim -h for --human. cobra normally auto-registers --help with a -h
 	// shorthand; defining our own --help flag (long form only) makes cobra skip

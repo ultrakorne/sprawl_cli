@@ -77,7 +77,8 @@ func bindTaskWriteFlags(cmd *cobra.Command, f *taskWriteFlags, forUpdate bool) {
 	if !forUpdate {
 		// `project_id` is assignable at create time only — the server's update
 		// path runs through the plain task changeset, which ignores the key.
-		cmd.Flags().StringVar(&f.projectID, "project-id", "", "assign the new task to a project id")
+		cmd.Flags().StringVar(&f.projectID, "project-id", "",
+			"assign the new task to a project id (unnecessary under a project key — the task lands there by default)")
 	}
 }
 
@@ -113,7 +114,10 @@ func newTaskCreateCmd(opts *runtimeOpts) *cobra.Command {
 		Short: "Create a new task (POST /api/v1/tasks)",
 		Long: "Create a task. Provide --title (required server-side) and optional " +
 			"--description / --project-id, or pipe the full attrs object as JSON via " +
-			"`--from-json -`. Flags override fields parsed from --from-json.",
+			"`--from-json -`. Flags override fields parsed from --from-json.\n\n" +
+			"Under a project key (--project-key / $SPRAWL_PROJECT_KEY) the task lands in " +
+			"that project automatically — --project-id is only honoured when it names the " +
+			"same project, and any other project is rejected with 403 forbidden.",
 		Args: textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.hasDesc = cmd.Flags().Changed("description")
@@ -245,16 +249,26 @@ func runTaskDelete(ctx context.Context, stdout, stderr io.Writer, id string, opt
 		existed = false
 	}
 	payload := map[string]any{"id": id, "deleted": true, "existed": existed}
-	return renderPayload(stdout, payload, deletedText("task", id, existed), opts)
+	return renderPayload(stdout, payload, deletedText("task", id, existed, resolveProjectKey(opts)), opts)
 }
 
 // deletedText is the shared text-fallback line for `task delete` and
 // `checklist delete`. existed=true ⇒ "Deleted <kind> #<id>"; existed=false
 // ⇒ "<Kind> #<id> already gone (no change)" so a typo or retry is visibly
 // distinct from a real delete in --format=text output.
-func deletedText(kind, id string, existed bool) string {
+//
+// Under a project key the 404 is ambiguous in a way it isn't otherwise: the
+// server answers 404 for anything outside the confined project, so "already
+// gone" would claim a delete that never happened to a task living in another
+// project. projectKey (empty when unconfined) switches the wording to say so.
+func deletedText(kind, id string, existed bool, projectKey string) string {
 	if existed {
 		return sty.render(sty.ok, fmt.Sprintf("Deleted %s #%s", kind, id))
+	}
+	if projectKey != "" {
+		return sty.render(sty.faint, fmt.Sprintf(
+			"No %s #%s in project %q (nothing deleted — it may exist outside this project key)",
+			kind, id, projectKey))
 	}
 	// Capitalize the first byte of `kind` for sentence start. All current
 	// callers pass ASCII ("task", "checklist item") so byte-level upper is

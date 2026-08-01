@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
 	"github.com/ultrakorne/sprawl_cli/internal/client"
@@ -38,16 +39,60 @@ func resolveAgentSecret(opts *runtimeOpts) (string, error) {
 	return "", errors.New("agent secret not set — export SPRAWL_AGENT_SECRET or pass --agent-secret")
 }
 
-// newAuthedClient resolves both credentials (failing pre-HTTP if the agent
-// secret is missing) and returns a client ready for /api/v1/* calls.
+// resolveProjectKey returns the project key from --project-key or
+// $SPRAWL_PROJECT_KEY, in that order. Empty is a valid answer — it means "no
+// project confinement" — so this returns no error. The value is trimmed
+// because the server trims and case-folds it anyway; length / charset rules
+// stay server-side (surfacing as 403 invalid_project_key) so the CLI never
+// disagrees with the source of truth. Like the agent secret, it is never
+// persisted by sprawl: per-repo confinement is the shell's job (direnv, an
+// .envrc, a wrapper), not a config file.
+func resolveProjectKey(opts *runtimeOpts) string {
+	if k := strings.TrimSpace(opts.projectKey); k != "" {
+		return k
+	}
+	return strings.TrimSpace(os.Getenv("SPRAWL_PROJECT_KEY"))
+}
+
+// errNoNarrowingFactor is the local stand-in for the server's 403
+// second_factor_required. The server can't know which factor the user meant,
+// so we fail before the HTTP call with both options spelled out.
+var errNoNarrowingFactor = errors.New(
+	"no project key or agent secret set — export SPRAWL_PROJECT_KEY (or pass --project-key) " +
+		"to work inside one project, or export SPRAWL_AGENT_SECRET (or pass --agent-secret) " +
+		"to act as an agent key")
+
+// newAuthedClient resolves the bearer plus at least one narrowing factor and
+// returns a client ready for /api/v1/* calls. The server accepts a project
+// key, an agent secret, or both (intersected — a project key can only narrow,
+// never widen); it rejects neither. Missing both fails pre-HTTP.
 func newAuthedClient(opts *runtimeOpts) (*client.Client, error) {
+	token, err := resolveToken()
+	if err != nil {
+		return nil, err
+	}
+	projectKey := resolveProjectKey(opts)
+	secret, secretErr := resolveAgentSecret(opts)
+	if projectKey == "" && secretErr != nil {
+		return nil, errNoNarrowingFactor
+	}
+	return client.NewAuthed(token, secret, client.WithProjectKey(projectKey)), nil
+}
+
+// newUserScopedClient builds a client for user-level (not project-level)
+// endpoints — today just the theme write. The server rejects those outright
+// when a project key is present, so this path demands an agent secret and
+// deliberately omits the key: `sprawl theme set` keeps working from a repo
+// that exports SPRAWL_PROJECT_KEY, as long as a secret is also configured.
+// `what` names the setting so the missing-secret error explains itself.
+func newUserScopedClient(opts *runtimeOpts, what string) (*client.Client, error) {
 	token, err := resolveToken()
 	if err != nil {
 		return nil, err
 	}
 	secret, err := resolveAgentSecret(opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s is a user-level setting, not project-level: %w", what, err)
 	}
 	return client.NewAuthed(token, secret), nil
 }

@@ -23,7 +23,8 @@ func newLoginCmd() *cobra.Command {
 		Short: "Authenticate via device flow and save the token",
 		Long: "Runs the RFC 8628 device flow: prints a URL to visit, polls for approval, " +
 			"and writes the resulting token to the config file (mode 0600). " +
-			"The agent secret is a separate value and must be set in SPRAWL_AGENT_SECRET before running authed commands.",
+			"The token alone is not enough: authed commands also need a narrowing factor — " +
+			"SPRAWL_PROJECT_KEY (work inside one project) or SPRAWL_AGENT_SECRET (act as an agent key), or both.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogin(cmd.Context(), cmd.OutOrStdout())
 		},
@@ -36,7 +37,7 @@ func runLogin(ctx context.Context, out io.Writer) error {
 	settingsURL := client.BaseURL() + "/auth-settings"
 	fmt.Fprintln(out, "Before you approve this device, copy your owner agent secret from:")
 	fmt.Fprintf(out, "  %s\n", settingsURL)
-	fmt.Fprintln(out, "You'll export it as SPRAWL_AGENT_SECRET after login.")
+	fmt.Fprintln(out, "You'll export it as SPRAWL_AGENT_SECRET after login — or use a project key instead (see below).")
 	fmt.Fprintln(out)
 
 	grant, err := c.CreateDeviceGrant(ctx, deviceTokenName())
@@ -164,9 +165,10 @@ func onApproved(out io.Writer, token string) error {
 	}
 	path, _ := config.Path(build.AppName)
 	fmt.Fprintf(out, "\nLogged in. Token saved to %s (mode 0600).\n", path)
-	fmt.Fprintln(out, "\nNext: export your agent secret in this shell so authed requests work:")
-	fmt.Fprintln(out, "  export SPRAWL_AGENT_SECRET=<your owner key secret>")
-	fmt.Fprintf(out, "\nIf you don't have it yet, retrieve it from %s/auth-settings. The agent secret is never stored on disk by sprawl.\n", client.BaseURL())
+	fmt.Fprintln(out, "\nNext: the token needs a narrowing factor before authed requests work. Export one (or both) in this shell:")
+	fmt.Fprintln(out, "  export SPRAWL_PROJECT_KEY=<a project's key>     # confines every call to that project")
+	fmt.Fprintln(out, "  export SPRAWL_AGENT_SECRET=<your owner key secret>  # acts as that agent key")
+	fmt.Fprintf(out, "\nThe project key is the \"Project key\" field on a project's side panel in %s/tasks; the agent secret comes from %s/auth-settings. Neither is stored on disk by sprawl.\n", client.BaseURL(), client.BaseURL())
 	fmt.Fprintln(out, "\nTip: install the sprawl skill into your AI tool with:")
 	fmt.Fprintln(out, "  gh skill install ultrakorne/sprawl_cli sprawl")
 	return nil

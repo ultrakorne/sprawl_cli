@@ -40,7 +40,9 @@ func TestOnApproved_PersistsAndPointsAtSettings(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"Logged in",
+		// Both narrowing factors are offered: the token alone can't call the API.
 		"SPRAWL_AGENT_SECRET",
+		"SPRAWL_PROJECT_KEY",
 		"https://example.test/auth-settings",
 	} {
 		if !strings.Contains(out, want) {

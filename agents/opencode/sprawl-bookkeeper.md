@@ -12,7 +12,7 @@ permission:
     "sprawl *": allow
     "which sprawl": allow
     "command -v sprawl": allow
-    "printenv SPRAWL_AGENT_SECRET": allow
+    "printenv SPRAWL_PROJECT_KEY": allow
     "test *": allow
   read: allow
   edit: deny

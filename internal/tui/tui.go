@@ -25,12 +25,20 @@ type Deps struct {
 	// not-logged-in screen instead of fetching anything.
 	LoggedIn bool
 	// Secret is the agent secret resolved from --agent-secret / $SPRAWL_AGENT_SECRET.
-	// Empty means "prompt for it" (SecretProvided false).
+	// Empty means "prompt for it" (SecretProvided false) — unless ProjectKey is
+	// set, which is a narrowing factor on its own.
 	Secret         string
 	SecretProvided bool
+	// ProjectKey is the project key resolved from --project-key /
+	// $SPRAWL_PROJECT_KEY. When set, the session is confined to that project
+	// (pre-filtered lists, creates landing there) and the agent secret becomes
+	// optional, so the masked prompt is skipped. Shown in the header so it's
+	// obvious which project the UI is looking at.
+	ProjectKey string
 	// NewClient builds an authed client for a candidate secret. The bearer token
-	// is captured by the closure; the secret is supplied per call so the masked
-	// prompt can retry with a fresh secret without leaking it anywhere.
+	// and project key are captured by the closure; the secret is supplied per
+	// call so the masked prompt can retry with a fresh secret without leaking it
+	// anywhere.
 	NewClient func(secret string) Client
 }
 

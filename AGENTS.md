@@ -33,21 +33,40 @@ One codebase produces two binaries. The *only* difference is linker-injected val
 |---|---|
 | `token` (device-flow result) | Config file `config.toml`, mode **0600**. |
 | `agent_secret` | `SPRAWL_AGENT_SECRET` env var or `--agent-secret` / `-s` flag. **Never persisted to disk by sprawl.** |
+| `project_key` | `SPRAWL_PROJECT_KEY` env var or `--project-key` / `-p` flag. **Never persisted to disk by sprawl** — per-repo confinement is the shell's job (direnv / `.envrc` / a wrapper). |
+
+The bearer is the credential; the other two are **narrowing factors**. The
+server requires the bearer plus **at least one** of them, and intersects both
+when both are sent (effective permission is the min — a project key can only
+narrow, never widen).
 
 Resolution order per request:
 
 1. `SPRAWL_TOKEN` env → `config.toml` `token`. Missing → "not logged in, run `sprawl login`".
-2. `--agent-secret` flag → `SPRAWL_AGENT_SECRET` env. Missing → **fail before the HTTP call**.
+2. `--agent-secret` flag → `SPRAWL_AGENT_SECRET` env.
+3. `--project-key` flag → `SPRAWL_PROJECT_KEY` env (trimmed; the server case-folds).
+4. Neither 2 nor 3 → **fail before the HTTP call**, naming both. The server's
+   `403 second_factor_required` can't say which one the user meant, so we don't
+   let it get that far.
 
-Every `/api/v1/*` call sends `Authorization: Bearer <token>` + `X-Agent-Secret: <secret>`.
+Every `/api/v1/*` call sends `Authorization: Bearer <token>` plus whichever of
+`X-Agent-Secret: <secret>` / `X-Project-Key: <key>` is configured.
+
+Under a project key the server pre-filters reads to that project, lands creates
+in it without a `project_id`, and 403s anything outside it. Two consequences in
+the CLI: `task create --project-id` is optional (and only honoured when it names
+the confined project), and **`theme set` deliberately drops the project key and
+requires an agent secret** — a theme is user-level, and the server rejects any
+theme write that carries a project key.
 
 ## Invariants (don't break these)
 
 1. Every structured-output subcommand honours `--format=text|json|toon` (persistent flag on root). Default is `toon`; session-wide override via `SPRAWL_OUTPUT`. `-h` / `--human` is a shorthand for `--format=text` (an explicit `--format` wins). Login is interactive and stays plain text regardless. **Styling is text-only:** human (`text`) output is color-styled with lipgloss using the terminal's own ANSI palette, and only when stdout is a real TTY. `json` / `toon` are machine formats and are never styled; piped / redirected / `$NO_COLOR` output degrades to plain text identical to the unstyled rendering.
-2. No command writes `agent_secret` to any file, log, or flag default.
-3. No command prints the `token` or `agent_secret` to stdout / stderr.
+2. No command writes `agent_secret` or `project_key` to any file, log, or flag default.
+3. No command prints the `token` or `agent_secret` to stdout / stderr. (The project key is *not* a credential and may be shown — `whoami` and the TUI header do.)
 4. URL is never read from config; only baked-in or `SPRAWL_API_URL` env override.
 5. Two binaries share 100 % of the code; divergence happens only via `internal/build` vars.
+6. Missing narrowing factor fails locally, never at the server: no request goes out without an agent secret or a project key.
 
 ## Repo layout
 

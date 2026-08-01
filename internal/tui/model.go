@@ -71,6 +71,10 @@ type Model struct {
 	secret    string
 	loggedIn  bool
 	validated bool
+	// projectKey is the confinement this session runs under (empty = none). It
+	// is display + routing state only: the header shows it, and it decides
+	// whether an auth failure can be fixed at the masked secret prompt.
+	projectKey string
 
 	width, height int
 
@@ -130,17 +134,21 @@ type Model struct {
 // newModel wires the initial model + first command from resolved deps.
 func newModel(ctx context.Context, deps Deps) *Model {
 	m := &Model{
-		ctx:       ctx,
-		styles:    newStyles(),
-		newClient: deps.NewClient,
-		loggedIn:  deps.LoggedIn,
+		ctx:        ctx,
+		styles:     newStyles(),
+		newClient:  deps.NewClient,
+		loggedIn:   deps.LoggedIn,
+		projectKey: deps.ProjectKey,
 	}
 	switch {
 	case !deps.LoggedIn:
 		m.stack = []screen{screenNotLoggedIn}
-	case deps.SecretProvided && deps.Secret != "":
-		// Secret supplied via flag/env: validate straight away by fetching the
-		// list; a 401/403 drops to the masked prompt.
+	case (deps.SecretProvided && deps.Secret != "") || deps.ProjectKey != "":
+		// A narrowing factor is already configured — a supplied secret, a
+		// project key, or both. Validate straight away by fetching the list.
+		// With a secret in play a 401/403 drops to the masked prompt; under a
+		// project key alone there is nothing to re-type, so failures surface as
+		// errors instead (see the authFailedMsg handler).
 		m.secret = deps.Secret
 		m.client = m.newClient(deps.Secret)
 		m.stack = []screen{screenList}

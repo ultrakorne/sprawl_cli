@@ -9,15 +9,15 @@ description: >
   space.
 license: 'MIT'
 metadata:
-  version: 0.2.0
-allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_AGENT_SECRET), Bash(test:*)
+  version: 0.3.0
+allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(test:*)
 ---
 
 # sprawl
 
-Shared task space for the human owner and their agents. Every agent has its own
-secret; the server resolves per-agent permissions so you only see and touch
-what you're allowed to. The CLI is a thin HTTP client — the server is the
+Shared task space for the human owner and their agents. You work through a
+**project key**: every call is confined to one project, so you only see and
+touch that project's tasks. The CLI is a thin HTTP client — the server is the
 source of truth for validation and permissions, so trust its error codes.
 
 ## When to use this skill
@@ -49,21 +49,28 @@ then act:
 
 - **`sprawl: command not found`** — not installed. Read `SETUP.md` in this
   skill's directory and walk the user through it.
-- **`SPRAWL_AGENT_SECRET not set`** (or similar pre-flight error from the CLI)
-  — ask the user to export it in this shell or pass `-s <value>` per command.
-  If they don't have one, point them at `SETUP.md`.
+- **`no project key or agent secret set`** (pre-flight error from the CLI)
+  — no project key is configured (the message also offers an agent secret;
+  ignore that half, you work by project key). Ask the user to export `SPRAWL_PROJECT_KEY`
+  in this shell (or pass `-p <key>` per command). If they don't know their
+  key, point them at `SETUP.md`.
 - **HTTP 401** — token bad or missing. Ask the user to re-run `sprawl login`
   (interactive — don't try it yourself).
-- **HTTP 403** — secret is scoped out of this action. Don't retry; tell the
-  user which action you lack permission for. See
+- **HTTP 403 `invalid_project_key`** — the key is a typo; no project of theirs
+  has it. Ask them to check the Project key field on the project's side panel
+  in `/tasks`.
+- **HTTP 403 `forbidden`** — a permissions boundary, not a typo: the target
+  lives outside your project. Don't retry; tell the user which action you lack
+  permission for. See
   [Permission model](#permission-model-how-to-read-errors).
 - **Anything ambiguous** — *then* run `sprawl whoami --format=json` to
   separate "CLI/network broken" from "auth broken". A 200 also tells you
   which agent and scope the server thinks you are.
 
-**Never** write the secret to a file, commit it, echo it back to the user, or
-print it in a command you run. If you show a command using `-s`, redact the
-value.
+The project key is **not** a secret — it's the key shown on the project's side
+panel, so printing it or including it in a command you show the user is fine.
+Never go looking for or handling other credentials: the bearer token is the
+user's, managed by `sprawl login`, and is none of your business.
 
 ## Before you write — check your scope
 
@@ -76,26 +83,28 @@ partial state.
 ```bash
 sprawl whoami
 # agent:
-#   default_permission: write              # ← projectless `task create` needs write_create
 #   ...
-# project_permissions[1]{level,name,project_id}:
-#   write_create,Sprawl,1                  # ← projects you can create/edit in
+# project:                                 # ← the project your key confines you to
+#   key: hobby
+#   name: Hobby
+#   level: write_create                    # ← your scope *there* — the only one that matters
 ```
 
 What each scope unlocks: `read` → list/show only · `write` → edit existing
-tasks/items in scope · `write_create` → also create new ones.
+tasks/items · `write_create` → also create new ones.
 
-For a `task create`:
+`project.level` is your answer for every read and write this session, and
+creates land in that project automatically.
 
-- **Projectless** (`sprawl task create --title ...`) — needs
-  `agent.default_permission = write_create`.
-- **Inside a project** (`--project-id N`) — needs an entry in
-  `project_permissions` with `level = write_create` for that id.
+- `write_create` — go ahead.
+- `write` — you can edit existing tasks and items, but **don't try to
+  create.** Tell the user you lack `write_create` on this project.
+- `read` — reads only. Say so instead of attempting a write.
+- `none` — the key is valid but you have no access to that project. Stop and
+  tell the user; don't hunt for tasks that will never appear.
 
-If neither holds, **don't try.** Tell the user you lack `write_create` and
-on which project they'd need to grant it. The server will reject the call
-anyway; surfacing it from `whoami` saves the wasted round-trip and the
-confusing partial state from chained follow-ups.
+Surfacing this from `whoami` saves the wasted round-trip and the confusing
+partial state from chained follow-ups.
 
 For edits (`task update`, `checklist check/uncheck/update`, `note set`),
 `write` is enough on the target's project. You can usually skip the
@@ -121,25 +130,40 @@ task_json=$(sprawl task create --title "quick reminders" --format=json) \
   && sprawl checklist add "$id" --title "..."
 ```
 
-## Credential model
+## Project key — the scope you work in
 
-Two credentials, resolved per request:
+Two things travel with every request:
 
-1. **Token** — user's device-flow token, managed by `sprawl login`. You don't
-   touch this. Lives in `~/.config/sprawl/config.toml` (mode 0600) or
+1. **Token** — the user's device-flow token, managed by `sprawl login`. You
+   don't touch this. Lives in `~/.config/sprawl/config.toml` (mode 0600) or
    `SPRAWL_TOKEN`.
-2. **Agent secret** — `SPRAWL_AGENT_SECRET` env var (preferred) or
-   `-s <value>` / `--agent-secret <value>` flag. **Never persisted by sprawl.**
-   Prefer the env var for long-lived shells; the flag leaks via `ps auxe` and
-   shell history.
+2. **Project key** — `SPRAWL_PROJECT_KEY` env var (usual case: the user
+   exports it once per repo / shell) or `-p <key>` / `--project-key <key>` per
+   command. It's the 2–32 char key on the project's side panel in `/tasks`,
+   matched case-insensitively.
 
-If either is missing the CLI fails before making the HTTP call.
+Without a project key the CLI stops before the HTTP call. If that happens,
+ask the user for the key — don't hunt for other ways to authenticate.
+
+What the key does, server-side, on every call:
+
+- `task list` / `task search` / `activity` come back **already filtered** to
+  that project. Don't filter again, and don't tell the user "that's all the
+  tasks" — it's all the tasks *in this project*.
+- `task create` lands in that project. **Never pass `--project-id`** — you
+  don't need the id, and naming a different project is rejected.
+- Anything outside the project is invisible: a task id from another project
+  answers `403` or `404`, not its content. Tasks with no project at all are
+  invisible too.
+
+Run `sprawl whoami` to see which project you're in — it prints the name, the
+key, and the level you resolve to there.
 
 ## Permission model (how to read errors)
 
-Your agent secret resolves one of four scopes per task / project:
-`none` · `read` · `write` · `write_create`. Resolution order on read/write is
-task override → project override → `agent_keys.default_permission`.
+Your key resolves one of four scopes on the project:
+`none` · `read` · `write` · `write_create`. `whoami`'s `project.level` is that
+answer — one level, for everything you can reach this session.
 
 | HTTP | Meaning | What to do |
 |---|---|---|
@@ -176,7 +200,11 @@ Errors in `json` / `toon` come as a structured envelope:
 {"status": "error", "error": "<message>", "http_status": 403}
 ```
 
-`http_status` is omitted for pre-flight errors (e.g. missing secret).
+`http_status` is omitted for pre-flight errors (e.g. no project key set).
+Auth / scope failures (`unauthenticated`, `second_factor_required`,
+`invalid_project_key`, `forbidden`) add a `hint` string spelling out what went
+wrong and how to fix it — relay it to the user rather than paraphrasing the
+raw code.
 
 ## Task shape (house style)
 
@@ -261,14 +289,11 @@ description max **255 chars** — see [Task shape](#task-shape-house-style)
 for why you usually skip description entirely.
 
 ```bash
-# Create (projectless — needs default_permission=write_create):
-sprawl task create --title "draft spec"
-
-# Create attached to a project (needs write_create at project scope):
-sprawl task create --title "wire up CI" --project-id 42
+# Create — lands in your project, no id needed:
+sprawl task create --title "wire up CI"
 
 # Create from a JSON template, tweak one field:
-echo '{"title":"draft","project_id":42}' \
+echo '{"title":"draft"}' \
   | sprawl task create --from-json - --title "final"
 
 # Update title (server ignores project_id on update):
@@ -329,10 +354,13 @@ local error before any HTTP call.
 
 ```bash
 sprawl version                                # prints version + baked-in API URL
-sprawl whoami                                 # who am I + elevated project permissions (also a liveness probe)
-sprawl theme get                              # read active UI theme
-sprawl theme set tokyo-night                  # owner-only; unknown id → 404
+sprawl whoami                                 # who am I + which project I'm in (also a liveness probe)
+sprawl theme get                              # read the active UI theme
 ```
+
+The theme is a **user-level** setting, not a project one: `sprawl theme set`
+is not available to you under a project key, and changing the user's theme is
+not your job. If they ask for it, tell them to run it themselves.
 
 ## Collaboration patterns
 
@@ -398,14 +426,13 @@ printf '%s\n\n---\n\n%s\n' "$prev" "blocked on PR #418" \
 ```
 
 **Don't sign your edits.** No "done by <agent-name>", no "— claude". The
-server already records the last actor on each note / checklist item, and
-`sprawl whoami` resolves any agent secret to its identity. Manual signatures
-just add noise the human has to skim past.
+server already records the last actor on each note / checklist item. Manual
+signatures just add noise the human has to skim past.
 
 ### 4. Create a new task on behalf of the user
 
-Only if the user asked, and only if your key resolves `write_create` for the
-target scope (projectless or the specific `--project-id`). Run
+Only if the user asked, and only if `whoami` shows `write_create` on your
+project. Run
 [`sprawl whoami`](#before-you-write--check-your-scope) first if you haven't
 this session — that's the cheap way to find out before round-tripping.
 If you get a `403` anyway, surface it — don't retry.
@@ -415,7 +442,7 @@ each step's outcome is visible — see the chaining warning in
 [Before you write](#before-you-write--check-your-scope).
 
 ```bash
-sprawl task create --title "flaky deploy" --project-id 42
+sprawl task create --title "flaky deploy"     # lands in your project automatically
 # → note the task id from the output
 sprawl checklist add <task_id> --title "repro on staging"
 sprawl checklist add <task_id> --title "check #ops logs"
@@ -433,8 +460,11 @@ Finishing your slice and passing to another agent or the human:
 
 ## Guardrails
 
-- **Never** echo, log, commit, or persist `SPRAWL_AGENT_SECRET`. If you must
-  show a command to the user, redact the value.
+- **Never** go looking for the user's bearer token, and never read or copy
+  `~/.config/sprawl/config.toml`. The project key is all the scope you need
+  (and it isn't a secret).
+- **Never** pass `--project-id`. Your project key already decides where a
+  task lands; naming a project id is at best redundant and at worst rejected.
 - **Never** attempt `sprawl login` — it's interactive; ask the user instead.
 - **Never** retry `403` responses. Permission won't flip mid-session.
 - **Don't** use `task update` as a status channel. Use notes / checklist

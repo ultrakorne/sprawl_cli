@@ -181,6 +181,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case authFailedMsg:
+		// Under a project key with no secret in play there is nothing to
+		// re-type: the failure is the bearer or the key itself, and the masked
+		// prompt would be a dead end. Keep the user where they are and show it.
+		if m.projectKey != "" && m.secret == "" {
+			m.loading = false
+			m.setError("auth", msg.err)
+			return m, nil
+		}
 		m.loading = false
 		m.validated = false
 		m.secretBusy = false

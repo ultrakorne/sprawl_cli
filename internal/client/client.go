@@ -3,7 +3,10 @@
 // It uses only stdlib net/http + encoding/json per the plan. The base URL
 // is resolved from SPRAWL_API_URL (one-off override) or the compiled-in
 // build.APIURL. Authenticated calls inject `Authorization: Bearer <token>`
-// and `X-Agent-Secret: <secret>` headers.
+// plus whichever narrowing headers are configured — `X-Agent-Secret: <secret>`
+// (act as that agent key) and/or `X-Project-Key: <key>` (confine the request
+// to one project). The server requires at least one of the two; callers are
+// expected to enforce that before building a client so the failure is local.
 package client
 
 import (
@@ -28,10 +31,24 @@ const (
 )
 
 type Client struct {
-	baseURL string
-	token   string // empty for device-flow calls
-	secret  string // empty for device-flow calls
-	http    *http.Client
+	baseURL    string
+	token      string // empty for device-flow calls
+	secret     string // empty for device-flow calls
+	projectKey string // empty ⇒ no project confinement
+	http       *http.Client
+}
+
+// Option customises an authed client. Options exist for the narrowing factors
+// that are optional on the wire, so NewAuthed keeps its two-argument shape for
+// the common (agent-secret) case.
+type Option func(*Client)
+
+// WithProjectKey confines every request the client makes to a single project
+// by sending `X-Project-Key`. Reads come back pre-filtered, creates default to
+// that project, and anything outside it is 403. The empty string is a no-op,
+// so callers can pass a resolved-but-possibly-empty value unconditionally.
+func WithProjectKey(key string) Option {
+	return func(c *Client) { c.projectKey = key }
 }
 
 // BaseURL returns the effective API URL: SPRAWL_API_URL env override, then
@@ -51,12 +68,19 @@ func New() *Client {
 	}
 }
 
-func NewAuthed(token, agentSecret string) *Client {
+func NewAuthed(token, agentSecret string, opts ...Option) *Client {
 	c := New()
 	c.token = token
 	c.secret = agentSecret
+	for _, o := range opts {
+		o(c)
+	}
 	return c
 }
+
+// ProjectKey returns the project key this client confines requests to, or ""
+// when it sends none.
+func (c *Client) ProjectKey() string { return c.projectKey }
 
 // DeviceGrant is the response from POST /api/auth/device.
 type DeviceGrant struct {
@@ -136,11 +160,25 @@ type ProjectPermission struct {
 	Level     string `json:"level"`
 }
 
+// WhoamiProject is the project a request was confined to by `X-Project-Key`.
+// Level is what the caller actually resolves to there and can legitimately be
+// "none" — a valid key naming a project this agent key cannot reach. That is
+// deliberately not an auth error, so clients can say "your key is valid but
+// this agent has no access" instead of showing an empty task list.
+type WhoamiProject struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Key   string `json:"key"`
+	Level string `json:"level"`
+}
+
 // Whoami mirrors GET /api/v1/whoami. The wire payload also carries
 // `"status":"ok"`; we drop it on decode since it adds no information beyond
-// the 200.
+// the 200. Project is nil when the request carried no project key (and on a
+// pre-project-keys server, which omits the field entirely).
 type Whoami struct {
 	Agent              Agent               `json:"agent"`
+	Project            *WhoamiProject      `json:"project"`
 	ProjectPermissions []ProjectPermission `json:"project_permissions"`
 }
 
@@ -420,6 +458,12 @@ func (c *Client) GetActivityLog(ctx context.Context, date, daysAgo string) (*Act
 // CreateTask POSTs a new task. `attrs` is the inner task object — the wrapper
 // `{"task": {...}}` envelope is added here. The server accepts `title`,
 // `description`, and a top-level `project_id` key inside the inner object.
+//
+// Under a project key `project_id` is optional and usually omitted: the task
+// lands in the confined project by default. Passing it is still honoured when
+// it names that same project; naming any other project is 403 forbidden, and
+// there is no way to create a projectless task while confined.
+//
 // Validation happens server-side and surfaces as APIError:
 //   - malformed `project_id` (non-integer) → 422 Code "invalid_project_id"
 //   - unknown / unowned `project_id` → 404 Code "not_found" (runs before
@@ -593,6 +637,11 @@ func (c *Client) doWithStatus(
 	}
 	if c.secret != "" {
 		req.Header.Set("X-Agent-Secret", c.secret)
+	}
+	// Both narrowing headers are optional individually; sending both is legal
+	// and intersects them (effective permission is the min across factors).
+	if c.projectKey != "" {
+		req.Header.Set("X-Project-Key", c.projectKey)
 	}
 
 	res, err := c.http.Do(req)

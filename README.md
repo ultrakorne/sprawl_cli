@@ -74,12 +74,25 @@ sprawl_dev version           # confirms the URL baked into this build
 sprawl_dev login             # device flow: opens a URL, you approve in the browser
 ```
 
-`login` prints the settings URL (`<api-url>/auth-settings`) first — that's where you copy your owner agent secret. Then it starts the device grant: open the verification link, approve in the browser, and the token lands in `~/.config/sprawl_dev/config.toml` at mode 0600. The agent secret is **not** stored there — you supply it per-shell via `SPRAWL_AGENT_SECRET` (or per-command via `-s` / `--agent-secret`).
+`login` prints the settings URL (`<api-url>/auth-settings`) first — that's where you copy your owner agent secret. Then it starts the device grant: open the verification link, approve in the browser, and the token lands in `~/.config/sprawl_dev/config.toml` at mode 0600.
+
+The token alone isn't enough to make a call. Every `/api/v1/*` request needs the bearer **plus at least one narrowing factor**, and neither is stored on disk:
 
 ```sh
-export SPRAWL_AGENT_SECRET=<your agent secret>
-sprawl_dev whoami            # prints your agent name + elevated project permissions
+export SPRAWL_PROJECT_KEY=acme                  # confine this shell to one project
+# and/or
+export SPRAWL_AGENT_SECRET=<your agent secret>  # act as that agent key
+
+sprawl_dev whoami            # prints your agent, the project you're confined to, and your scope
 ```
+
+Set neither and the CLI stops before the request with a message naming both.
+
+### Which one do I want?
+
+- **Project key** — the key shown in the project's side panel on `/tasks` (2–32 chars, e.g. `acme`). Put it in a repo's `.envrc` (direnv) or a wrapper script and that repo can only ever read and write that project: lists come back pre-filtered, `task create` needs no `--project-id`, everything else is a 403. It's a blast-radius control, not a secret — `whoami` and the TUI header show it.
+- **Agent secret** — the 8-character value from `/auth-settings`. Use it when the client needs its **own identity**: MCP clients, or anything whose edits should carry a distinct attribution emoji. A project-key call with an owner token is attributed to *you*, exactly like a browser edit.
+- **Both** — the server intersects them (effective permission is the minimum). A read-only agent key plus a project key gets read on that one project and nothing else.
 
 Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 
@@ -89,13 +102,13 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 |---|---|
 | `sprawl version` | Prints the version and the baked-in API URL. |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
-| `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent and list any project-scoped permissions that elevate the default. Doubles as an auth-pipeline check. |
+| `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent, name the project you're confined to (when a project key is set) and the level you resolve to there, and list any project-scoped permissions that elevate the default. Doubles as an auth-pipeline check. |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
-| `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only. |
+| `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only, and the one command a project key can't authorize — a theme is user-level, so this always needs an agent secret. |
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
 | `sprawl task <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. Add `--full` to embed the task's checklist items and their notes in one call. |
 | `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
-| `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. |
+| `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. Under a project key the task lands in that project and `--project-id` is unnecessary. |
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl task delete <id>` | Soft-deletes a task. Server reflows neighbor cards on the canvas. A 404 (already deleted or never visible) is treated as success — the CLI is idempotent. There is no API to restore a soft-deleted task. |
 | `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. Add `--full` to include each item's notes inline (one call instead of an N-call `note show` loop). |
@@ -214,12 +227,14 @@ Persistent flags (work on every command):
 | `--format text\|json\|toon` | Output format. Default is `toon`. |
 | `-h`, `--human` | Shorthand for `--format=text` (an explicit `--format` wins). `--help` still shows help. |
 | `-s`, `--agent-secret <value>` | Agent secret for `/api/v1/*` calls. Overrides `$SPRAWL_AGENT_SECRET`. |
+| `-p`, `--project-key <key>` | Confine the call to one project by its key. Overrides `$SPRAWL_PROJECT_KEY`. |
 
 Environment variables:
 
 | Variable | Purpose |
 |---|---|
 | `SPRAWL_AGENT_SECRET` | Agent secret used if `-s` is not passed. |
+| `SPRAWL_PROJECT_KEY` | Project key used if `-p` is not passed. Confines every call to that project. At least one of this and `SPRAWL_AGENT_SECRET` must be set. |
 | `SPRAWL_TOKEN` | Bearer token override. If unset, the token comes from `config.toml`. |
 | `SPRAWL_OUTPUT` | Session-wide default for `--format` (`text`, `json`, or `toon`). |
 | `SPRAWL_API_URL` | One-off API URL override. Use sparingly — the binary is the environment switch. |
@@ -234,7 +249,7 @@ Per binary, an XDG-aware TOML file:
 - `sprawl`:     `~/.config/sprawl/config.toml`
 - `sprawl_dev`: `~/.config/sprawl_dev/config.toml`
 
-The only field currently stored is `token`. File mode is `0600`; directory mode `0700`. Atomic writes mean an interrupted `login` won't truncate an existing file.
+The only field currently stored is `token`. Neither the agent secret nor the project key is ever written here — both come from the environment (or a flag) at invocation time. File mode is `0600`; directory mode `0700`. Atomic writes mean an interrupted `login` won't truncate an existing file.
 
 ## Testing
 

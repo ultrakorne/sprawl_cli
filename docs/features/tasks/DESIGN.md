@@ -2,7 +2,7 @@
 
 ## Overview
 
-The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows one task from a bare positional id (`task <id>`); list / search / create / update / due / delete are subcommands. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
+The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows one task from a bare positional id (`task <id>`); list / search / create / update / due / delete are subcommands. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). A project key narrows that further, server-side: `list` and `search` come back pre-filtered to the one project (projectless tasks included in *nothing*), `task <id>` outside it comes back not-visible (the running server answers 404), and creates land inside it — the CLI does no filtering of its own in either case. Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
 
 ## Components
 
@@ -27,11 +27,15 @@ Server-side `project_id` validation runs before permission checks:
 - Other changeset failures (e.g. missing `title`) → shared `{"errors": {...}}` shape, surfaced by `reportErr` as `error: "invalid"` + `details: <errors>`.
 - Non-object `task` wrapper → 422 `invalid_body` (the CLI never emits this itself; it always wraps attrs in a JSON object).
 
+**Under a project key** (`--project-key` / `$SPRAWL_PROJECT_KEY`) creates default to the confined project, so `--project-id` becomes unnecessary — that's the main ergonomic win, since the CLI never has to look up or pass an id. Passing it anyway is honoured when it names that same project; naming any other project is 403 `forbidden`, and there is no way to create a projectless task while confined.
+
 ### `task update <id>`
 `PATCH /api/v1/tasks/:id` body `{"task":{…}}`. `--title` / `--description` / `--from-json` (no `--project-id` — the server's update changeset ignores it). `--description ""` is treated as an explicit clear via `cmd.Flags().Changed("description")`, not as "flag unset".
 
 ### `task delete <id>`
 `DELETE /api/v1/tasks/:id`. Soft-delete: the row stays in the DB with `hidden=true` and `deleted_at` set, neighbor cards on the canvas are reflowed atomically in the same transaction, and the server broadcasts `task_updated` for each moved neighbor plus a final `task_deleted` on PubSub. **There is no API to restore** — the LiveView trash bin is the only undo path. Server returns 204 No Content; the CLI emits `{id: "<id>", deleted: true}` (json/toon) or `Deleted task #<id>` (text) so structured consumers always get a payload. A 404 `not_found` is treated as success — repeated deletes and deletes against an id that never existed render the same payload, matching the idempotent semantics of HTTP DELETE. Other 4xx (401 unauthenticated, 403 forbidden, malformed) surface through `reportErr` like every other command. The 404 idempotency only matches the bare `not_found` code; codes like `theme_not_found` still surface as errors.
+
+**Under a project key the 404 is ambiguous**: the server answers 404 for any task outside the confined project, so the plain "already gone (no change)" line would claim a delete that never happened to a task living elsewhere. Confined, the text fallback becomes `No task #<id> in project "<key>" (nothing deleted — it may exist outside this project key)`. The structured payload is unchanged (`deleted: true, existed: false`), and unconfined wording is untouched.
 
 ### `task due <id> <preset>`
 `PATCH /api/v1/tasks/:id/due_date` body `{"due": "<preset>" | null}`. Positional preset, validated locally — one of `yesterday` / `today` / `week` / `none`. `none` wires as JSON null and clears the due date; the other three are passed through verbatim and resolved server-side against the user's timezone and `week_end_day` setting. Response is the same `{"task": {...}}` envelope as `task <id>`, with `due_date` carrying the resolved ISO date (or null). Server errors: 422 `invalid_due` (only reachable through a CLI bug, since presets are filtered locally), 404 `not_found` (task not visible to the caller), 403 `forbidden` (no `:write` on the task), 401 `unauthenticated`.

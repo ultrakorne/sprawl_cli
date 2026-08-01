@@ -29,8 +29,9 @@ Both binaries (`sprawl` and `sprawl_dev`) get the TUI from the shared code; ther
 The TUI reuses the CLI's credential resolvers rather than reimplementing them.
 
 - **Token** (bearer): resolved from `SPRAWL_TOKEN` → `config.toml`. If missing, the TUI shows a **Not logged in** screen ("Run `sprawl login`…") with quit only. The TUI never runs the device-flow login itself.
-- **Agent secret**: if `--agent-secret` / `$SPRAWL_AGENT_SECRET` is present, it is used directly. Otherwise the first screen is a **masked** agent-secret prompt. The secret is held in memory only — never written to disk, logged, echoed, or set as a flag default.
-- **Validation**: the first authed call is the task-list fetch. On `401`/`403` the model drops to the masked secret prompt with an inline error, **including** when a bad secret came from the environment. Mid-session, a `401` (secret revoked) bounces back to the prompt; a `403` (permission) is shown as a footer error and stays on-screen.
+- **Agent secret**: if `--agent-secret` / `$SPRAWL_AGENT_SECRET` is present, it is used directly. Otherwise the first screen is a **masked** agent-secret prompt — unless a project key is set (below). The secret is held in memory only — never written to disk, logged, echoed, or set as a flag default.
+- **Project key**: `--project-key` / `$SPRAWL_PROJECT_KEY` is a narrowing factor on its own, so with one set the TUI **skips the secret prompt** and opens straight on the (server-filtered) list. The confined project is named in the list header — `sprawl · tasks · acme` — so an empty list reads as "this project has no tasks" rather than "sprawl is broken". Unlike the secret, the key is not a credential and is displayed openly.
+- **Validation**: the first authed call is the task-list fetch. On `401`/`403` the model drops to the masked secret prompt with an inline error, **including** when a bad secret came from the environment. Mid-session, a `401` (secret revoked) bounces back to the prompt; a `403` (permission) is shown as a footer error and stays on-screen. In project-key mode **with no secret in play**, no failure routes to the prompt: there's nothing to re-type, so a bad key or bad bearer surfaces as a footer error where the user is.
 
 ## Screens
 

@@ -117,15 +117,18 @@ func TestResolveAgentSecret_Missing(t *testing.T) {
 
 // -- newAuthedClient --------------------------------------------------------
 
-// TestNewAuthedClient_FailsPreHTTPOnMissingSecret is the invariant the CLAUDE.md
-// credential section promises: missing secret fails before any HTTP call so the
-// server can't see a bad request.
+// TestNewAuthedClient_FailsPreHTTPOnMissingSecret is the invariant the AGENTS.md
+// credential section promises: with no narrowing factor at all (no agent secret,
+// no project key) the call fails before any HTTP request so the server can't see
+// a bad request. See project_key_test.go for the project-key-only path, which is
+// a complete factor on its own.
 func TestNewAuthedClient_FailsPreHTTPOnMissingSecret(t *testing.T) {
 	scratchConfigDir(t)
 	if err := config.Save(build.AppName, &config.Config{Token: "tok"}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 	t.Setenv("SPRAWL_AGENT_SECRET", "")
+	t.Setenv("SPRAWL_PROJECT_KEY", "")
 	t.Setenv("SPRAWL_TOKEN", "")
 
 	// Set up a server that panics if touched — proof of the pre-HTTP
@@ -160,6 +163,7 @@ func TestNewAuthedClient_Success(t *testing.T) {
 
 	scratchConfigDir(t)
 	t.Setenv("SPRAWL_TOKEN", "the-token")
+	t.Setenv("SPRAWL_PROJECT_KEY", "")
 	opts := &runtimeOpts{agentSecret: "the-secret"}
 
 	c, err := newAuthedClient(opts)

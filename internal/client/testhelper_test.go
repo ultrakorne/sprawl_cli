@@ -15,6 +15,7 @@ type recordedRequest struct {
 	Path          string
 	Authorization string
 	AgentSecret   string
+	ProjectKey    string
 	ContentType   string
 	Accept        string
 	Body          []byte
@@ -41,6 +42,7 @@ func newTestServer(t *testing.T, handler http.HandlerFunc) *testServer {
 			Path:          r.URL.Path,
 			Authorization: r.Header.Get("Authorization"),
 			AgentSecret:   r.Header.Get("X-Agent-Secret"),
+			ProjectKey:    r.Header.Get("X-Project-Key"),
 			ContentType:   r.Header.Get("Content-Type"),
 			Accept:        r.Header.Get("Accept"),
 			Body:          body,
