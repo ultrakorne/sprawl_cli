@@ -149,7 +149,7 @@ func TestListRows_WrapsLongTitle(t *testing.T) {
 	m := newListModel(&fakeClient{}, []*client.Task{{ID: 1, Title: long}})
 	m.width, m.height = 44, 20 // narrow
 
-	rows := m.listRows(m.visibleTasks())
+	rows := m.listRows(m.visibleTasks(), m.bodyHeight(hintsFor(screenList)))
 	joined := strings.Join(rows, "\n")
 	if strings.Contains(joined, "…") {
 		t.Fatalf("narrow list should wrap the title, not truncate it:\n%s", joined)
@@ -182,7 +182,7 @@ func TestChecklistRows_WrapsAndKeepsSelectionVisible(t *testing.T) {
 	m.width, m.height = 40, 10 // body height ~6, first two items wrap past it
 	m.itemSel = 2
 
-	rows := m.checklistRows(detail.ChecklistItems)
+	rows := m.checklistRows(detail.ChecklistItems, m.bodyHeight(hintsFor(screenChecklist)))
 	joined := strings.Join(rows, "\n")
 	if strings.Contains(joined, "…") {
 		t.Fatalf("checklist should wrap, not truncate:\n%s", joined)

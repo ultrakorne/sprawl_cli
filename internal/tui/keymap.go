@@ -6,27 +6,30 @@ package tui
 type action int
 
 const (
-	actNone      action = iota
-	actQuit             // q on the list — clean quit
-	actQuitHard         // ctrl+c anywhere
-	actBack             // esc — pop one screen (ignored at the root)
-	actHelp             // ? — help overlay
-	actRefresh          // r — refetch current screen
-	actUp               // ↑ / k
-	actDown             // ↓ / j
-	actTop              // g
-	actBottom           // G
-	actOpen             // enter — drill in (list→checklist, checklist→note)
-	actToggle           // space / x — toggle item completion
-	actSearch           // / — enter search mode
-	actCopy             // c — copy Markdown to clipboard
-	actNewTask          // n
-	actEditTitle        // e — edit task title (list) / item title (checklist)
-	actEditDesc         // E — edit task description in $EDITOR (list)
-	actSetDue           // t — set due date
-	actDelete           // d — delete (with confirm)
-	actAddItem          // a — add checklist item
-	actEditNote         // e — edit item note in $EDITOR (note screen)
+	actNone       action = iota
+	actQuit              // q on the list — clean quit
+	actQuitHard          // ctrl+c anywhere
+	actBack              // esc — pop one screen (ignored at the root)
+	actHelp              // ? — help overlay
+	actRefresh           // r — refetch current screen
+	actUp                // ↑ / k
+	actDown              // ↓ / j
+	actTop               // g
+	actBottom            // G
+	actOpen              // enter — drill in (list→checklist, checklist→note)
+	actToggle            // space / x — toggle item completion
+	actSearch            // / — enter search mode
+	actCopy              // c — copy Markdown to clipboard
+	actNewTask           // n
+	actEditTitle         // e — edit task title (list) / item title (checklist)
+	actEditDesc          // E — edit task description in $EDITOR (list)
+	actSetDue            // t — set due date
+	actDelete            // d — delete (with confirm)
+	actAddItem           // a — add checklist item
+	actEditNote          // e — edit item note in $EDITOR (note screen)
+	actCycleState        // s — advance item state: none → ready → progress → review → none
+	actSetPR             // p — set / clear the item's PR number
+	actOpenPR            // o — open the item's PR in a browser
 )
 
 // dispatch maps a key (bubbletea String() form) to an action for the given base
@@ -111,6 +114,12 @@ func checklistAction(key string) action {
 		return actEditTitle
 	case "d":
 		return actDelete
+	case "s":
+		return actCycleState
+	case "p":
+		return actSetPR
+	case "o":
+		return actOpenPR
 	}
 	return actNone
 }
@@ -121,6 +130,8 @@ func noteAction(key string) action {
 		return actEditNote
 	case "c":
 		return actCopy
+	case "o":
+		return actOpenPR
 	case "esc":
 		return actBack
 	case "up", "k":

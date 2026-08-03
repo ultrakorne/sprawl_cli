@@ -8,3 +8,8 @@ Read and write commands for tasks: `task <id>` (show), `task list`, `task search
 |----------|---------|
 | [DESIGN.md](DESIGN.md) | Commands, UX, permission model |
 | [TECHNICAL.md](TECHNICAL.md) | Source files, wire shapes, `--from-json` plumbing |
+
+## See also
+
+- [item-state-and-pr](../item-state-and-pr/INDEX.md) — a task's nested project supplies the `github_url` that resolves its items' PR links, and `task <id> --full` is the read that renders them.
+- [CONTEXT.md](../../CONTEXT.md) — a task's derived **status** is not a checklist item's hand-set **state**.

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -170,6 +171,10 @@ type WhoamiProject struct {
 	Name  string `json:"name"`
 	Key   string `json:"key"`
 	Level string `json:"level"`
+	// GithubURL is the project's repo, empty when unset (or on a pre-rollout
+	// server). Only reachable here under a project key — an unconfined whoami
+	// has no project block, so the URL then only arrives nested in tasks.
+	GithubURL string `json:"github_url"`
 }
 
 // Whoami mirrors GET /api/v1/whoami. The wire payload also carries
@@ -235,10 +240,30 @@ type Actor struct {
 
 // Project is the nested project shape returned on a Task. Static colour only;
 // dynamic (theme-indexed) colours serialise as empty by the server.
+//
+// Key and GithubURL arrive on every task payload. GithubURL is nullable and is
+// validated server-side to be exactly `https://github.com/<owner>/<repo>` — no
+// trailing slash, no `.git` — so PRURL can concatenate without normalising.
+// Empty means "no URL" (JSON null, or a pre-rollout server that omits the key).
 type Project struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Color string `json:"color"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Color     string `json:"color"`
+	Key       string `json:"key"`
+	GithubURL string `json:"github_url"`
+}
+
+// PRURL builds the GitHub pull-request link for an item's PR number, or "" when
+// the chain can't resolve — no project on the task, no github_url on the
+// project, or no PR number on the item. Callers render the bare `#<n>` in that
+// case; neither break is an error (see the API contract, "Building the PR
+// link"). An item's link resolves through its task's *current* project, so
+// repainting a card into another project re-points its PR links.
+func PRURL(p *Project, prNumber int64) string {
+	if p == nil || p.GithubURL == "" || prNumber <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/pull/%d", p.GithubURL, prNumber)
 }
 
 // ChecklistProgress summarises a task's checklist without paginating items.
@@ -288,15 +313,39 @@ type Task struct {
 // the full path — so a nil pointer means either "field absent" or "present but
 // empty", indistinguishable from the wire alone. Renderers use the `full` flag
 // they already carry to decide whether to emit the key (see checklistItemMap).
+// State and PRNumber ride on every item payload. Both are nullable on the wire
+// and both use their zero value for null: "" for State, 0 for PRNumber (the
+// server rejects a pr_number <= 0, so 0 can't be a real value). That keeps
+// callers off pointer juggling; the renderers map the zero value back to a
+// literal null. State is the hand-set item state — do NOT conflate it with
+// Task.Status, which is derived from checked counts and happens to share the
+// string "in_progress".
 type ChecklistItem struct {
 	ID        int64   `json:"id"`
 	Title     string  `json:"title"`
 	Completed bool    `json:"completed"`
 	Position  int     `json:"position"`
+	State     string  `json:"state"`
+	PRNumber  int64   `json:"pr_number"`
 	HasNotes  bool    `json:"has_notes"`
 	Notes     *string `json:"notes,omitempty"`
 	LastActor *Actor  `json:"last_actor"`
 }
+
+// The three item states the server accepts. Anything else is a 422; clearing is
+// a JSON null, represented here (and in ChecklistItem.State) by "".
+const (
+	StateReadyToPickup = "ready_to_pickup"
+	StateInProgress    = "in_progress"
+	StateInReview      = "in_review"
+)
+
+// States lists the three states in lifecycle order — the order the TUI cycles
+// through and the CLI documents.
+var States = []string{StateReadyToPickup, StateInProgress, StateInReview}
+
+// ValidState reports whether s is one of the three server-accepted states.
+func ValidState(s string) bool { return slices.Contains(States, s) }
 
 type tasksEnvelope struct {
 	Tasks []*Task `json:"tasks"`
@@ -411,19 +460,20 @@ type ActivityLog struct {
 // is built on) and a minimal parent-task summary so clients can group items
 // without a follow-up fetch.
 type ActivityChecklistItem struct {
-	ID          int64            `json:"id"`
-	Title       string           `json:"title"`
-	Completed   bool             `json:"completed"`
-	CompletedAt string           `json:"completed_at"`
-	Position    int              `json:"position"`
-	HasNotes    bool             `json:"has_notes"`
-	LastActor   *Actor           `json:"last_actor"`
-	Task        ActivityItemTask `json:"task"`
+	ID          int64    `json:"id"`
+	Title       string   `json:"title"`
+	Completed   bool     `json:"completed"`
+	CompletedAt string   `json:"completed_at"`
+	Position    int      `json:"position"`
+	HasNotes    bool     `json:"has_notes"`
+	LastActor   *Actor   `json:"last_actor"`
+	Task        ItemTask `json:"task"`
 }
 
-// ActivityItemTask is the trimmed parent-task view nested under each
-// completed item — id, title, and project only.
-type ActivityItemTask struct {
+// ItemTask is the trimmed parent-task view nested under an item — id, title,
+// and project only, never a full TaskJSON. Shared by the activity log and the
+// by-state queue, which return the identical stub.
+type ItemTask struct {
 	ID      int64    `json:"id"`
 	Title   string   `json:"title"`
 	Project *Project `json:"project"`
@@ -536,9 +586,64 @@ func (c *Client) SetChecklistItemCompleted(ctx context.Context, itemID string, c
 	return env.Item, nil
 }
 
+// SetChecklistItemState PATCHes an item's state and/or PR number through the
+// dedicated route. `attrs` is sent as the body verbatim — NOT wrapped in a
+// `checklist_item` envelope, unlike UpdateChecklistItem — with at most the two
+// keys `state` and `pr_number`. An absent key means "leave unchanged"; a key
+// present with a nil value clears the field.
+//
+// Two behaviours callers must expect:
+//   - Setting a state on a COMPLETED item un-completes it (state and completed
+//     are mutually exclusive server-side). The returned item carries the new
+//     completed=false, so refresh any progress derived from it.
+//   - PR number is independent: it survives completion and state changes, and
+//     is only cleared by explicitly sending `pr_number: nil`.
+//
+// The generic PATCH /checklist_items/:id silently ignores these two keys, which
+// is why they get their own route. Errors surface as APIError 422
+// (`invalid_state`, `invalid_pr_number`, or neither key present) / 404 / 403.
+func (c *Client) SetChecklistItemState(ctx context.Context, itemID string, attrs map[string]any) (*ChecklistItem, error) {
+	var env checklistItemEnvelope
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/state"
+	if err := c.do(ctx, http.MethodPatch, path, attrs, &env); err != nil {
+		return nil, err
+	}
+	return env.Item, nil
+}
+
+// QueueItem is a checklist item from the by-state query. It carries the same
+// fields as any item plus the trimmed parent task (with its project) so a
+// caller can render "what can I pick up?" without a follow-up fetch per item.
+type QueueItem struct {
+	ChecklistItem
+	Task ItemTask `json:"task"`
+}
+
+type queueEnvelope struct {
+	Items []*QueueItem `json:"checklist_items"`
+}
+
+// ListChecklistItemsByState issues GET /api/v1/checklist_items?state=<state>,
+// returning matching items across every task the scope can read. state is
+// required and must be one of the three server states — anything else is a 422
+// invalid_state. Results honour project confinement and the same readability
+// cascade as every other list endpoint.
+//
+// No `completed` filter is needed: completing an item clears its state, so any
+// item carrying a state is by construction incomplete.
+func (c *Client) ListChecklistItemsByState(ctx context.Context, state string) ([]*QueueItem, error) {
+	path := "/api/v1/checklist_items?" + url.Values{"state": []string{state}}.Encode()
+	var env queueEnvelope
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Items, nil
+}
+
 // UpdateChecklistItem PATCHes item fields. The server accepts `title` and
 // `notes` via the item changeset. Completion is only mutated through
-// SetChecklistItemCompleted.
+// SetChecklistItemCompleted; state and pr_number only through
+// SetChecklistItemState (this route ignores both keys).
 func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs map[string]any) (*ChecklistItem, error) {
 	body := map[string]any{"checklist_item": attrs}
 	var env checklistItemEnvelope

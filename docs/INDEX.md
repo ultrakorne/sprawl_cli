@@ -19,6 +19,7 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 | [output-formats](features/output-formats/INDEX.md) | Uniform text / JSON / TOON rendering contract and error envelope. |
 | [tasks](features/tasks/INDEX.md) | `task list / show / search / create / update`. |
 | [checklists](features/checklists/INDEX.md) | `checklist list / add / check / uncheck / update` and `note show / set`. |
+| [item-state-and-pr](features/item-state-and-pr/INDEX.md) | Hand-set item state + GitHub PR number on a checklist item: `checklist state / pr`, the cross-task `queue` read, and the TUI's `s` / `p` keys. |
 | [theme](features/theme/INDEX.md) | `theme get / set` — owner-only UI theme. |
 | [whoami](features/whoami/INDEX.md) | `whoami` identity probe — caller agent, confined project, elevated project permissions. |
 | [activity](features/activity/INDEX.md) | `activity` — daily completion log (completed tasks + completed checklist items) for a single day. |
@@ -27,6 +28,6 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 
 ## Quick Links
 
-- [CONTEXT.md](CONTEXT.md) — glossary of shared terms (terminal palette vs app theme, task vs checklist item, note)
+- [CONTEXT.md](CONTEXT.md) — glossary of shared terms (terminal palette vs app theme, task vs checklist item, note, item state vs task status, PR number, queue)
 - [README](../README.md) — install + usage
 - [RELEASING](RELEASING.md) — tag, build, and publish a new version with goreleaser

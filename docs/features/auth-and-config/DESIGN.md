@@ -19,7 +19,7 @@ One codebase produces `sprawl` (prod URL baked in) and `sprawl_dev` (local URL b
 | Binary | `APIURL` | `AppName` | Config dir |
 |---|---|---|---|
 | `sprawl` | `https://sprawl.today` | `sprawl` | `~/.config/sprawl/` |
-| `sprawl_dev` | `http://localhost:4000` | `sprawl_dev` | `~/.config/sprawl_dev/` |
+| `sprawl_dev` | `http://localhost:4201` | `sprawl_dev` | `~/.config/sprawl_dev/` |
 
 ### Credential storage
 

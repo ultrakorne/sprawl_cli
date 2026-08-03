@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
+	"github.com/ultrakorne/sprawl_cli/internal/client"
 	"github.com/ultrakorne/sprawl_cli/internal/tui"
 	"github.com/ultrakorne/sprawl_cli/internal/updater"
 )
@@ -85,6 +86,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newThemeCmd(opts))
 	root.AddCommand(newTaskCmd(opts))
 	root.AddCommand(newChecklistCmd(opts))
+	root.AddCommand(newQueueCmd(opts))
 	root.AddCommand(newNoteCmd(opts))
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newTUICmd(opts))
@@ -94,12 +96,14 @@ func NewRootCmd() *cobra.Command {
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print version and the baked-in API URL",
+		Short: "Print version and the API URL this binary talks to",
 		Args:  textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The EFFECTIVE url, not the baked-in one, so this answers "which
+			// server am I actually hitting?" even under a $SPRAWL_API_URL override.
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
 				"%s %s\n  api:    %s\n  date:   %s\n",
-				build.AppName, build.Version, build.APIURL, build.Date,
+				build.AppName, build.Version, client.BaseURL(), build.Date,
 			)
 			return err
 		},

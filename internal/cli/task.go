@@ -426,14 +426,20 @@ func taskMap(t *client.Task) map[string]any {
 	return m
 }
 
+// projectMap mirrors the nested project shape. `key` and `github_url` are
+// additive: both are always emitted, with github_url as a literal null when the
+// project has no repo (which is also what a pre-rollout server's absent field
+// looks like). github_url is what turns an item's pr_number into a link.
 func projectMap(p *client.Project) any {
 	if p == nil {
 		return nil
 	}
 	return map[string]any{
-		"id":    p.ID,
-		"name":  p.Name,
-		"color": p.Color,
+		"id":         p.ID,
+		"name":       p.Name,
+		"key":        p.Key,
+		"color":      p.Color,
+		"github_url": nilIfEmpty(p.GithubURL),
 	}
 }
 
@@ -547,7 +553,7 @@ func taskDetailText(t *client.Task) string {
 	// Rule width inner+2 matches the card's bottom border, so the section's
 	// right edge lines up under the card. Progress isn't repeated on the
 	// CHECKLIST heading — the card above already carries it.
-	return card + "\n\n" + taskChecklistSection(t.ChecklistItems, inner+2)
+	return card + "\n\n" + taskChecklistSection(t.ChecklistItems, t.Project, inner+2)
 }
 
 // Layout constants for the task card's metadata grid. keyGap pads between a key
@@ -662,7 +668,7 @@ func renderCell(c metaCell, keyW int) string {
 // title, with the item's notes nested underneath (verbatim line breaks, faint).
 // Progress isn't shown here — the card above carries it. ruleWidth sizes the
 // heading rule.
-func taskChecklistSection(items []*client.ChecklistItem, ruleWidth int) string {
+func taskChecklistSection(items []*client.ChecklistItem, project *client.Project, ruleWidth int) string {
 	var b strings.Builder
 	b.WriteString("  " + sty.render(sty.bold, "CHECKLIST") + "\n")
 	b.WriteString("  " + sty.render(sty.accent, strings.Repeat("─", ruleWidth)))
@@ -693,11 +699,14 @@ func taskChecklistSection(items []*client.ChecklistItem, ruleWidth int) string {
 	}
 	for _, it := range items {
 		id := fmt.Sprintf("#%d", it.ID)
-		fmt.Fprintf(&b, "\n  %s %s%s  %s",
+		// The task carries its project here, so a PR number resolves to a full
+		// link — the one read path where the whole chain is in hand.
+		fmt.Fprintf(&b, "\n  %s %s%s  %s%s",
 			sty.render(sty.checkboxStyle(it.Completed), checkboxGlyph(it.Completed)),
 			sty.render(sty.faint, id),
 			strings.Repeat(" ", idW-len(id)),
-			it.Title)
+			it.Title,
+			itemTrailer(it, project))
 		notes := ""
 		if it.Notes != nil {
 			notes = *it.Notes

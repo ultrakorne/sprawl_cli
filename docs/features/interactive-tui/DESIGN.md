@@ -2,7 +2,7 @@
 
 ## Overview
 
-`sprawl` is normally a one-shot, machine-friendly HTTP client. The interactive TUI adds a full-screen, human-driven mode on top of the same client and credentials. A human can browse their tasks, open a task's checklist, toggle checklist items done/undone, read and edit an item's note, do full task and checklist-item CRUD, search, and — the headline use case — copy a task's or item's context as Markdown to the system clipboard for pasting into an LLM.
+`sprawl` is normally a one-shot, machine-friendly HTTP client. The interactive TUI adds a full-screen, human-driven mode on top of the same client and credentials. A human can browse their tasks, open a task's checklist, toggle checklist items done/undone, flag an item's state and PR number, read and edit an item's note, do full task and checklist-item CRUD, search, and — the headline use case — copy a task's or item's context as Markdown to the system clipboard for pasting into an LLM.
 
 The UI adopts whatever theme the user's terminal is running: all colors are ANSI **terminal palette** indices 0-15 (done green 2, in-progress yellow 3, error red 1, accent/header cyan 6, `faint` for secondary), never hard-coded RGB. This is the same choice the CLI's text styling makes (see `internal/cli/style.go`). This is unrelated to the server-side **app theme** (`theme get/set`); see [CONTEXT.md](../../CONTEXT.md).
 
@@ -41,8 +41,8 @@ Screens form a back stack; `esc` pops one.
 1. **Credentials prompt** (conditional) — two visible fields, agent secret and project key; `tab` switches, Enter validates via the list fetch.
 2. **Not logged in** — message + quit (token missing).
 3. **Task list** (home) — one row per task: `#id · progress (done/total, traffic-light color) · due · project · title`. Cursor is `›` + bold + cyan. Empty state: `(no tasks) — n to create`.
-4. **Checklist** (task detail) — header (`#id title · progress · due · project`); item rows `[ ]`/`[x] · #id · title` with a `🗒` flag when the item has a note. Empty state: `(no checklist items) — a to add`.
-5. **Note view** — the selected checklist item's note body, scrollable. Empty state: `(no notes) — e to add`.
+4. **Checklist** (task detail) — header (`#id title · progress · due · project`); item rows `[ ]`/`[x] · #id · state icon · PR · title`, with a `🗒` flag riding at the end of the title. The state and PR columns are **always reserved**, blank when unset, so toggling a state never shifts the rows around it. Empty state: `(no checklist items) — a to add`.
+5. **Note view** (the item view) — the selected checklist item's note body, scrollable, under a header that spells the state out in full: `note · item #7 add the migration · 󱌣 In progress · #412`. Empty state: `(no notes) — e to add`.
 
 ### Overlays
 
@@ -55,7 +55,11 @@ Screens form a back stack; `esc` pops one.
 
 - **Copy a task for an LLM**: on the task list, move to the task, press `c`. If the full task isn't loaded yet it is fetched first, then the whole task (header, description, and checklist with per-item notes) is copied as Markdown via OSC 52. A transient footer confirms `✓ copied task #123`.
 - **Copy a single item**: on the checklist or note screen, press `c` to copy just that checklist item (its checkbox state, parent task reference, and note body) as Markdown.
-- **Work a checklist**: `enter` on a task opens its checklist; `space` or `x` toggles the highlighted item. The toggle is **optimistic** — it flips instantly and the parent task's progress is updated locally; if the API rejects it, the item reverts and the error shows on the footer.
+- **Work a checklist**: `enter` on a task opens its checklist; `space` or `x` toggles the highlighted item. The toggle is **optimistic** — it flips instantly and the parent task's progress is updated locally; if the API rejects it, the item reverts and the error shows on the footer. Completing an item also drops its state icon on the spot, because the server clears the state on completion; the PR number is independent and stays. A rejected toggle restores both.
+- **Flag an item's state**: `s` advances the highlighted item one step through none → ready → progress → review → none, so repeated presses walk the lifecycle. Setting a state **un-completes** the item (the two are mutually exclusive), which the UI mirrors immediately so progress doesn't visibly jump when the response lands. A rejected write re-reads the task rather than reverting — state and completion interact server-side, so a remembered previous value can't be trusted.
+- **Link a PR**: `p` opens a single-line prompt prefilled with the item's current PR number; an empty submit clears it, and anything that isn't a positive integer is refused inline instead of being sent. The footer confirmation shows the resolved GitHub URL when the task's project has a repo. See [item-state-and-pr](../item-state-and-pr/INDEX.md).
+- **Open a PR**: `o` hands the resolved URL to the platform's browser, detached so the TUI doesn't block on it. Over SSH there is usually no browser; that isn't an error — the URL goes to the clipboard over OSC 52 instead and the footer says so. An item with no PR number, or a project with no repo URL, each get their own footer line rather than a generic failure.
+- **Click a PR**: PR numbers are OSC 8 hyperlinks, so a click (or ctrl/cmd-click, per terminal) opens them, and they're drawn in underlined accent to say so. The colour appears **only when the link actually resolves** — a PR on a project with no repo URL stays faint, because styling something as clickable that isn't is worse than not styling it. This deliberately does **not** enable mouse capture: capturing the mouse would take the terminal's own text selection away from the user, and the terminal handles hyperlinks natively without it. Terminals that don't support OSC 8 — including tmux without passthrough — just show the plain number, which is why `o` exists as the binding that always works.
 - **Create / edit**: `n` starts a new task (inline title, optional `$EDITOR` description, optional project picker); `e` edits the highlighted title inline; `E` edits a task's description in `$EDITOR`; `t` sets a due date; `a` adds a checklist item; `d` deletes (with a confirm overlay).
 - **Edit a note**: on the note screen, `e` opens the item's note in `$EDITOR`; on save it is written back with `note set` semantics.
 - **Search**: `/` enters live client-side filtering (case-insensitive title substring) as you type. `enter` runs a server-side search that also surfaces checklist-item-title matches (annotated with the matched item names under the row). `esc` clears the search.
@@ -72,10 +76,11 @@ List      ↑↓ / j k=move    g/G=top/bottom   enter=open task   /=search   q=q
 Checklist ↑↓ / j k=move    g/G=top/bottom   space or x=toggle done
           enter=open note  esc=back
           c=copy item(md)  a=add item   e=edit item title   d=delete item(confirm)
+          s=cycle state(ready→progress→review→none)   p=set PR number
 Note      e=edit note($EDITOR)   c=copy item(md)   ↑↓=scroll   esc=back
 ```
 
-`space` and `x` both toggle on the checklist. `g`/`G` jump to top/bottom of any list. There is no "mark whole task done" key — a task's done-ness is derived server-side from its checklist items (see [CONTEXT.md](../../CONTEXT.md)).
+`space` and `x` both toggle on the checklist. `g`/`G` jump to top/bottom of any list. There is no "mark whole task done" key — a task's done-ness is derived server-side from its checklist items (see [CONTEXT.md](../../CONTEXT.md)). The help overlay spells out that setting a state un-completes an item, since that's the one non-obvious consequence of `s`.
 
 ## Design decisions
 

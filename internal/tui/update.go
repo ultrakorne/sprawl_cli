@@ -6,12 +6,18 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
 // errEmptyTask is surfaced when the server returns a 2xx whose body decodes to a
 // nil task (e.g. `{"task": null}`), so the copy/drill-in paths report it instead
 // of dereferencing nil and crashing the TUI.
 var errEmptyTask = errors.New("empty task response")
+
+// errBadPRNumber is the local refusal for a PR field that isn't a positive
+// integer — the server's own rule, applied before the round-trip.
+var errBadPRNumber = errors.New("a PR number must be a positive integer (empty clears it)")
 
 // Update is the bubbletea reducer. It never blocks — every network call is a
 // tea.Cmd, and every error arrives as a message routed to the footer, so the
@@ -79,17 +85,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case itemToggledMsg:
-		if m.detail != nil {
-			for _, it := range m.detail.ChecklistItems {
-				if it.ID == msg.item.ID {
-					it.Completed = msg.item.Completed
-					it.HasNotes = msg.item.HasNotes
-					break
-				}
-			}
-			m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
-			m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
-		}
+		// Take the server's whole item, not just `completed`: checking an item
+		// CLEARS its state server-side, and copying two fields by hand left the
+		// stale state on screen until something else refetched the task.
+		m.replaceItem(msg.item)
 		return m, nil
 
 	case toggleFailedMsg:
@@ -97,6 +96,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, it := range m.detail.ChecklistItems {
 				if it.ID == msg.itemID {
 					it.Completed = msg.prev
+					it.State = msg.prevState
 					break
 				}
 			}
@@ -125,6 +125,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case itemMutatedMsg:
 		return m.onItemMutated(msg)
+
+	case itemStateSetMsg:
+		// The response is authoritative about `completed` too: setting a state on
+		// a completed item un-completes it server-side, so progress has to be
+		// recomputed from the item the server handed back.
+		m.replaceItem(msg.item)
+		return m, m.setTransient("✓ " + msg.label)
+
+	case itemStateFailedMsg:
+		if isSecretAuthErr(msg.err) {
+			return m.Update(authFailedMsg{err: msg.err})
+		}
+		m.setError(msg.context, msg.err)
+		// Resync: the optimistic change never reached the server, and state
+		// interacts with completion, so re-read rather than guess.
+		if m.detail != nil {
+			m.pendingTaskID = m.detail.ID
+			return m, getTaskCmd(m.ctx, m.client, m.detail.ID, false)
+		}
+		return m, nil
 
 	case itemDeletedMsg:
 		if m.detail != nil {
@@ -198,6 +218,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stack = []screen{screenCreds}
 		return m, nil
 
+	case urlOpenedMsg:
+		return m, m.setTransient("✓ opened " + msg.url)
+
+	case urlOpenFailedMsg:
+		// No browser to hand it to — the normal case over SSH. OSC 52 still
+		// reaches the user's own machine, so the link isn't lost. One message,
+		// not an error plus a message: the fallback worked.
+		return m, tea.Batch(
+			tea.SetClipboard(msg.url),
+			m.setTransient("no browser here — copied "+msg.url),
+		)
+
 	case clearStatusMsg:
 		if msg.tok == m.statusTok {
 			m.status = ""
@@ -236,19 +268,11 @@ func (m *Model) onItemMutated(msg itemMutatedMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.created {
 		m.detail.ChecklistItems = append(m.detail.ChecklistItems, msg.item)
+		m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+		m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
 	} else {
-		for i, it := range m.detail.ChecklistItems {
-			if it.ID == msg.item.ID {
-				// The title-update response carries no notes; keep the loaded body
-				// so copy/note still work.
-				msg.item.Notes = it.Notes
-				m.detail.ChecklistItems[i] = msg.item
-				break
-			}
-		}
+		m.replaceItem(msg.item)
 	}
-	m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
-	m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
 	m.clampItemSel()
 	if msg.created {
 		return m, m.setTransient("✓ added item #" + itoa(msg.item.ID))
@@ -444,6 +468,12 @@ func (m *Model) handleBaseKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case actEditNote:
 		return m.editNote()
+	case actCycleState:
+		return m.cycleState()
+	case actSetPR:
+		return m.openPRInput()
+	case actOpenPR:
+		return m.openPRLink()
 	}
 	return m, nil
 }
@@ -540,12 +570,84 @@ func (m *Model) toggle() (tea.Model, tea.Cmd) {
 	if it == nil {
 		return m, nil
 	}
-	prev := it.Completed
+	prev, prevState := it.Completed, it.State
 	want := !prev
 	it.Completed = want // optimistic
+	if want {
+		// Completing clears the state server-side, so drop it here too rather
+		// than leaving a stale icon on the row until the response lands.
+		// Unchecking does NOT bring it back — the server doesn't remember it.
+		it.State = ""
+	}
 	m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
 	m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
-	return m, toggleItemCmd(m.ctx, m.client, it.ID, want, prev)
+	return m, toggleItemCmd(m.ctx, m.client, it.ID, want, prev, prevState)
+}
+
+// cycleState advances the selected item's state one step and writes it. The
+// local copy is updated immediately so repeated presses cycle (rather than
+// re-sending the same next-state from a stale value); a failure resyncs from
+// the server. Setting a state also un-completes the item server-side, which the
+// optimistic copy mirrors so progress doesn't visibly jump on the response.
+func (m *Model) cycleState() (tea.Model, tea.Cmd) {
+	it := m.selectedItem()
+	if it == nil {
+		return m, nil
+	}
+	next := nextState(it.State)
+	it.State = next
+	label := "state cleared on #" + itoa(it.ID)
+	if next != "" {
+		it.Completed = false
+		label = "#" + itoa(it.ID) + " → " + stateLabel(next)
+	}
+	m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+	m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+
+	// A cleared state must still be sent as an explicit null: an absent key
+	// means "leave unchanged".
+	var val any
+	if next != "" {
+		val = next
+	}
+	return m, setItemStateCmd(m.ctx, m.client, it.ID, map[string]any{"state": val}, label, "set state")
+}
+
+// openPRInput prompts for the selected item's PR number, prefilled with the
+// current one. Submitting an empty value clears it.
+func (m *Model) openPRInput() (tea.Model, tea.Cmd) {
+	it := m.selectedItem()
+	if it == nil {
+		return m, nil
+	}
+	prefill := ""
+	if it.PRNumber > 0 {
+		prefill = itoa(it.PRNumber)
+	}
+	m.inputTargetID = it.ID
+	m.openInput(inSetPR, "PR number for #"+itoa(it.ID)+" (empty to clear)", prefill)
+	return m, nil
+}
+
+// openPRLink opens the selected item's pull request in a browser. Both ways the
+// link can fail to resolve are ordinary states, not errors, so each gets a
+// specific line rather than a stack of "something went wrong".
+func (m *Model) openPRLink() (tea.Model, tea.Cmd) {
+	it := m.selectedItem()
+	if it == nil {
+		return m, nil
+	}
+	if it.PRNumber <= 0 {
+		return m, m.setTransient("#" + itoa(it.ID) + " has no PR number — press p to set one")
+	}
+	url := ""
+	if m.detail != nil {
+		url = client.PRURL(m.detail.Project, it.PRNumber)
+	}
+	if url == "" {
+		return m, m.setTransient("PR #" + itoa(it.PRNumber) + " — this task's project has no GitHub URL to open it against")
+	}
+	return m, openURLCmd(url)
 }
 
 func (m *Model) copy() (tea.Model, tea.Cmd) {
@@ -765,8 +867,38 @@ func (m *Model) submitInput() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, updateItemCmd(m.ctx, m.client, target, val)
+	case inSetPR:
+		return m.submitPR(target, val)
 	}
 	return m, nil
+}
+
+// submitPR validates the typed PR number and writes it. Empty (or `none`)
+// clears; anything that isn't a positive integer is refused locally with a
+// footer error rather than sent for the server to 422.
+func (m *Model) submitPR(itemID int64, val string) (tea.Model, tea.Cmd) {
+	var body any
+	label := "PR cleared on #" + itoa(itemID)
+	if val != "" && !strings.EqualFold(val, "none") {
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || n <= 0 {
+			m.setError("set PR", errBadPRNumber)
+			return m, nil
+		}
+		body = n
+		label = "#" + itoa(itemID) + " → PR #" + itoa(n)
+		// The task's project resolves the link; surfacing it confirms the number
+		// landed somewhere real without another screen. No project or no
+		// github_url just means no link — the number still stands.
+		if m.detail != nil {
+			if u := client.PRURL(m.detail.Project, n); u != "" {
+				label += " · " + u
+			}
+		}
+	}
+	// The local copy is updated on the response (itemStateSetMsg) — unlike the
+	// state cycle there's nothing to keep in sync between rapid keypresses.
+	return m, setItemStateCmd(m.ctx, m.client, itemID, map[string]any{"pr_number": body}, label, "set PR")
 }
 
 func (m *Model) submitPicker() (tea.Model, tea.Cmd) {

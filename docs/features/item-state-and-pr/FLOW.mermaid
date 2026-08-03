@@ -1,0 +1,44 @@
+stateDiagram-v2
+    direction LR
+
+    [*] --> Stateless: item created
+
+    state "no state" as Stateless
+    state "ready_to_pickup" as Ready
+    state "in_progress" as Progress
+    state "in_review" as Review
+    state "completed" as Done
+
+    Stateless --> Ready: state ready
+    Ready --> Progress: state progress
+    Progress --> Review: state review
+    Review --> Stateless: state none
+
+    Ready --> Stateless: state none
+    Progress --> Stateless: state none
+    Stateless --> Progress: state progress
+    Stateless --> Review: state review
+    Ready --> Review: state review
+    Progress --> Ready: state ready
+
+    Stateless --> Done: checklist check
+    Done --> Stateless: checklist uncheck
+    Review --> Done: checklist check — the human, after reviewing
+
+    note right of Done
+        Checking an item CLEARS its state.
+        Setting a state on a completed item
+        UN-COMPLETES it — the two are
+        mutually exclusive server-side.
+        The PR number survives both.
+    end note
+
+    Done --> Ready: state ready — re-opens the item
+    Done --> Progress: state progress — re-opens the item
+    Done --> Review: state review — re-opens the item
+
+    note left of Review
+        Agents stop here. The human reads
+        the PR and checks the item off,
+        which clears the state.
+    end note

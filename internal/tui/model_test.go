@@ -35,15 +35,24 @@ type fakeClient struct {
 	itemErr    error
 	notesResp  *string
 	notesErr   error
+	stateResp  *client.ChecklistItem
+	stateErr   error
 
 	createAttrs     map[string]any
 	updateTaskAttrs map[string]any
 	updateItemAttrs map[string]any
 	createItemAttrs map[string]any
+	stateAttrs      map[string]any
 	dueArg          *string
 	dueArgSet       bool
 	notesArg        string
 	calls           []string
+}
+
+func (f *fakeClient) SetChecklistItemState(_ context.Context, id string, attrs map[string]any) (*client.ChecklistItem, error) {
+	f.calls = append(f.calls, "SetState:"+id)
+	f.stateAttrs = attrs
+	return f.stateResp, f.stateErr
 }
 
 func (f *fakeClient) ListTasks(context.Context) ([]*client.Task, error) {

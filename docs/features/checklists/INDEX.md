@@ -8,3 +8,7 @@ Commands for checklist items under a task and their free-form notes blob: `check
 |----------|---------|
 | [DESIGN.md](DESIGN.md) | Commands, UX, check / uncheck split, notes-via-stdin |
 | [TECHNICAL.md](TECHNICAL.md) | Source files, wire shapes, subcommand routing |
+
+## See also
+
+- [item-state-and-pr](../item-state-and-pr/INDEX.md) — the `checklist state` / `checklist pr` sibling subcommands and the two extra item fields they write. Completion interacts with state: checking an item clears it.

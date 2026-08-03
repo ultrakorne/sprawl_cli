@@ -4,7 +4,7 @@ HTTP client. Single static Go binary (two variants from one codebase), JSON on t
 
 ## Documentation
 
-Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, checklists, theme, whoami).
+Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, checklists, item-state-and-pr, interactive-tui, activity, auto-update, theme, whoami). `docs/CONTEXT.md` is the glossary — check it before naming a concept in code or docs.
 
 ## Stack
 
@@ -21,11 +21,12 @@ One codebase produces two binaries. The *only* difference is linker-injected val
 | Binary | `APIURL` | `AppName` | Config dir |
 |---|---|---|---|
 | `sprawl` (prod) | `https://sprawl.today` | `sprawl` | `~/.config/sprawl/` |
-| `sprawl_dev` | `http://localhost:4000` | `sprawl_dev` | `~/.config/sprawl_dev/` |
+| `sprawl_dev` | `http://localhost:4201` | `sprawl_dev` | `~/.config/sprawl_dev/` |
 
 - **The API URL is never in config.** When prod moves, ship a new release. Do not add a `url` field or a `--url` flag.
 - **No `--profile` / `--env` flag.** Binary choice is the environment switch.
 - **One-off override**: `SPRAWL_API_URL=…` env var only. Never persists.
+- **The dev port is a build argument**: `make build-dev PORT=4300` when the backend isn't on the default 4201.
 
 ## Credential model (do not regress)
 
@@ -88,7 +89,7 @@ mise.toml            Go version pin
 ## Common commands
 
 ```sh
-make build-dev          # dist/sprawl_dev, localhost:4000 baked in
+make build-dev          # dist/sprawl_dev, localhost:4201 baked in (override: PORT=…)
 make build              # dist/sprawl, prod URL baked in
 make build-all          # both
 make run-dev ARGS="version"

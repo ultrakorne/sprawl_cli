@@ -8,7 +8,7 @@ package build
 var (
 	// APIURL is the base URL for the sprawl API. Overridden at build
 	// time per the plan; never read from config.
-	APIURL = "http://localhost:4000"
+	APIURL = "http://localhost:4201"
 
 	// AppName selects the XDG config directory:
 	//   prod → ~/.config/sprawl/config.toml

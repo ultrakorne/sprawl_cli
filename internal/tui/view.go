@@ -39,6 +39,10 @@ func (m *Model) View() tea.View {
 	return v
 }
 
+// heading styles a screen title for frame. Every frame call goes through it,
+// except the item header, which appends its own link-styled PR afterwards.
+func (m *Model) heading(s string) string { return m.styles.header.Render(s) }
+
 func (m *Model) effWidth() int {
 	if m.width <= 0 {
 		return 80
@@ -65,11 +69,87 @@ func (m *Model) clip(s string, w int) string {
 	return ansi.Truncate(s, w, "…")
 }
 
+const (
+	// maxHintRows caps how far the key hints may grow. Two is enough for the
+	// busiest screen; a third would eat the body for no gain.
+	maxHintRows = 2
+	// fixedChrome is what every frame spends regardless: title, rule, status.
+	// The hints add 1 or 2 more, decided per screen by hintLines.
+	fixedChrome = 3
+	// hintSep joins hint segments and is where hintLines is allowed to break.
+	hintSep = " · "
+)
+
+// hintsFor is the key-hint text for a base screen, as one string. Screens
+// declare it in one place because both the renderer and the scroll-clamp maths
+// need to know how tall the footer will be.
+func hintsFor(s screen) string {
+	switch s {
+	case screenList:
+		return "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · r refresh · ? help · q quit"
+	case screenChecklist:
+		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · a add · e title · d delete · esc back · ? help"
+	case screenNote:
+		return "e edit · c copy · o open pr · ↑↓ scroll · esc back · ? help"
+	}
+	return ""
+}
+
+// hintLines packs the hints into as few rows as fit: one line whenever the
+// whole string fits the width, spilling onto a second only when it doesn't.
+//
+// The BOTTOM row is the one that gets filled. Packing walks the segments
+// backwards, taking as many trailing bindings as fit on the last line, and
+// whatever is left rises to the line above — so the dense row sits against the
+// bottom edge and the overflow grows upward, rather than a full top line with a
+// stub hanging under it. Segment order is untouched, so it still reads left to
+// right, top to bottom. Breaks land on the ` · ` separators, never mid-binding.
+func hintLines(hints string, w int) []string {
+	if hints == "" {
+		return nil
+	}
+	if w <= 0 || lipgloss.Width(hints) <= w {
+		return []string{hints}
+	}
+	segs := strings.Split(hints, hintSep)
+	bottom, i := "", len(segs)-1
+	for ; i >= 0; i-- {
+		cand := segs[i]
+		if bottom != "" {
+			cand += hintSep + bottom
+		}
+		if lipgloss.Width(cand) > w {
+			break
+		}
+		bottom = cand
+	}
+	// A single binding wider than the window: nothing to split on, so hand the
+	// whole string back as one row and let frame clip it.
+	if bottom == "" {
+		return []string{hints}
+	}
+	// More than two rows' worth: the leftovers stay on the top row and get
+	// clipped there. Losing the middle of the list beats losing its tail, which
+	// is where `? help` lives.
+	return []string{strings.Join(segs[:i+1], hintSep), bottom}
+}
+
+// bodyHeight is the number of rows a screen's body may occupy once the chrome
+// above and below it is accounted for. Renderers that window their content take
+// it as an argument so they can't drift out of step with frame().
+func (m *Model) bodyHeight(hints string) int {
+	return maxInt(1, m.effHeight()-fixedChrome-len(hintLines(hints, m.effWidth())))
+}
+
 // frame assembles a screen: a header (title + rule), a body region clipped to
-// the available height, and a two-line footer (transient status + key hints).
-// The output is exactly effHeight() lines tall for normal windows; on a very
-// short window (< 5 rows) it is clamped to effHeight() so the frame never
-// overflows the viewport and breaks the layout.
+// the available height, a transient status line, and the key hints on as few
+// rows as they fit. The output is exactly effHeight() lines tall for normal
+// windows; on a very short window it is clamped to effHeight() so the frame
+// never overflows the viewport and breaks the layout.
+//
+// `title` arrives ALREADY STYLED — see heading(). frame can't style it here
+// because the item header embeds an OSC 8 hyperlink, and rendering a string
+// that contains one prints the URL instead of linking it.
 func (m *Model) frame(title string, body []string, hints string) string {
 	w := m.effWidth()
 	h := m.effHeight()
@@ -78,13 +158,10 @@ func (m *Model) frame(title string, body []string, hints string) string {
 	}
 
 	lines := make([]string, 0, h)
-	lines = append(lines, m.clip(m.styles.header.Render(title), w))
+	lines = append(lines, m.clip(title, w))
 	lines = append(lines, m.clip(m.styles.accent.Render(strings.Repeat("─", w)), w))
 
-	bodyH := h - 4
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH := m.bodyHeight(hints)
 	shown := body
 	if len(shown) > bodyH {
 		shown = shown[:bodyH]
@@ -105,10 +182,12 @@ func (m *Model) frame(title string, body []string, hints string) string {
 		status = " "
 	}
 	lines = append(lines, m.clip(statusStyle.Render(status), w))
-	lines = append(lines, m.clip(m.styles.faint.Render(hints), w))
+	for _, row := range hintLines(hints, w) {
+		lines = append(lines, m.clip(m.styles.faint.Render(row), w))
+	}
 
-	// Never emit more rows than the viewport has: header + rule + body + status +
-	// hints is at least 5 lines, which would overflow a window shorter than that.
+	// Never emit more rows than the viewport has: the chrome alone is several
+	// lines, which would overflow a shorter window.
 	if len(lines) > h {
 		lines = lines[:h]
 	}
@@ -119,10 +198,16 @@ func (m *Model) frame(title string, body []string, hints string) string {
 // prefix on the first line, then `title` word-wrapped into the remaining width
 // with continuation lines hanging-indented under the title column (so a long
 // title flows onto a second line instead of being truncated with an ellipsis).
-// prefix may already carry ANSI styling; prefixW is its PLAIN display width.
-// style, when non-nil, is applied to each finished display line (used to
-// highlight the whole selected row). On a terminal too narrow to wrap sensibly
-// the title is left on the first line for frame() to clip.
+// prefixW is the prefix's PLAIN display width.
+//
+// The prefix is emitted VERBATIM and is the caller's job to style; `style`,
+// when non-nil, is applied to the title text only. That split exists because a
+// prefix cell may carry an OSC 8 hyperlink, and lipgloss re-encodes any ESC it
+// finds in its input — re-rendering such a prefix would spell the URL out on
+// screen. Styling per cell instead of per line is visually identical here: the
+// selection style is bold + foreground with no background, so the gaps between
+// cells have nothing to show. On a terminal too narrow to wrap sensibly the
+// title is left on the first line for frame() to clip.
 func rowLines(prefix string, prefixW, width int, title string, style func(...string) string) []string {
 	apply := func(s string) string {
 		if style == nil {
@@ -140,9 +225,9 @@ func rowLines(prefix string, prefixW, width int, title string, style func(...str
 	out := make([]string, 0, len(segs))
 	for i, seg := range segs {
 		if i == 0 {
-			out = append(out, apply(prefix+seg))
+			out = append(out, prefix+apply(seg))
 		} else {
-			out = append(out, apply(indent+seg))
+			out = append(out, indent+apply(seg))
 		}
 	}
 	return out
@@ -204,6 +289,7 @@ func (m *Model) viewList() string {
 		title = fmt.Sprintf("sprawl · search %q (%d)", m.searchLabel, len(m.tasks))
 	}
 
+	hints := hintsFor(screenList)
 	vis := m.visibleTasks()
 	var body []string
 	switch {
@@ -216,14 +302,13 @@ func (m *Model) viewList() string {
 			body = []string{m.styles.faint.Render("(no tasks) — n to create")}
 		}
 	default:
-		body = m.listRows(vis)
+		body = m.listRows(vis, m.bodyHeight(hints))
 	}
 
-	hints := "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · ? help · q quit"
-	return m.frame(title, body, hints)
+	return m.frame(m.heading(title), body, hints)
 }
 
-func (m *Model) listRows(vis []*client.Task) []string {
+func (m *Model) listRows(vis []*client.Task, bodyH int) []string {
 	// Column widths from the visible set for stable alignment.
 	idW, progW := 2, 3
 	for _, t := range vis {
@@ -236,10 +321,6 @@ func (m *Model) listRows(vis []*client.Task) []string {
 	}
 
 	w := m.effWidth()
-	bodyH := m.effHeight() - 4
-	if bodyH < 1 {
-		bodyH = 1
-	}
 
 	groups := make([][]string, len(vis))
 	for i, t := range vis {
@@ -256,7 +337,9 @@ func (m *Model) listRows(vis []*client.Task) []string {
 		var group []string
 		if i == m.listSel {
 			// Selected: cursor + whole row bold+cyan (spec's selection style).
-			cursorPrefix := fmt.Sprintf("› %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project)
+			// Styled here rather than by rowLines, which now only styles the title.
+			cursorPrefix := m.styles.sel.Render(
+				fmt.Sprintf("› %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project))
 			group = rowLines(cursorPrefix, prefixW, w, t.Title, m.styles.sel.Render)
 		} else {
 			progStyled := m.styles.progress(t.ChecklistProgress.Done, t.ChecklistProgress.Total).Render(padRight(prog, progW))
@@ -282,7 +365,7 @@ func (m *Model) listRows(vis []*client.Task) []string {
 
 func (m *Model) viewChecklist() string {
 	if m.detail == nil {
-		return m.frame("sprawl · task", []string{m.styles.faint.Render("loading…")}, "esc back")
+		return m.frame(m.heading("sprawl · task"), []string{m.styles.faint.Render("loading…")}, "esc back")
 	}
 	t := m.detail
 	due := t.DueDate
@@ -294,51 +377,178 @@ func (m *Model) viewChecklist() string {
 		t.ID, t.Title, m.styles.progress(t.ChecklistProgress.Done, t.ChecklistProgress.Total).Render(prog),
 		due, projectLabel(t.Project))
 
+	hints := hintsFor(screenChecklist)
 	var body []string
 	if len(t.ChecklistItems) == 0 {
 		body = []string{m.styles.faint.Render("(no checklist items) — a to add")}
 	} else {
-		body = m.checklistRows(t.ChecklistItems)
+		body = m.checklistRows(t.ChecklistItems, m.bodyHeight(hints))
 	}
-	hints := "↑↓ move · space/x toggle · enter note · c copy · a add · e title · d delete · esc back · ? help"
-	return m.frame(title, body, hints)
+	return m.frame(m.heading(title), body, hints)
 }
 
-func (m *Model) checklistRows(items []*client.ChecklistItem) []string {
+func (m *Model) checklistRows(items []*client.ChecklistItem, bodyH int) []string {
 	idW := 2
+	prW := prColMinW
 	for _, it := range items {
 		if l := len("#" + itoa(it.ID)); l > idW {
 			idW = l
 		}
+		prW = maxInt(prW, lipgloss.Width(prCell(it.PRNumber)))
 	}
 	w := m.effWidth()
-	bodyH := m.effHeight() - 4
-	if bodyH < 1 {
-		bodyH = 1
-	}
 
 	groups := make([][]string, len(items))
 	for i, it := range items {
 		box := mdCheckbox(it.Completed)
 		id := padRight("#"+itoa(it.ID), idW)
+		// State and PR are their own fixed columns between the id and the title,
+		// blank when unset. Padding is by display width, not rune count — the
+		// glyphs aren't ASCII.
+		icon := padVis(m.styles.stateIcon(it.State), stateColW)
+		// Styled and linked BEFORE padding, so only the number is clickable and
+		// only the number is underlined — not the blank cells aligning the column.
+		selPR := padVis(m.prField(prCell(it.PRNumber), it.PRNumber, true), prW)
+		rowPR := padVis(m.prField(prCell(it.PRNumber), it.PRNumber, false), prW)
 		// The note flag rides at the end of the title so it wraps with it; the 🗒
 		// emoji renders in its own color, so no separate faint styling is needed.
 		title := it.Title
 		if it.HasNotes {
 			title += " 🗒"
 		}
-		plainPrefix := fmt.Sprintf("  %s %s ", box, id)
-		prefixW := lipgloss.Width(plainPrefix)
+		// Measured from plain text: the styled cells carry escapes, and the PR
+		// cell a hyperlink, none of which occupy columns.
+		prefixW := lipgloss.Width(fmt.Sprintf("  %s %s  %s  %s  ",
+			box, id, icon, padVis(prCell(it.PRNumber), prW)))
 		if i == m.itemSel {
-			cursorPrefix := fmt.Sprintf("› %s %s ", box, id)
-			groups[i] = rowLines(cursorPrefix, prefixW, w, title, m.styles.sel.Render)
+			// Styled cell by cell rather than as a whole line, so the PR's
+			// hyperlink stays outside anything lipgloss renders.
+			sel := m.styles.sel.Render
+			cursorPrefix := sel(fmt.Sprintf("› %s %s  %s  ", box, id, icon)) + selPR + sel("  ")
+			groups[i] = rowLines(cursorPrefix, prefixW, w, title, sel)
 		} else {
-			displayPrefix := fmt.Sprintf("  %s %s ",
-				m.styles.checkbox(it.Completed).Render(box), m.styles.faint.Render(id))
+			displayPrefix := fmt.Sprintf("  %s %s  %s  %s  ",
+				m.styles.checkbox(it.Completed).Render(box),
+				m.styles.faint.Render(id),
+				m.styles.state(it.State).Render(icon),
+				rowPR)
 			groups[i] = rowLines(displayPrefix, prefixW, w, title, nil)
 		}
 	}
 	return wrapAndWindow(groups, m.itemSel, bodyH)
+}
+
+// Checklist-row column widths. Both are CONSTANT (a floor, in the PR column's
+// case) rather than measured from whatever the visible items happen to carry: a
+// checklist where nothing has a state still reserves the column, so toggling one
+// item from none to a state never reflows the rows around it. Stable columns are
+// worth a few dead cells on boards that don't use the fields.
+const (
+	stateColW = 1 // every glyph in both icon sets is one cell
+	prColMinW = 5 // "#1234"; grows only if a longer number is on screen
+)
+
+// stateName is the full label the web app shows on its pills — used where there
+// is room to spell it out (the item header), never in a row.
+func stateName(state string) string {
+	switch state {
+	case "":
+		return ""
+	case client.StateReadyToPickup:
+		return "Ready to pick up"
+	case client.StateInProgress:
+		return "In progress"
+	case client.StateInReview:
+		return "In review"
+	default:
+		return state
+	}
+}
+
+// stateLabel is the bare short word for a state, used in footer confirmations
+// where it echoes the vocabulary `checklist state` accepts.
+func stateLabel(state string) string {
+	switch state {
+	case client.StateReadyToPickup:
+		return "ready"
+	case client.StateInProgress:
+		return "progress"
+	case client.StateInReview:
+		return "review"
+	default:
+		return state
+	}
+}
+
+// prCell is the PR column's contents: `#412`, or blank when the item has none.
+// A dash would add noise to every row on a board that doesn't use PRs, and the
+// column is reserved either way.
+func prCell(prNumber int64) string {
+	if prNumber <= 0 {
+		return ""
+	}
+	return "#" + itoa(prNumber)
+}
+
+// linkPR turns a rendered PR number into an OSC 8 hyperlink so a ctrl/cmd-click
+// opens it, leaving the visible text untouched. The escape sequences are
+// zero-width and ansi.Truncate keeps them balanced when a line is clipped, so
+// this can't shear a column or leak the link into the rest of the screen.
+//
+// Terminals that don't understand OSC 8 (and older tmux, which won't forward
+// it) simply show the plain text — which is why `o` exists as the binding that
+// always works, rather than this being the only way to reach a PR.
+func (m *Model) linkPR(text string, prNumber int64) string {
+	url := m.prURL(prNumber)
+	if text == "" || url == "" {
+		return text
+	}
+	return ansi.SetHyperlink(url) + text + ansi.ResetHyperlink()
+}
+
+// prURL is the loaded task's link for a PR number, or "" when the chain doesn't
+// resolve (no task loaded, no project, no repo URL).
+func (m *Model) prURL(prNumber int64) string {
+	if m.detail == nil {
+		return ""
+	}
+	return client.PRURL(m.detail.Project, prNumber)
+}
+
+// prField renders a PR number for display: hyperlinked AND link-coloured when
+// the URL resolves, faint and inert when it doesn't. Tying the colour to the
+// same condition as the link keeps it honest — an underlined accent number that
+// did nothing on click would be a worse lie than no colour at all.
+//
+// `text` is the visible form: a bare `#412` in the row's column, `PR #412` in
+// the item header where there is no column to name it. `selected` swaps the
+// colour for the row-selection one but KEEPS the underline: a link that stops
+// looking like a link the moment the cursor lands on it reads as a glitch.
+func (m *Model) prField(text string, prNumber int64, selected bool) string {
+	if text == "" {
+		return ""
+	}
+	linked, inert := m.styles.link, m.styles.faint
+	if selected {
+		linked, inert = m.styles.sel.Underline(true), m.styles.sel
+	}
+	if m.prURL(prNumber) == "" {
+		return inert.Render(text)
+	}
+	// Style first, THEN wrap in the hyperlink. The other order feeds an OSC 8
+	// escape to lipgloss, which renders it as literal text — the URL ends up
+	// printed on screen instead of attached to the number.
+	return m.linkPR(linked.Render(text), prNumber)
+}
+
+// padVis pads s with spaces to a display width of w (ANSI- and wide-rune-aware,
+// unlike padRight's rune count — the state glyphs aren't one cell each on every
+// terminal). Never truncates.
+func padVis(s string, w int) string {
+	if pad := w - lipgloss.Width(s); pad > 0 {
+		return s + strings.Repeat(" ", pad)
+	}
+	return s
 }
 
 // -- note screen ------------------------------------------------------------
@@ -346,9 +556,22 @@ func (m *Model) checklistRows(items []*client.ChecklistItem) []string {
 func (m *Model) viewNote() string {
 	it := m.selectedItem()
 	if it == nil {
-		return m.frame("sprawl · note", []string{m.styles.faint.Render("(item gone)")}, "esc back")
+		return m.frame(m.heading("sprawl · note"), []string{m.styles.faint.Render("(item gone)")}, "esc back")
 	}
-	title := fmt.Sprintf("note · item #%d %s", it.ID, it.Title)
+	// The item view is where the state gets spelled out: the row it came from
+	// only had room for the icon. The PR is labelled here too — there is no
+	// column header to tell you what a bare `#412` is.
+	head := fmt.Sprintf("note · item #%d %s", it.ID, it.Title)
+	if badge := m.styles.stateBadge(it.State); badge != "" {
+		head += "  ·  " + badge
+	}
+	title := m.heading(head)
+	// The PR is appended AFTER the heading is styled and stays last: it carries
+	// its own link colour plus an OSC 8 hyperlink, and re-rendering a string that
+	// contains one would print the URL instead of linking it.
+	if it.PRNumber > 0 {
+		title += m.heading("  ·  ") + m.prField("PR "+prCell(it.PRNumber), it.PRNumber, false)
+	}
 
 	var body []string
 	note := ""
@@ -372,8 +595,7 @@ func (m *Model) viewNote() string {
 		}
 		body = lines
 	}
-	hints := "e edit · c copy · ↑↓ scroll · esc back"
-	return m.frame(title, body, hints)
+	return m.frame(title, body, hintsFor(screenNote))
 }
 
 // wrapLines splits text on newlines, then soft-wraps each line to width.
@@ -406,11 +628,7 @@ func (m *Model) noteMaxOff() int {
 	if strings.TrimSpace(note) == "" {
 		return 0
 	}
-	bodyH := m.effHeight() - 4
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	return maxInt(0, len(wrapLines(note, m.effWidth()))-bodyH)
+	return maxInt(0, len(wrapLines(note, m.effWidth()))-m.bodyHeight(hintsFor(screenNote)))
 }
 
 // -- credentials / not-logged-in screens ------------------------------------
@@ -431,7 +649,7 @@ func (m *Model) viewCreds() string {
 	} else if m.credErr != "" {
 		body = append(body, "", m.styles.danger.Render(m.credErr))
 	}
-	return m.frame("sprawl · credentials", body, "tab switch field · enter submit · esc quit")
+	return m.frame(m.heading("sprawl · credentials"), body, "tab switch field · enter submit · esc quit")
 }
 
 // credRow renders one field of the credentials prompt; the focused one carries
@@ -456,7 +674,7 @@ func (m *Model) viewNotLoggedIn() string {
 		"",
 		"Run " + m.styles.accent.Render("sprawl login") + " to authenticate, then relaunch.",
 	}
-	return m.frame("sprawl", body, "q quit")
+	return m.frame(m.heading("sprawl"), body, "q quit")
 }
 
 // -- overlays ---------------------------------------------------------------
@@ -464,7 +682,7 @@ func (m *Model) viewNotLoggedIn() string {
 func (m *Model) viewOverlay() string {
 	switch m.overlay {
 	case ovHelp:
-		return m.frame("Help", helpLines(m.styles), "any key to close")
+		return m.frame(m.heading("Help"), helpLines(m.styles), "any key to close")
 
 	case ovConfirm:
 		kind := "task"
@@ -478,7 +696,7 @@ func (m *Model) viewOverlay() string {
 			"",
 			m.styles.danger.Render("y") + " confirm · " + m.styles.accent.Render("n") + " cancel",
 		}
-		return m.frame("Confirm delete", body, "y confirm · n cancel")
+		return m.frame(m.heading("Confirm delete"), body, "y confirm · n cancel")
 
 	case ovInput:
 		body := []string{
@@ -487,7 +705,7 @@ func (m *Model) viewOverlay() string {
 			"",
 			"  " + m.styles.accent.Render("› ") + m.input.render(),
 		}
-		return m.frame("Input", body, "enter submit · esc cancel")
+		return m.frame(m.heading("Input"), body, "enter submit · esc cancel")
 
 	case ovPicker:
 		body := []string{""}
@@ -498,9 +716,9 @@ func (m *Model) viewOverlay() string {
 				body = append(body, "  "+it.label)
 			}
 		}
-		return m.frame(m.pickerTitle, body, "↑↓ move · enter select · esc cancel")
+		return m.frame(m.heading(m.pickerTitle), body, "↑↓ move · enter select · esc cancel")
 	}
-	return m.frame("", nil, "")
+	return m.frame(m.heading(""), nil, "")
 }
 
 func helpLines(s styles) []string {
@@ -510,7 +728,11 @@ func helpLines(s styles) []string {
 		{"", "c copy task · n new · e title · E description · t due · d delete"},
 		{"Checklist", "↑↓/jk move · g/G top/bottom · space/x toggle · enter note"},
 		{"", "c copy item · a add · e title · d delete · esc back"},
-		{"Note", "e edit (in $EDITOR) · c copy item · ↑↓ scroll · esc back"},
+		{"", "s cycle state (ready → progress → review → none) · p set PR number"},
+		{"", "o open the PR in a browser (copies the link if it can't)"},
+		{"", "PR numbers are clickable in terminals that support hyperlinks"},
+		{"", "setting a state un-completes the item — the two are exclusive"},
+		{"Note", "e edit (in $EDITOR) · c copy item · o open PR · ↑↓ scroll · esc back"},
 	}
 	out := []string{""}
 	for _, r := range rows {
