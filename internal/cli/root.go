@@ -99,17 +99,11 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print version and the API URL this binary talks to",
 		Args:  textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// The EFFECTIVE url, not the baked-in one: $SPRAWL_API_URL points a
-			// dev binary at whichever backend a branch / worktree is serving, and
-			// "which server am I actually hitting?" is the question this line
-			// exists to answer. The override is named when it's in play.
-			api := client.BaseURL()
-			if api != build.APIURL {
-				api += fmt.Sprintf("  (SPRAWL_API_URL override; built with %s)", build.APIURL)
-			}
+			// The EFFECTIVE url, not the baked-in one, so this answers "which
+			// server am I actually hitting?" even under a $SPRAWL_API_URL override.
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
 				"%s %s\n  api:    %s\n  date:   %s\n",
-				build.AppName, build.Version, api, build.Date,
+				build.AppName, build.Version, client.BaseURL(), build.Date,
 			)
 			return err
 		},

@@ -12,12 +12,9 @@ DIST        := dist
 PROD_APP    := sprawl
 DEV_APP     := sprawl_dev
 PROD_URL    ?= https://sprawl.today
-# The dev backend's port moves with the branch / worktree it was built from, so
-# DEV_URL is overridable three ways, cheapest first:
-#   1. runtime, no rebuild:  SPRAWL_API_URL=http://localhost:4300 dist/sprawl_dev …
-#   2. per build:            make build-dev DEV_URL=http://localhost:4300
-#   3. per shell / worktree: export DEV_URL=http://localhost:4300  (direnv, .envrc)
-DEV_URL     ?= http://localhost:4201
+# The dev backend's port moves with the branch being run: make build-dev PORT=4300
+PORT        ?= 4201
+DEV_URL     := http://localhost:$(PORT)
 
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -41,7 +38,7 @@ build: $(DIST) ## Build the prod binary ($(PROD_APP)) with PROD_URL baked in.
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(call LDFLAGS,$(PROD_URL),$(PROD_APP))" \
 		-o $(DIST)/$(PROD_APP) $(CMD)
 
-build-dev: $(DIST) ## Build the dev binary ($(DEV_APP)) targeting DEV_URL.
+build-dev: $(DIST) ## Build the dev binary ($(DEV_APP)) targeting localhost:$(PORT).
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(call LDFLAGS,$(DEV_URL),$(DEV_APP))" \
 		-o $(DIST)/$(DEV_APP) $(CMD)
 

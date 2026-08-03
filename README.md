@@ -35,9 +35,10 @@ Supported targets: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64. The scr
 Two binaries ship from this codebase. The only difference between them is the API URL and config directory baked in at link time.
 
 ```sh
-make build-dev   # → dist/sprawl_dev    (targets http://localhost:4201)
-make build       # → dist/sprawl        (targets the prod URL)
-make build-all   # both
+make build-dev            # → dist/sprawl_dev    (targets http://localhost:4201)
+make build-dev PORT=4300  # when your backend is on another port
+make build                # → dist/sprawl        (targets the prod URL)
+make build-all            # both
 ```
 
 Override the prod URL at build time without editing the Makefile:
@@ -45,22 +46,6 @@ Override the prod URL at build time without editing the Makefile:
 ```sh
 make build PROD_URL=https://staging.example.com
 ```
-
-#### Pointing the dev binary somewhere else
-
-The dev backend's port moves with the branch or worktree you're running, so
-nothing is hard-coded. Three ways to redirect it, cheapest first:
-
-```sh
-SPRAWL_API_URL=http://localhost:4300 dist/sprawl_dev task list  # runtime, no rebuild
-make build-dev DEV_URL=http://localhost:4300                    # per build
-export DEV_URL=http://localhost:4300                            # per shell / worktree (direnv)
-```
-
-`sprawl_dev version` prints the URL actually in effect, and names the
-`SPRAWL_API_URL` override when one is set — so "which backend am I hitting?"
-is always one command away. The **prod** URL is never configurable at runtime
-beyond `SPRAWL_API_URL`; it ships baked in.
 
 Other useful targets: `make check`, `make test`, `make fmt`, `make vet`, `make tidy`, `make clean`. See [Testing](#testing) for the day-to-day loop.
 

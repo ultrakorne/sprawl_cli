@@ -26,7 +26,7 @@ One codebase produces two binaries. The *only* difference is linker-injected val
 - **The API URL is never in config.** When prod moves, ship a new release. Do not add a `url` field or a `--url` flag.
 - **No `--profile` / `--env` flag.** Binary choice is the environment switch.
 - **One-off override**: `SPRAWL_API_URL=…` env var only. Never persists.
-- **The dev URL is a default, not a constant.** The dev backend's port moves with the branch / worktree being run, so `DEV_URL` is overridable per build (`make build-dev DEV_URL=…`) or per shell (`export DEV_URL=…`, direnv). `sprawl version` prints the URL actually in effect and names the `SPRAWL_API_URL` override when one is set.
+- **The dev port is a build argument**: `make build-dev PORT=4300` when the backend isn't on the default 4201.
 
 ## Credential model (do not regress)
 
@@ -89,7 +89,7 @@ mise.toml            Go version pin
 ## Common commands
 
 ```sh
-make build-dev          # dist/sprawl_dev, localhost:4201 baked in (override: DEV_URL=…)
+make build-dev          # dist/sprawl_dev, localhost:4201 baked in (override: PORT=…)
 make build              # dist/sprawl, prod URL baked in
 make build-all          # both
 make run-dev ARGS="version"
