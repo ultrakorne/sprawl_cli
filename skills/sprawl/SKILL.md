@@ -349,6 +349,8 @@ sprawl checklist pr    <item_id> <number|none>
 
 Rules that bite:
 
+- **`ready` is the human's signal, not yours** — it's how they flag work for an
+  agent to pick up. You set `progress` and `review`.
 - **States are exclusive** — setting one replaces the previous.
 - **Setting a state un-completes the item.** State and "done" are mutually
   exclusive server-side, so never set a state on something already checked
@@ -413,9 +415,6 @@ sprawl checklist state 7 review     # hands it back
 Stop at `review`. **Don't check off an item you put in review** — the human
 reviews the PR and checks it off. Checking it would clear the state and hide
 the work from their queue.
-
-Items you finish that never involved a PR follow the ordinary rule: check them
-off as you go ([§2](#2-make-progress-on-a-checklist)).
 
 **Read the notes before you start.** Notes are where the previous agent or
 the human left hand-off context — skipping them is how you redo work someone
@@ -494,11 +493,9 @@ sprawl checklist add <task_id> --title "check #ops logs"
 Finishing your slice and passing to another agent or the human:
 
 1. `checklist check` the items you finished.
-2. Anything you left mid-flight: `checklist state <id> ready` so it shows up in
-   the next agent's `sprawl queue` instead of looking claimed.
-3. `note set` on the next item with a short status + what you couldn't do and
+2. `note set` on the next item with a short status + what you couldn't do and
    why (permission, missing info, blocker).
-4. Do **not** `task update` the title / description just to log status — that
+3. Do **not** `task update` the title / description just to log status — that
    rewrites the task. Status belongs in notes or new checklist items.
 
 ## Guardrails
@@ -512,10 +509,6 @@ Finishing your slice and passing to another agent or the human:
 - **Never** retry `403` responses. Permission won't flip mid-session.
 - **Don't** use `task update` as a status channel. Use notes / checklist
   items.
-- **Don't check off an item you put `in_review`.** That's the human's call
-  once they've read the PR. Set the state, leave it unchecked, move on.
-- **Don't set a state on a completed item** — it un-completes it. Only do that
-  when you genuinely mean to reopen the work.
 - **Don't delete tasks or checklist items the user didn't ask you to remove.**
   `task delete` is a soft-delete and can only be undone via the LiveView
   trash bin (no API to restore). `checklist delete` is a hard delete and

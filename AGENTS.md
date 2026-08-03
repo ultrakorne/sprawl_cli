@@ -115,13 +115,7 @@ exclusively from the terminal's ANSI palette (indices 0–15), same as the CLI's
 text styling. The agent-secret prompt is masked and kept in memory only — never
 written to disk, logged, or echoed (invariants #2/#3). Clipboard copy uses
 OSC 52 (`tea.SetClipboard`) and `$EDITOR` editing uses `tea.ExecProcess`, so the
-single static, cgo-free binary promise is preserved. Item-state icons are Nerd
-Font Material glyphs (monochrome, one cell, tinted from the ANSI palette like
-everything else); `SPRAWL_ICONS=plain` swaps in geometric shapes for terminals
-without a patched font. `o` opens an item's PR with the platform URL handler,
-detached, falling back to an OSC 52 clipboard copy when there's no browser; PR
-numbers are also OSC 8 hyperlinks, which keeps them clickable **without**
-enabling mouse capture (that would break the terminal's own text selection).
+single static, cgo-free binary promise is preserved.
 
 ## Collaboration rules
 

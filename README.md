@@ -28,7 +28,7 @@ Supported targets: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64. The scr
 ### Requirements
 
 - Go **1.26.2** or newer. If you use [mise](https://mise.jdx.dev/), `mise install` inside the repo picks up the version pinned in `mise.toml`.
-- For `sprawl_dev`: a running sprawl backend on `http://localhost:4201` (or wherever your branch serves — see [Pointing the dev binary somewhere else](#pointing-the-dev-binary-somewhere-else)).
+- For `sprawl_dev`: a running sprawl backend on `http://localhost:4201` (build with `PORT=…` for another port).
 
 ### Build
 
@@ -101,7 +101,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 
 | Command | What it does |
 |---|---|
-| `sprawl version` | Prints the version and the API URL in effect (naming the `SPRAWL_API_URL` override when one is set). |
+| `sprawl version` | Prints the version and the API URL in effect. |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
 | `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent, name the project you're confined to (when a project key is set) and the level you resolve to there, and list any project-scoped permissions that elevate the default. Doubles as an auth-pipeline check. |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
