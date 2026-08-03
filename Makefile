@@ -12,7 +12,12 @@ DIST        := dist
 PROD_APP    := sprawl
 DEV_APP     := sprawl_dev
 PROD_URL    ?= https://sprawl.today
-DEV_URL     ?= http://localhost:4000
+# The dev backend's port moves with the branch / worktree it was built from, so
+# DEV_URL is overridable three ways, cheapest first:
+#   1. runtime, no rebuild:  SPRAWL_API_URL=http://localhost:4300 dist/sprawl_dev …
+#   2. per build:            make build-dev DEV_URL=http://localhost:4300
+#   3. per shell / worktree: export DEV_URL=http://localhost:4300  (direnv, .envrc)
+DEV_URL     ?= http://localhost:4201
 
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)

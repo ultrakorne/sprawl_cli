@@ -28,14 +28,14 @@ Supported targets: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64. The scr
 ### Requirements
 
 - Go **1.26.2** or newer. If you use [mise](https://mise.jdx.dev/), `mise install` inside the repo picks up the version pinned in `mise.toml`.
-- For `sprawl_dev`: a running sprawl backend on `http://localhost:4000`.
+- For `sprawl_dev`: a running sprawl backend on `http://localhost:4201` (or wherever your branch serves — see [Pointing the dev binary somewhere else](#pointing-the-dev-binary-somewhere-else)).
 
 ### Build
 
 Two binaries ship from this codebase. The only difference between them is the API URL and config directory baked in at link time.
 
 ```sh
-make build-dev   # → dist/sprawl_dev    (targets http://localhost:4000)
+make build-dev   # → dist/sprawl_dev    (targets http://localhost:4201)
 make build       # → dist/sprawl        (targets the prod URL)
 make build-all   # both
 ```
@@ -45,6 +45,22 @@ Override the prod URL at build time without editing the Makefile:
 ```sh
 make build PROD_URL=https://staging.example.com
 ```
+
+#### Pointing the dev binary somewhere else
+
+The dev backend's port moves with the branch or worktree you're running, so
+nothing is hard-coded. Three ways to redirect it, cheapest first:
+
+```sh
+SPRAWL_API_URL=http://localhost:4300 dist/sprawl_dev task list  # runtime, no rebuild
+make build-dev DEV_URL=http://localhost:4300                    # per build
+export DEV_URL=http://localhost:4300                            # per shell / worktree (direnv)
+```
+
+`sprawl_dev version` prints the URL actually in effect, and names the
+`SPRAWL_API_URL` override when one is set — so "which backend am I hitting?"
+is always one command away. The **prod** URL is never configurable at runtime
+beyond `SPRAWL_API_URL`; it ships baked in.
 
 Other useful targets: `make check`, `make test`, `make fmt`, `make vet`, `make tidy`, `make clean`. See [Testing](#testing) for the day-to-day loop.
 
@@ -100,7 +116,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 
 | Command | What it does |
 |---|---|
-| `sprawl version` | Prints the version and the baked-in API URL. |
+| `sprawl version` | Prints the version and the API URL in effect (naming the `SPRAWL_API_URL` override when one is set). |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
 | `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent, name the project you're confined to (when a project key is set) and the level you resolve to there, and list any project-scoped permissions that elevate the default. Doubles as an auth-pipeline check. |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
@@ -116,7 +132,10 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl checklist check <item_id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
 | `sprawl checklist uncheck <item_id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
 | `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `check` / `uncheck` for completion. |
+| `sprawl checklist state <item_id> <ready\|progress\|review\|none>` | Sets the item's hand-set state (`ready_to_pickup` / `in_progress` / `in_review`), or clears it with `none`. States are mutually exclusive, and setting one **un-completes** the item. Separate route from `checklist update`, which ignores the field. |
+| `sprawl checklist pr <item_id> <number\|none>` | Attaches a GitHub PR number to the item, or clears it. Independent of state and completion — only an explicit `none` removes it. The link is built client-side from the project's `github_url`; without one the number renders bare. |
 | `sprawl checklist delete <item_id>` | Hard-deletes a checklist item. May flip the parent task's `completed_at`. Idempotent on 404 like `task delete`. |
+| `sprawl queue` | Lists checklist items in a given state across every visible task — the "what can I pick up?" query. Defaults to `--state ready_to_pickup`; also accepts `progress` / `review`. Every result is incomplete by construction (completing an item clears its state). |
 | `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. An item with no notes is a legitimate success (`notes: null` in json/toon, empty body in text). |
 | `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
 | `sprawl update` | Downloads the latest GitHub release, verifies SHA256, and atomically replaces the running binary. Refuses on `sprawl_dev` and on local builds. Pass `--yes` to skip the confirmation prompt. See [features/auto-update](docs/features/auto-update/INDEX.md). |
@@ -204,6 +223,22 @@ sprawl checklist check 203                     # idempotent
 sprawl checklist uncheck 203                   # idempotent
 ```
 
+### `checklist state <item_id>` / `pr` / `queue`
+
+```sh
+sprawl queue                                   # what's ready to pick up, across tasks
+sprawl checklist state 203 progress            # claim it
+sprawl checklist pr    203 412                 # link the PR
+sprawl checklist state 203 review              # hand it back for review
+sprawl checklist state 203 none                # clear the state (PR number survives)
+sprawl checklist pr    203 none                # clear the PR number
+sprawl queue --state review                    # what's waiting on a human
+```
+
+Setting a state on a **completed** item un-completes it — the two are mutually
+exclusive server-side. Conversely, `checklist check` clears the state and keeps
+the PR number.
+
 ### `note set <item_id>`
 
 ```sh
@@ -238,6 +273,7 @@ Environment variables:
 | `SPRAWL_TOKEN` | Bearer token override. If unset, the token comes from `config.toml`. |
 | `SPRAWL_OUTPUT` | Session-wide default for `--format` (`text`, `json`, or `toon`). |
 | `SPRAWL_API_URL` | One-off API URL override. Use sparingly — the binary is the environment switch. |
+| `SPRAWL_ICONS` | Set to `plain` when your terminal font has no [Nerd Font](https://www.nerdfonts.com/) glyphs, so the TUI's item-state icons render as geometric shapes (`▸ ◐ ◉`) instead of tofu boxes. Default is the Nerd Font Material icons. |
 | `SPRAWL_NO_UPDATE_CHECK` | Set to `1` to suppress the once-per-day "newer version available" notice on the prod `sprawl` binary. The notice is otherwise on stderr only and never blocks. |
 
 Why TOON by default? The CLI's output is mostly consumed by LLMs, and TOON is 30–60 % cheaper than JSON in tokens while staying lossless. Pass `-h` (or `--format=text`) for human-friendly, color-styled output or `--format=json` if you're piping into `jq`.

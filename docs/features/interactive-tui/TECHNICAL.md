@@ -11,12 +11,13 @@ The TUI lives in its own package, `internal/tui/`, keeping cobra concerns in `in
 | `internal/tui/update.go` | `Update` — key dispatch, overlay handling, message handling, side-effect commands. |
 | `internal/tui/view.go` | `View` (returns `tea.View`), the per-screen and overlay renderers, framing/clipping/scrolling helpers. |
 | `internal/tui/msgs.go` | Message types, error classification (`isAuthErr`/`isUnauthorized`/`isNotFound`), and the `tea.Cmd` command builders that call the client. |
-| `internal/tui/client.go` | `Client` interface — the subset of `*client.Client` the model depends on (for test injection). |
-| `internal/tui/style.go` | `styles` (terminal-palette lipgloss styles), traffic-light `progress`, `checkbox`. |
+| `internal/tui/client.go` | `Client` interface — the subset of `*client.Client` the model depends on (for test injection); includes `SetChecklistItemState`. |
+| `internal/tui/style.go` | `styles` (terminal-palette lipgloss styles), traffic-light `progress`, `checkbox`, `state`; the `iconSet` for item states and `resolveIcons` (`SPRAWL_ICONS=plain` opt-out). |
 | `internal/tui/input.go` | `textInput` — hand-rolled single-line editor (values always echoed in the clear). |
 | `internal/tui/keymap.go` | `action` enum + pure `dispatch(screen, key)` key→action mapping. |
 | `internal/tui/markdown.go` | Pure Markdown formatters `taskMarkdown` / `itemMarkdown` for clipboard payloads. |
 | `internal/tui/editor.go` | `editInEditorCmd` — `$EDITOR` suspend/resume via `tea.ExecProcess`. |
+| `internal/tui/open.go` | `openURLCmd` — the `o` key's browser launch. Deliberately **not** `tea.ExecProcess`: there is nothing to suspend for, so the handler is started detached (stdio nulled so `xdg-open`'s chatter can't corrupt the alt-screen) and reaped in a goroutine. Refuses anything that isn't `https://`. |
 | `internal/cli/root.go` | Root `RunE`: bare `sprawl` on a TTY → `launchTUI`, else help. Registers `newTUICmd`. |
 | `internal/cli/interactive.go` | `newTUICmd` (`sprawl tui`) and `launchTUI` — resolves credentials and starts the TUI. |
 | `internal/cli/auth.go` | `resolveToken` / `resolveAgentSecret` — reused by `launchTUI`. |
@@ -45,11 +46,17 @@ The TUI is an Elm-architecture `*Model`:
 - **Credentials prompt** (`viewCreds` / `credRow`) — two unmasked `textInput`s (agent secret, project key) with `credFocus` selecting the active one; `tab`/↑↓ switch, Enter sets `credBusy` and fires `validateAndListCmd`.
 - **Not logged in** (`viewNotLoggedIn`) — static; quit only.
 - **List** (`viewList` / `listRows`) — column-aligned task rows with a centered scroll window (`windowStart`); traffic-light progress; search title/annotations.
-- **Checklist** (`viewChecklist` / `checklistRows`) — header from the cached full task; item rows with checkbox, id, title, `🗒` note flag.
+- **Checklist** (`viewChecklist` / `checklistRows`) — header from the cached full task; item rows with checkbox, id, a collapsible state badge, title, PR number, `🗒` note flag.
 - **Note** (`viewNote` / `wrapLines`) — soft-wrapped, scrollable note body with a `noteOff` line offset.
 - **Overlays** (`viewOverlay`) — confirm, single-line input, picker, help.
 
-`frame(title, body, hints)` assembles every screen to exactly the window height: header + rule, a body region clipped to available height, a transient status line, and a key-hint line. `clip` uses `ansi.Truncate` so styled lines never overflow horizontally.
+`frame(title, body, hints...)` assembles every screen to exactly the window height: header + rule, a body region clipped to available height, a transient status line, and `hintRows` (2) rows of key hints. `clip` uses `ansi.Truncate` so styled lines never overflow horizontally.
+
+The hint block is **as tall as it needs to be, capped at `maxHintRows` (2)**. `hintLines(hints, width)` returns one row whenever the whole string fits, and only spills onto a second when it doesn't — a screen with few bindings doesn't spend a row it isn't using. Breaks land on the ` · ` separators so a binding is never cut in half.
+
+Packing runs **backwards from the last binding**, so the row against the bottom edge is the full one and the overflow rises above it, rather than a full top line with a stub dangling under it. Segment order is untouched, so it still reads left to right, top to bottom. A string too long for two rows keeps its tail on the top row for `clip` to truncate — losing the middle of the list beats losing its end, where `? help` lives.
+
+Because the footer's height varies, so does the body's. `m.bodyHeight(hints)` is the single source of truth (`fixedChrome` = title + rule + status, plus however many hint rows that string needs) and the windowing renderers take the result as an argument. Each screen's hints live in `hintsFor(screen)` so the renderer and the scroll clamp (`noteMaxOff`) can't disagree about the height — previously each site open-coded `effHeight() - 4`, which is exactly what drifts when the footer changes.
 
 ## Data flow
 
@@ -63,11 +70,14 @@ All network access is non-blocking `tea.Cmd`s built in `msgs.go`; each returns a
 | Toggle item | `toggleItemCmd` (`SetChecklistItemCompleted`) | `itemToggledMsg` / `toggleFailedMsg` |
 | Task CRUD | `createTaskCmd` / `updateTaskCmd` / `setDueCmd` / `deleteTaskCmd` | `taskMutatedMsg` / `taskDeletedMsg` |
 | Item CRUD | `addItemCmd` / `updateItemCmd` / `setNotesCmd` / `deleteItemCmd` | `itemMutatedMsg` / `notesSetMsg` / `itemDeletedMsg` |
+| Item state / PR (`s`, `p`) | `setItemStateCmd` (`SetChecklistItemState`) | `itemStateSetMsg` / `itemStateFailedMsg` |
 | Search (server) | `searchTasksCmd` | `searchResultMsg` |
 
 Key details:
 
 - **Optimistic toggle**: the model flips the item and updates the parent task's derived progress locally (`recomputeProgress`, `syncListProgress`) before the request. `toggleFailedMsg` reverts and sets a footer error.
+- **Optimistic state cycle, resync on failure**: `s` advances the local copy first (so repeated presses cycle rather than re-sending the same next-state from a stale value) and mirrors the server's un-complete side effect. `itemStateFailedMsg` re-fetches the task instead of reverting — state and completion interact server-side, so no remembered previous value is trustworthy. The PR write is *not* optimistic; there's nothing to keep in sync between keypresses. Details in [item-state-and-pr](../item-state-and-pr/TECHNICAL.md).
+- **`replaceItem` is the shared "server copy wins" path** for every single-item write response (title, state, PR). It preserves the loaded `notes` body, since those responses never carry it, then recomputes task progress and syncs it to the list screen behind.
 - **Full-task caching**: opening a task caches the full task (items + notes) on the checklist screen (`Model.detail`); copy reuses the cache when available.
 - **Search**: live client-side filtering (`filterTasksByTitle`, pure) while typing; `enter` runs `SearchTasks` server-side and surfaces `MatchedChecklistItems`.
 - **Idempotent delete**: `isNotFound` treats a `404 not_found` on delete as a successful no-op, mirroring the CLI.
@@ -88,8 +98,9 @@ Key details:
 
 Copy actions build a Markdown string with the pure formatters in `markdown.go`, then hand it to bubbletea's `tea.SetClipboard(md)` (an OSC 52 escape — no external clipboard binary, works over SSH):
 
-- **Whole task** (`taskMarkdown`): `# Sprawl Task #<id> — <title>`, a status/due/project/progress line, the description (if any), and a `## Checklist` section with `- [x] #<id> <title>` rows and indented note lines. Emitted on `c` from the list; if the full task isn't loaded it is fetched first (`getTaskCmd(forCopy)`).
-- **Single item** (`itemMarkdown`): a `sprawl task: #<id> <title>` parent-context line, then the item as a `- [ ]`/`- [x] #<id> <title>` task-list line with its note indented underneath. The item line + note are rendered by the shared `writeItemMarkdown` helper, so single-item and whole-task copies stay identical. Emitted on `c` from the checklist / note screens.
+- **Whole task** (`taskMarkdown`): `# Sprawl Task #<id> — <title>`, a status/due/project/progress line, an optional `repo:` line when the project has a GitHub URL, the description (if any), and a `## Checklist` section with `- [x] #<id> <title>` rows and indented note lines. Emitted on `c` from the list; if the full task isn't loaded it is fetched first (`getTaskCmd(forCopy)`).
+- **Single item** (`itemMarkdown`): a `sprawl task: #<id> <title>` parent-context line, an optional `pr:` line carrying the resolved GitHub URL (this is the one copy path where a bare `pr:` number would have nothing to resolve against), then the item as a `- [ ]`/`- [x] #<id> <title>` task-list line with its note indented underneath. The item line + note are rendered by the shared `writeItemMarkdown` helper, so single-item and whole-task copies stay identical. Emitted on `c` from the checklist / note screens.
+- **State / PR ride as an HTML comment** (`mdStateComment`): a trailing `<!-- state: in_review pr: 412 -->` on the checklist line, matching the server's own Markdown export byte for byte so a pasted file round-trips both fields through import. It renders as nothing, and items with neither field carry no comment — copied output is unchanged for everything that never enters review.
 
 Both are followed by a transient footer confirmation (`✓ copied task #123` / `✓ copied item #45`), batched with the clipboard command.
 
@@ -107,6 +118,7 @@ Pure functions and the model are unit-tested without a running program:
 
 - `markdown_test.go`, `input_test.go`, `keymap_test.go` cover the formatters, the single-line input, and key→action dispatch.
 - `model_test.go` drives `Update` with synthetic messages (`KeyPressMsg`, result/error messages) and asserts state transitions — secret-prompt state machine, optimistic toggle + revert, back-stack, search filter.
+- `state_test.go` covers the `s` / `p` / `o` handlers: the pure cycle, the explicit-null clear, the un-complete mirror, the failure resync, local PR rejection, the https-only guard and clipboard fallback, the two-row footer, and the Markdown comment / `repo:` line. The column tests assert **display** columns via `lipgloss.Width`, not byte offsets — the `›` cursor is three bytes and the state glyphs four, so a byte index reports shifts the terminal doesn't show.
 - `httptest_test.go` wires a real `*client.Client` to an `httptest` server (the same pattern as `internal/client`), exercising the `Client` interface end to end. No running backend is required.
 
 `make check` (fmt-check + vet + test) must pass; do not commit.

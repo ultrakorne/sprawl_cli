@@ -28,6 +28,14 @@ func mdDash(s string) string {
 	return s
 }
 
+// taskProject is t.Project, nil-safe (the copy paths accept a nil task).
+func taskProject(t *client.Task) *client.Project {
+	if t == nil {
+		return nil
+	}
+	return t.Project
+}
+
 func mdProject(p *client.Project) string {
 	if p == nil || strings.TrimSpace(p.Name) == "" {
 		return "—"
@@ -54,6 +62,11 @@ func taskMarkdown(t *client.Task) string {
 	fmt.Fprintf(&b, "status: %s  due: %s  project: %s  progress: %d/%d\n",
 		mdDash(t.Status), mdDash(t.DueDate), mdProject(t.Project),
 		t.ChecklistProgress.Done, t.ChecklistProgress.Total)
+	// The repo is what turns an item's `pr: <n>` into a link, so it rides once
+	// on the header rather than being repeated per item. Omitted when unset.
+	if t.Project != nil && t.Project.GithubURL != "" {
+		fmt.Fprintf(&b, "repo: %s\n", t.Project.GithubURL)
+	}
 
 	if strings.TrimSpace(t.Description) != "" {
 		b.WriteString("\n")
@@ -74,12 +87,31 @@ func taskMarkdown(t *client.Task) string {
 // (`- [x] #<id> <title>`) followed by its note indented underneath. Shared by
 // the whole-task and single-item copy formats so both stay identical.
 func writeItemMarkdown(b *strings.Builder, it *client.ChecklistItem) {
-	fmt.Fprintf(b, "- %s #%d %s\n", mdCheckbox(it.Completed), it.ID, it.Title)
+	fmt.Fprintf(b, "- %s #%d %s%s\n", mdCheckbox(it.Completed), it.ID, it.Title, mdStateComment(it))
 	if it.Notes != nil && strings.TrimSpace(*it.Notes) != "" {
 		for _, ln := range strings.Split(strings.TrimRight(*it.Notes, "\n"), "\n") {
 			fmt.Fprintf(b, "      %s\n", ln)
 		}
 	}
+}
+
+// mdStateComment is the trailing ` <!-- state: in_review pr: 412 -->` on a
+// checklist line, matching the server's own export format byte for byte: it
+// renders as nothing in Markdown, and a file pasted back through import
+// round-trips both fields. Items with neither carry no comment at all, so
+// copied output is unchanged for everything that never enters review.
+func mdStateComment(it *client.ChecklistItem) string {
+	var parts []string
+	if it.State != "" {
+		parts = append(parts, "state: "+it.State)
+	}
+	if it.PRNumber > 0 {
+		parts = append(parts, fmt.Sprintf("pr: %d", it.PRNumber))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " <!-- " + strings.Join(parts, " ") + " -->"
 }
 
 // itemMarkdown formats a single checklist item as Markdown for the clipboard,
@@ -98,6 +130,11 @@ func itemMarkdown(it *client.ChecklistItem, task *client.Task) string {
 		taskTitle = task.Title
 	}
 	fmt.Fprintf(&b, "sprawl task: #%d %s\n", taskID, taskTitle)
+	// A single-item copy is the case where a `pr:` number has nothing to resolve
+	// against, so name the repo when the parent task's project has one.
+	if u := client.PRURL(taskProject(task), it.PRNumber); u != "" {
+		fmt.Fprintf(&b, "pr: %s\n", u)
+	}
 	writeItemMarkdown(&b, it)
 	return b.String()
 }

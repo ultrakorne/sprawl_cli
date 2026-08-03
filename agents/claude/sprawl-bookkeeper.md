@@ -1,7 +1,7 @@
 ---
 name: sprawl-bookkeeper
 version: "0.1.0"
-description: Background sprawl bookkeeper. Delegate to this agent whenever the parent session needs to read or write the sprawl task space — check off items, mark a task done, leave a hand-off note, create a task or item, set a due date the user explicitly asked for. Run it in the background (run_in_background=true) for fire-and-forget bookkeeping done alongside other work; run it in the foreground when the result — e.g. a new task/item id — is what you're waiting on. Either way it reports back what it did.
+description: Background sprawl bookkeeper. Delegate to this agent whenever the parent session needs to read or write the sprawl task space — check off items, mark a task done, leave a hand-off note, create a task or item, set an item's state or PR number, set a due date the user explicitly asked for. Run it in the background (run_in_background=true) for fire-and-forget bookkeeping done alongside other work; run it in the foreground when the result — e.g. a new task/item id — is what you're waiting on. Either way it reports back what it did.
 tools: Bash, Read
 model: haiku
 skills: [sprawl]

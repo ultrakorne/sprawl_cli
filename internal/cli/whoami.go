@@ -77,10 +77,11 @@ func whoamiProjectMap(p *client.WhoamiProject) any {
 		return nil
 	}
 	return map[string]any{
-		"id":    p.ID,
-		"name":  p.Name,
-		"key":   p.Key,
-		"level": p.Level,
+		"id":         p.ID,
+		"name":       p.Name,
+		"key":        p.Key,
+		"level":      p.Level,
+		"github_url": nilIfEmpty(p.GithubURL),
 	}
 }
 
@@ -112,6 +113,11 @@ func whoamiText(w *client.Whoami) string {
 				sty.render(sty.warn, "none — the key is valid but this agent has no access to that project"))
 		} else {
 			fmt.Fprintf(&b, "  %s   %s\n", sty.render(sty.faint, "access:"), p.Level)
+		}
+		// The repo PR links are built against. Printed only when set — a project
+		// without one renders PR numbers bare, which is not an error.
+		if p.GithubURL != "" {
+			fmt.Fprintf(&b, "  %s   %s\n", sty.render(sty.faint, "github:"), p.GithubURL)
 		}
 	}
 	header := sty.render(sty.bold, "elevated project permissions:")

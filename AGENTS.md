@@ -4,7 +4,7 @@ HTTP client. Single static Go binary (two variants from one codebase), JSON on t
 
 ## Documentation
 
-Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, checklists, theme, whoami).
+Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, checklists, item-state-and-pr, interactive-tui, activity, auto-update, theme, whoami). `docs/CONTEXT.md` is the glossary — check it before naming a concept in code or docs.
 
 ## Stack
 
@@ -21,11 +21,12 @@ One codebase produces two binaries. The *only* difference is linker-injected val
 | Binary | `APIURL` | `AppName` | Config dir |
 |---|---|---|---|
 | `sprawl` (prod) | `https://sprawl.today` | `sprawl` | `~/.config/sprawl/` |
-| `sprawl_dev` | `http://localhost:4000` | `sprawl_dev` | `~/.config/sprawl_dev/` |
+| `sprawl_dev` | `http://localhost:4201` | `sprawl_dev` | `~/.config/sprawl_dev/` |
 
 - **The API URL is never in config.** When prod moves, ship a new release. Do not add a `url` field or a `--url` flag.
 - **No `--profile` / `--env` flag.** Binary choice is the environment switch.
 - **One-off override**: `SPRAWL_API_URL=…` env var only. Never persists.
+- **The dev URL is a default, not a constant.** The dev backend's port moves with the branch / worktree being run, so `DEV_URL` is overridable per build (`make build-dev DEV_URL=…`) or per shell (`export DEV_URL=…`, direnv). `sprawl version` prints the URL actually in effect and names the `SPRAWL_API_URL` override when one is set.
 
 ## Credential model (do not regress)
 
@@ -88,7 +89,7 @@ mise.toml            Go version pin
 ## Common commands
 
 ```sh
-make build-dev          # dist/sprawl_dev, localhost:4000 baked in
+make build-dev          # dist/sprawl_dev, localhost:4201 baked in (override: DEV_URL=…)
 make build              # dist/sprawl, prod URL baked in
 make build-all          # both
 make run-dev ARGS="version"
@@ -114,7 +115,13 @@ exclusively from the terminal's ANSI palette (indices 0–15), same as the CLI's
 text styling. The agent-secret prompt is masked and kept in memory only — never
 written to disk, logged, or echoed (invariants #2/#3). Clipboard copy uses
 OSC 52 (`tea.SetClipboard`) and `$EDITOR` editing uses `tea.ExecProcess`, so the
-single static, cgo-free binary promise is preserved.
+single static, cgo-free binary promise is preserved. Item-state icons are Nerd
+Font Material glyphs (monochrome, one cell, tinted from the ANSI palette like
+everything else); `SPRAWL_ICONS=plain` swaps in geometric shapes for terminals
+without a patched font. `o` opens an item's PR with the platform URL handler,
+detached, falling back to an OSC 52 clipboard copy when there's no browser; PR
+numbers are also OSC 8 hyperlinks, which keeps them clickable **without**
+enabling mouse capture (that would break the terminal's own text selection).
 
 ## Collaboration rules
 

@@ -40,6 +40,7 @@ const (
 	inEditTaskTitle
 	inAddItem
 	inEditItemTitle
+	inSetPR
 )
 
 type confirmKind int
@@ -314,6 +315,43 @@ func (m *Model) removeTask(id int64) {
 		}
 	}
 	m.tasks = out
+}
+
+// replaceItem swaps the loaded copy of an item for a fresher one from the
+// server and recomputes everything derived from it. The incoming item keeps the
+// loaded notes body: single-item write responses (title, state, PR) never carry
+// notes, so taking the response verbatim would blank the note screen.
+func (m *Model) replaceItem(item *client.ChecklistItem) {
+	if m.detail == nil || item == nil {
+		return
+	}
+	for i, it := range m.detail.ChecklistItems {
+		if it.ID == item.ID {
+			item.Notes = it.Notes
+			m.detail.ChecklistItems[i] = item
+			break
+		}
+	}
+	m.detail.ChecklistProgress = recomputeProgress(m.detail.ChecklistItems)
+	m.syncListProgress(m.detail.ID, m.detail.ChecklistProgress)
+}
+
+// nextState is the `s` key's cycle: none → ready → progress → review → none.
+// An unrecognised value (a state this build doesn't know) restarts the cycle
+// rather than sticking. Pure and unit-tested.
+func nextState(cur string) string {
+	switch cur {
+	case "":
+		return client.StateReadyToPickup
+	case client.StateReadyToPickup:
+		return client.StateInProgress
+	case client.StateInProgress:
+		return client.StateInReview
+	case client.StateInReview:
+		return ""
+	default:
+		return client.StateReadyToPickup
+	}
 }
 
 // removeItemByID returns items with the given id dropped (order preserved).

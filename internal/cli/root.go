@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
+	"github.com/ultrakorne/sprawl_cli/internal/client"
 	"github.com/ultrakorne/sprawl_cli/internal/tui"
 	"github.com/ultrakorne/sprawl_cli/internal/updater"
 )
@@ -85,6 +86,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newThemeCmd(opts))
 	root.AddCommand(newTaskCmd(opts))
 	root.AddCommand(newChecklistCmd(opts))
+	root.AddCommand(newQueueCmd(opts))
 	root.AddCommand(newNoteCmd(opts))
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newTUICmd(opts))
@@ -94,12 +96,20 @@ func NewRootCmd() *cobra.Command {
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print version and the baked-in API URL",
+		Short: "Print version and the API URL this binary talks to",
 		Args:  textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The EFFECTIVE url, not the baked-in one: $SPRAWL_API_URL points a
+			// dev binary at whichever backend a branch / worktree is serving, and
+			// "which server am I actually hitting?" is the question this line
+			// exists to answer. The override is named when it's in play.
+			api := client.BaseURL()
+			if api != build.APIURL {
+				api += fmt.Sprintf("  (SPRAWL_API_URL override; built with %s)", build.APIURL)
+			}
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
 				"%s %s\n  api:    %s\n  date:   %s\n",
-				build.AppName, build.Version, build.APIURL, build.Date,
+				build.AppName, build.Version, api, build.Date,
 			)
 			return err
 		},

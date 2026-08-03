@@ -39,7 +39,7 @@ func TestActivityText_TasksAndItems(t *testing.T) {
 			{
 				ID: 101, Title: "Draft proposal", Completed: true,
 				CompletedAt: "2026-04-29T16:42:11Z",
-				Task: client.ActivityItemTask{
+				Task: client.ItemTask{
 					ID: 42, Title: "Ship Q2 plan",
 					Project: &client.Project{ID: 7, Name: "Roadmap"},
 				},
@@ -81,7 +81,7 @@ func TestActivityText_ItemsOnly(t *testing.T) {
 	got := activityText(&client.ActivityLog{
 		Date: "2026-04-27",
 		CompletedItems: []*client.ActivityChecklistItem{
-			{ID: 9, Title: "tiny step", Task: client.ActivityItemTask{ID: 3, Title: "Parent"}},
+			{ID: 9, Title: "tiny step", Task: client.ItemTask{ID: 3, Title: "Parent"}},
 		},
 	})
 	if !strings.Contains(got, "completed items (1)") {

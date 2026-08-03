@@ -3,13 +3,14 @@ name: sprawl
 description: >
   Collaborate on shared tasks, checklists, and notes with the human and other
   agents via the sprawl CLI. Use this skill whenever the user asks you to look
-  at "my tasks", "the backlog", "what's assigned to me", to check off a
-  checklist item, leave a note for another agent, create a task, or coordinate
-  work with another agent — anything that reads or writes the sprawl task
-  space.
+  at "my tasks", "the backlog", "what's assigned to me", to pick up work that's
+  ready, check off a checklist item, mark something in progress or in review,
+  attach a PR number, leave a note for another agent, create a task, or
+  coordinate work with another agent — anything that reads or writes the sprawl
+  task space.
 license: 'MIT'
 metadata:
-  version: 0.3.0
+  version: 0.4.0
 allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(test:*)
 ---
 
@@ -250,6 +251,8 @@ sprawl task <id> --full                        # task + its checklist items + no
 sprawl task search "<query>"                   # case-insensitive substring on title
 sprawl checklist <task_id>                     # list checklist items for a task
 sprawl checklist <task_id> --full              # items with their notes inline, one call
+sprawl queue                                   # items ready to pick up, across every task
+sprawl queue --state progress|review           # what's being worked / awaiting review
 sprawl note show <item_id>                     # raw notes blob; empty is valid
 sprawl activity                                # completed tasks + items for today
 sprawl activity --days-ago 1                   # yesterday
@@ -334,6 +337,26 @@ sprawl checklist delete <item_id>             # hard-delete; idempotent on 404
 Use `check` / `uncheck` for completion — `update` doesn't mutate it. The split
 avoids a GET-then-PATCH race when you don't know current state.
 
+### Writes — item state and PR number
+
+Two independent fields on a checklist item. State says where the work is; the
+PR number links it to GitHub.
+
+```bash
+sprawl checklist state <item_id> ready|progress|review|none
+sprawl checklist pr    <item_id> <number|none>
+```
+
+Rules that bite:
+
+- **States are exclusive** — setting one replaces the previous.
+- **Setting a state un-completes the item.** State and "done" are mutually
+  exclusive server-side, so never set a state on something already checked
+  off unless you mean to reopen it.
+- **Checking an item clears its state**; the PR number survives.
+- `state` and `pr` are separate routes from `checklist update`, which ignores
+  both fields.
+
 ### Writes — notes (hand-off channel)
 
 Notes are per-checklist-item free-form blobs, addressed separately so list
@@ -369,12 +392,30 @@ These are the common shapes of work the skill exists for.
 ### 1. Pick up assigned work
 
 ```bash
-sprawl task list
-# inspect output, pick tasks you can act on
+sprawl queue                   # items flagged ready to pick up, across every task
 sprawl task <id> --full        # the task plus every item and its notes, one call
 ```
 
-Filter by what's visible — your key already scopes the list server-side.
+`sprawl queue` is the entry point when the user says "pick something up" or
+"what's ready?". Fall back to `sprawl task list` when nothing is queued or you
+need the wider picture — your key already scopes both server-side.
+
+**Claim it, then work it.** The states are how the human and other agents see
+who's on what, live:
+
+```bash
+sprawl checklist state 7 progress   # claiming it — do this before you start
+# … do the work, open the PR …
+sprawl checklist pr    7 412
+sprawl checklist state 7 review     # hands it back
+```
+
+Stop at `review`. **Don't check off an item you put in review** — the human
+reviews the PR and checks it off. Checking it would clear the state and hide
+the work from their queue.
+
+Items you finish that never involved a PR follow the ordinary rule: check them
+off as you go ([§2](#2-make-progress-on-a-checklist)).
 
 **Read the notes before you start.** Notes are where the previous agent or
 the human left hand-off context — skipping them is how you redo work someone
@@ -453,9 +494,11 @@ sprawl checklist add <task_id> --title "check #ops logs"
 Finishing your slice and passing to another agent or the human:
 
 1. `checklist check` the items you finished.
-2. `note set` on the next item with a short status + what you couldn't do and
+2. Anything you left mid-flight: `checklist state <id> ready` so it shows up in
+   the next agent's `sprawl queue` instead of looking claimed.
+3. `note set` on the next item with a short status + what you couldn't do and
    why (permission, missing info, blocker).
-3. Do **not** `task update` the title / description just to log status — that
+4. Do **not** `task update` the title / description just to log status — that
    rewrites the task. Status belongs in notes or new checklist items.
 
 ## Guardrails
@@ -469,6 +512,10 @@ Finishing your slice and passing to another agent or the human:
 - **Never** retry `403` responses. Permission won't flip mid-session.
 - **Don't** use `task update` as a status channel. Use notes / checklist
   items.
+- **Don't check off an item you put `in_review`.** That's the human's call
+  once they've read the PR. Set the state, leave it unchecked, move on.
+- **Don't set a state on a completed item** — it un-completes it. Only do that
+  when you genuinely mean to reopen the work.
 - **Don't delete tasks or checklist items the user didn't ask you to remove.**
   `task delete` is a soft-delete and can only be undone via the LiveView
   trash bin (no API to restore). `checklist delete` is a hard delete and

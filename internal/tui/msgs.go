@@ -42,12 +42,15 @@ type itemToggledMsg struct {
 	item *client.ChecklistItem
 }
 
-// toggleFailedMsg reverts an optimistic toggle: itemID identifies the item and
-// prev is the state to restore.
+// toggleFailedMsg reverts an optimistic toggle: itemID identifies the item,
+// prev is the completion flag to restore, and prevState the item state that was
+// cleared alongside it (completing an item clears its state, so the optimistic
+// update drops both and the revert has to put both back).
 type toggleFailedMsg struct {
-	itemID int64
-	prev   bool
-	err    error
+	itemID    int64
+	prev      bool
+	prevState string
+	err       error
 }
 
 // taskMutatedMsg is the result of create/update/set-due — a fresh task.
@@ -65,6 +68,25 @@ type itemMutatedMsg struct {
 }
 
 type itemDeletedMsg struct{ id int64 }
+
+// itemStateSetMsg is the server's confirmation of a state / PR-number write.
+// label is the footer text for the specific change ("state → review", "PR
+// #412"), decided when the command is built so the reducer stays generic.
+type itemStateSetMsg struct {
+	item  *client.ChecklistItem
+	label string
+}
+
+// itemStateFailedMsg reports a failed state / PR write. The optimistic local
+// change is resynced by re-fetching the task rather than by remembering a
+// previous value: completion and state interact server-side (setting a state
+// un-completes an item), so the server's copy is the only trustworthy one.
+// context names which of the two writes failed — they share a route but not a
+// keypress, so "set state" on a failed `p` would misdirect.
+type itemStateFailedMsg struct {
+	err     error
+	context string
+}
 
 // notesSetMsg is the result of writing an item's note.
 type notesSetMsg struct {
@@ -202,11 +224,11 @@ func getTaskCmd(ctx context.Context, c Client, id int64, forCopy bool) tea.Cmd {
 	}
 }
 
-func toggleItemCmd(ctx context.Context, c Client, itemID int64, want, prev bool) tea.Cmd {
+func toggleItemCmd(ctx context.Context, c Client, itemID int64, want, prev bool, prevState string) tea.Cmd {
 	return func() tea.Msg {
 		item, err := c.SetChecklistItemCompleted(ctx, itoa(itemID), want)
 		if err != nil {
-			return toggleFailedMsg{itemID: itemID, prev: prev, err: err}
+			return toggleFailedMsg{itemID: itemID, prev: prev, prevState: prevState, err: err}
 		}
 		return itemToggledMsg{item: item}
 	}
@@ -270,6 +292,20 @@ func updateItemCmd(ctx context.Context, c Client, itemID int64, title string) te
 			return opErrMsg(err, "edit item")
 		}
 		return itemMutatedMsg{item: item}
+	}
+}
+
+// setItemStateCmd writes state and/or pr_number through the dedicated route.
+// attrs is the flat body: a key present with nil clears that field, an absent
+// key leaves it alone. label is the footer text on success, errCtx the prefix
+// on failure.
+func setItemStateCmd(ctx context.Context, c Client, itemID int64, attrs map[string]any, label, errCtx string) tea.Cmd {
+	return func() tea.Msg {
+		item, err := c.SetChecklistItemState(ctx, itoa(itemID), attrs)
+		if err != nil {
+			return itemStateFailedMsg{err: err, context: errCtx}
+		}
+		return itemStateSetMsg{item: item, label: label}
 	}
 }
 
