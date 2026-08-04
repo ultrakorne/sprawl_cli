@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
+	"github.com/ultrakorne/sprawl_cli/internal/icons"
 )
 
 // -- pure parsing -----------------------------------------------------------
@@ -74,7 +75,7 @@ func TestParsePRNumber(t *testing.T) {
 
 // -- state / pr commands ----------------------------------------------------
 
-func TestRunChecklistState_SetsState(t *testing.T) {
+func TestRunItemState_SetsState(t *testing.T) {
 	var gotPath, gotMethod string
 	var gotBody map[string]any
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
@@ -87,9 +88,9 @@ func TestRunChecklistState_SetsState(t *testing.T) {
 	})
 	var out, errOut bytes.Buffer
 
-	if err := runChecklistState(context.Background(), &out, &errOut, "7",
-		map[string]any{"state": "in_review"}, fx.Opts); err != nil {
-		t.Fatalf("runChecklistState: %v", err)
+	if err := runItemState(context.Background(), &out, &errOut, "7",
+		map[string]any{"state": "in_review"}, itemStateSummary, fx.Opts); err != nil {
+		t.Fatalf("runItemState: %v", err)
 	}
 
 	if gotMethod != http.MethodPatch || gotPath != "/api/v1/checklist_items/7/state" {
@@ -107,19 +108,46 @@ func TestRunChecklistState_SetsState(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("decode output: %v — %s", err, out.String())
 	}
-	if payload.Item.State != "in_review" || payload.Item.PRNumber != 412 {
+	// Short form on the way out, wire value on the way in.
+	if payload.Item.State != "review" || payload.Item.PRNumber != 412 {
 		t.Fatalf("payload = %+v", payload.Item)
 	}
 }
 
-func TestChecklistStateCmd_ClearSendsNull(t *testing.T) {
+// The one-line write summaries, which replaced the old item rendering.
+func TestItemStateAndPRSummaries(t *testing.T) {
+	for _, tc := range []struct {
+		item *client.ChecklistItem
+		want string
+	}{
+		{&client.ChecklistItem{ID: 7, State: client.StateInReview}, "✓ item 7 → review"},
+		{&client.ChecklistItem{ID: 7}, "✓ item 7 → no state"},
+	} {
+		if got := itemStateSummary(tc.item); got != tc.want {
+			t.Errorf("itemStateSummary = %q, want %q", got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		item *client.ChecklistItem
+		want string
+	}{
+		{&client.ChecklistItem{ID: 7, PRNumber: 412}, "✓ item 7 → PR #412"},
+		{&client.ChecklistItem{ID: 7}, "✓ item 7 → no PR"},
+	} {
+		if got := itemPRSummary(tc.item); got != tc.want {
+			t.Errorf("itemPRSummary = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestItemStateCmd_ClearSendsNull(t *testing.T) {
 	var gotBody map[string]any
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		writeItemJSON(w, map[string]any{"id": 7, "title": "x", "state": nil, "pr_number": nil})
 	})
 
-	cmd := newChecklistStateCmd(fx.Opts)
+	cmd := newItemStateCmd(fx.Opts)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"7", "none"})
@@ -137,7 +165,7 @@ func TestChecklistStateCmd_ClearSendsNull(t *testing.T) {
 	}
 }
 
-func TestChecklistStateCmd_InvalidValueFailsLocally(t *testing.T) {
+func TestItemStateCmd_InvalidValueFailsLocally(t *testing.T) {
 	called := false
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -145,7 +173,7 @@ func TestChecklistStateCmd_InvalidValueFailsLocally(t *testing.T) {
 	})
 
 	var out, errOut bytes.Buffer
-	cmd := newChecklistStateCmd(fx.Opts)
+	cmd := newItemStateCmd(fx.Opts)
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{"7", "done"})
@@ -160,7 +188,7 @@ func TestChecklistStateCmd_InvalidValueFailsLocally(t *testing.T) {
 	}
 }
 
-func TestChecklistPRCmd_SetAndClear(t *testing.T) {
+func TestItemPRCmd_SetAndClear(t *testing.T) {
 	var bodies []map[string]any
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
 		var b map[string]any
@@ -170,7 +198,7 @@ func TestChecklistPRCmd_SetAndClear(t *testing.T) {
 	})
 
 	for _, args := range [][]string{{"7", "412"}, {"7", "none"}} {
-		cmd := newChecklistPRCmd(fx.Opts)
+		cmd := newItemPRCmd(fx.Opts)
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})
 		cmd.SetArgs(args)
@@ -223,7 +251,7 @@ func TestRunQueue_JSONPayloadAndPRURL(t *testing.T) {
 	})
 	var out, errOut bytes.Buffer
 
-	if err := runQueue(context.Background(), &out, &errOut, client.StateInReview, fx.Opts); err != nil {
+	if err := runQueue(context.Background(), &out, &errOut, client.StateInReview, false, fx.Opts); err != nil {
 		t.Fatalf("runQueue: %v", err)
 	}
 	if gotState != client.StateInReview {
@@ -252,6 +280,9 @@ func TestRunQueue_JSONPayloadAndPRURL(t *testing.T) {
 		t.Fatalf("items = %d", len(payload.Items))
 	}
 	first := payload.Items[0]
+	if first.State != "review" {
+		t.Fatalf("queue state = %q, want the short form", first.State)
+	}
 	if first.PRURL == nil || *first.PRURL != "https://github.com/ultrakorne/sprawl/pull/412" {
 		t.Fatalf("pr_url = %v", first.PRURL)
 	}
@@ -266,6 +297,64 @@ func TestRunQueue_JSONPayloadAndPRURL(t *testing.T) {
 	}
 	if second.PRNumber != 77 {
 		t.Fatalf("pr number dropped: %+v", second)
+	}
+}
+
+// `queue --full` has to send ?full=true and surface the notes it buys, in both
+// the payload and the rendering. queueText alone can't catch a dropped param.
+func TestRunQueue_FullSendsParamAndEmitsNotes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		full      bool
+		wantParam string
+	}{
+		{"non-full", false, ""},
+		{"full", true, "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotFull string
+			fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
+				gotFull = r.URL.Query().Get("full")
+				w.Header().Set("Content-Type", "application/json")
+				item := map[string]any{
+					"id": 7, "title": "add the migration", "completed": false, "position": 1,
+					"state": "in_review", "pr_number": 412, "has_notes": true,
+					"task": map[string]any{"id": 3, "title": "Ship the API", "project": nil},
+				}
+				// Mirror the server: notes ride only on the full read.
+				if tc.full {
+					item["notes"] = "blocked on the backfill"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"checklist_items": []any{item}})
+			})
+
+			var out, errOut bytes.Buffer
+			if err := runQueue(context.Background(), &out, &errOut, client.StateInReview, tc.full, fx.Opts); err != nil {
+				t.Fatalf("runQueue: %v", err)
+			}
+			if gotFull != tc.wantParam {
+				t.Fatalf("full query = %q, want %q", gotFull, tc.wantParam)
+			}
+
+			var payload struct {
+				Items []map[string]any `json:"checklist_items"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+				t.Fatalf("decode: %v — %s", err, out.String())
+			}
+			notes, present := payload.Items[0]["notes"]
+			if tc.full {
+				if !present || notes != "blocked on the backfill" {
+					t.Fatalf("notes = %v (present=%v), want the body", notes, present)
+				}
+			} else if present {
+				t.Fatalf("notes must be absent when they weren't fetched: %+v", payload.Items[0])
+			}
+			// has_notes rides either way — it's what drives the NOTES column.
+			if payload.Items[0]["has_notes"] != true {
+				t.Fatalf("has_notes = %v", payload.Items[0]["has_notes"])
+			}
+		})
 	}
 }
 
@@ -309,25 +398,42 @@ func TestQueueCmd_RejectsNoneState(t *testing.T) {
 }
 
 func TestQueueText_EmptyAndRows(t *testing.T) {
-	if got := queueText(nil, client.StateReadyToPickup); !strings.Contains(got, "no items in ready") {
+	if got := queueText(nil, client.StateReadyToPickup, false); !strings.Contains(got, "no items in ready") {
 		t.Fatalf("empty = %q", got)
 	}
-	items := []*client.QueueItem{{
-		ChecklistItem: client.ChecklistItem{ID: 7, Title: "add the migration", State: client.StateInReview, PRNumber: 412},
+	items := []*client.ItemDetail{{
+		ChecklistItem: client.ChecklistItem{ID: 7, Title: "add the migration", State: client.StateInReview, PRNumber: 412, HasNotes: true, Notes: ptr("the note")},
 		Task:          client.ItemTask{ID: 3, Title: "Ship the API", Project: &client.Project{ID: 1, Name: "Sprawl"}},
 	}}
-	got := queueText(items, client.StateInReview)
-	for _, want := range []string{"review", "#412", "add the migration", "#3 Ship the API", "Sprawl", "PROJECT"} {
+	got := queueText(items, client.StateInReview, false)
+	// The task id is bare here too — the `#` belongs to PR numbers only.
+	for _, want := range []string{"review", "#412", "add the migration", "3 Ship the API", "Sprawl", "PROJECT"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+	// The checkbox and STATE columns are dropped: every queued item is
+	// incomplete by construction and the state is the query, so both would be
+	// constant down the column.
+	for _, unwanted := range []string{"[x]", "STATE"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("queue should not render %q:\n%s", unwanted, got)
+		}
+	}
+	// --full expands the note under the row; without it the NOTES column alone
+	// says there is one.
+	if strings.Contains(got, "note: the note") {
+		t.Errorf("non-full queue must not expand notes:\n%s", got)
+	}
+	if full := queueText(items, client.StateInReview, true); !strings.Contains(full, "note: the note") {
+		t.Errorf("--full should expand the note:\n%s", full)
 	}
 }
 
 // -- item / project rendering ----------------------------------------------
 
-func TestChecklistItemMap_EmitsNullForClearedFields(t *testing.T) {
-	m := checklistItemMap(&client.ChecklistItem{ID: 7, Title: "x"}, false)
+func TestItemMap_EmitsNullForClearedFields(t *testing.T) {
+	m := itemMap(&client.ChecklistItem{ID: 7, Title: "x"}, nil, false)
 	// The keys are always present — a consumer shouldn't have to distinguish
 	// "absent" from "null" to answer "does this item have a state?".
 	for _, key := range []string{"state", "pr_number"} {
@@ -340,8 +446,8 @@ func TestChecklistItemMap_EmitsNullForClearedFields(t *testing.T) {
 		}
 	}
 
-	m = checklistItemMap(&client.ChecklistItem{ID: 7, Title: "x", State: client.StateInReview, PRNumber: 412}, false)
-	if m["state"] != client.StateInReview || m["pr_number"] != int64(412) {
+	m = itemMap(&client.ChecklistItem{ID: 7, Title: "x", State: client.StateInReview, PRNumber: 412}, nil, false)
+	if m["state"] != "review" || m["pr_number"] != int64(412) {
 		t.Fatalf("set item = %v", m)
 	}
 }
@@ -361,13 +467,14 @@ func TestProjectMap_CarriesKeyAndGithubURL(t *testing.T) {
 	}
 }
 
-func TestChecklistItemsText_ShowsStateAndPR(t *testing.T) {
-	items := []*client.ChecklistItem{
-		{ID: 5, Title: "plain"},
-		{ID: 6, Title: "in review", State: client.StateInReview, PRNumber: 412},
+func TestItemTable_ShowsStateAndPR(t *testing.T) {
+	t.Setenv("SPRAWL_ICONS", "plain")
+	views := []itemView{
+		{item: &client.ChecklistItem{ID: 5, Title: "plain"}},
+		{item: &client.ChecklistItem{ID: 6, Title: "in review", State: client.StateInReview, PRNumber: 412}},
 	}
-	got := checklistItemsText(items)
-	for _, want := range []string{"STATE", "PR", "review", "#412"} {
+	got := itemTable(views, itemCols{checkbox: true, state: true}, false)
+	for _, want := range []string{"STATE", "PR", icons.Plain.Review, "#412"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
@@ -376,23 +483,9 @@ func TestChecklistItemsText_ShowsStateAndPR(t *testing.T) {
 	if !strings.Contains(got, "-") {
 		t.Errorf("stateless row should render a placeholder:\n%s", got)
 	}
-}
-
-func TestItemTrailer(t *testing.T) {
-	// Nothing set → nothing appended, so every pre-feature rendering is
-	// byte-identical.
-	if got := itemTrailer(&client.ChecklistItem{ID: 1, Title: "x"}, nil); got != "" {
-		t.Fatalf("empty trailer = %q", got)
-	}
-	repo := &client.Project{ID: 1, Name: "Sprawl", GithubURL: "https://github.com/ultrakorne/sprawl"}
-	got := itemTrailer(&client.ChecklistItem{ID: 1, State: client.StateInReview, PRNumber: 412}, repo)
-	if !strings.Contains(got, "review") || !strings.Contains(got, "https://github.com/ultrakorne/sprawl/pull/412") {
-		t.Fatalf("resolved trailer = %q", got)
-	}
-	// Without a project the number is still shown, just unlinked.
-	got = itemTrailer(&client.ChecklistItem{ID: 1, State: client.StateInReview, PRNumber: 412}, nil)
-	if !strings.Contains(got, "#412") || strings.Contains(got, "github.com") {
-		t.Fatalf("unlinked trailer = %q", got)
+	// The row carries the ICON, never the word.
+	if strings.Contains(got, "review ") || strings.Contains(got, "in_review") {
+		t.Errorf("rows must not spell the state out:\n%s", got)
 	}
 }
 

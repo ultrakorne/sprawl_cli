@@ -309,11 +309,24 @@ func setItemStateCmd(ctx context.Context, c Client, itemID int64, attrs map[stri
 	}
 }
 
+// setNotesCmd writes an item's note through the generic item PATCH — the same
+// route `item update --notes` uses. There is no notes-specific endpoint any
+// more: a note is a field of an item, not an object of its own, so one route
+// writes it.
+//
+// The response is the full item, which carries the saved note back (null once
+// cleared) — that echo is what makes the write verifiable rather than assumed.
 func setNotesCmd(ctx context.Context, c Client, itemID int64, notes string) tea.Cmd {
 	return func() tea.Msg {
-		saved, err := c.SetNotes(ctx, itoa(itemID), notes)
+		item, err := c.UpdateChecklistItem(ctx, itoa(itemID), map[string]any{"notes": notes})
 		if err != nil {
 			return opErrMsg(err, "save note")
+		}
+		// Collapse an empty note to nil so the model sees one "empty ⇒ nil"
+		// contract regardless of whether the server echoed null or "".
+		saved := item.Notes
+		if saved != nil && *saved == "" {
+			saved = nil
 		}
 		return notesSetMsg{itemID: itemID, notes: saved}
 	}

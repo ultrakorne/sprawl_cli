@@ -86,7 +86,7 @@ func whoamiProjectMap(p *client.WhoamiProject) any {
 }
 
 // whoamiText is the human-friendly view: who you are + which projects (if any)
-// elevate your default scope. Mirrors the shape of taskDetailText so the
+// elevate your default scope. Mirrors the shape of the task detail view so the
 // command line stays familiar.
 func whoamiText(w *client.Whoami) string {
 	var b strings.Builder

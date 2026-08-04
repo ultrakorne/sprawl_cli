@@ -622,108 +622,101 @@ func TestSearchTasks_EmptyQuery422(t *testing.T) {
 	}
 }
 
-func TestListChecklistItems_Success(t *testing.T) {
+func TestGetChecklistItem_Success(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
-			"checklist_items": []any{
-				map[string]any{
-					"id": 5, "title": "a", "completed": false, "position": 0,
-					"has_notes": false, "last_actor": nil,
-				},
-				map[string]any{
-					"id": 6, "title": "b", "completed": true, "position": 1,
-					"has_notes":  true,
-					"last_actor": map[string]any{"type": "user", "id": 1},
+			"checklist_item": map[string]any{
+				"id": 203, "title": "add the migration", "completed": false,
+				"position": 2, "state": "in_review", "pr_number": 412,
+				"has_notes": true, "notes": "blocked on the backfill",
+				"last_actor": map[string]any{"type": "user", "id": 1},
+				"task": map[string]any{
+					"id": 119, "title": "Ship it",
+					"project": map[string]any{
+						"id": 42, "name": "sprawl_cli", "key": "sc",
+						"github_url": "https://github.com/ultrakorne/sprawl_cli",
+					},
 				},
 			},
 		})
 	})
 	c := NewAuthed("tok", "sec")
-	items, err := c.ListChecklistItems(context.Background(), "77", false)
+	it, err := c.GetChecklistItem(context.Background(), "203")
 	if err != nil {
-		t.Fatalf("ListChecklistItems: %v", err)
+		t.Fatalf("GetChecklistItem: %v", err)
 	}
-	if len(items) != 2 {
-		t.Fatalf("got %d", len(items))
+	if it.ID != 203 || it.State != StateInReview || it.PRNumber != 412 {
+		t.Fatalf("item = %+v", it.ChecklistItem)
 	}
-	if items[1].ID != 6 || !items[1].Completed || !items[1].HasNotes {
-		t.Fatalf("items[1] = %+v", items[1])
+	// Notes always ride on this route — it is the detail read and has no
+	// ?full variant.
+	if it.Notes == nil || *it.Notes != "blocked on the backfill" {
+		t.Fatalf("notes = %v", it.Notes)
 	}
-	if items[1].LastActor == nil || items[1].LastActor.Type != "user" {
-		t.Fatalf("items[1].LastActor = %+v", items[1].LastActor)
+	// The task stub is what carries the project, and the project's github_url is
+	// what turns pr_number into a link. Drop it and PR links silently stop
+	// resolving on this route.
+	if it.Task.ID != 119 || it.Task.Project == nil {
+		t.Fatalf("task stub = %+v", it.Task)
 	}
-	if ts.Requests()[0].Path != "/api/v1/tasks/77/checklist" {
+	if got := PRURL(it.Task.Project, it.PRNumber); got != "https://github.com/ultrakorne/sprawl_cli/pull/412" {
+		t.Fatalf("pr url = %q", got)
+	}
+	if ts.Requests()[0].Path != "/api/v1/checklist_items/203" {
 		t.Fatalf("path = %q", ts.Requests()[0].Path)
 	}
 }
 
-func TestListChecklistItems_Forbidden(t *testing.T) {
+func TestGetChecklistItem_EmptyNotesAndNoProject(t *testing.T) {
+	// An item with no note and a projectless parent task: both are ordinary, not
+	// errors. notes decodes to nil and the PR link simply doesn't resolve.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 203, "title": "x", "completed": false, "position": 0,
+				"state": nil, "pr_number": 412, "has_notes": false, "notes": nil,
+				"last_actor": nil,
+				"task":       map[string]any{"id": 119, "title": "Loose", "project": nil},
+			},
+		})
+	})
+	c := NewAuthed("tok", "sec")
+	it, err := c.GetChecklistItem(context.Background(), "203")
+	if err != nil {
+		t.Fatalf("GetChecklistItem: %v", err)
+	}
+	if it.Notes != nil {
+		t.Fatalf("notes = %q, want nil", *it.Notes)
+	}
+	if it.Task.Project != nil {
+		t.Fatalf("project = %+v, want nil", it.Task.Project)
+	}
+	if got := PRURL(it.Task.Project, it.PRNumber); got != "" {
+		t.Fatalf("pr url = %q, want empty", got)
+	}
+}
+
+// An item outside a project key's confined project is 403, NOT 404 — permission
+// is inherited from the parent task, the same as every other /checklist_items/*
+// route.
+func TestGetChecklistItem_OutsideProjectIsForbidden(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden")
 	})
-	c := NewAuthed("tok", "sec")
-	_, err := c.ListChecklistItems(context.Background(), "3", false)
+	c := NewAuthed("tok", "sec", WithProjectKey("per"))
+	_, err := c.GetChecklistItem(context.Background(), "4")
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != 403 || ae.Code != "forbidden" {
 		t.Fatalf("APIError = %+v err %v", ae, err)
 	}
 }
 
-func TestGetNotes_Success(t *testing.T) {
-	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"notes": "hello\nworld"})
-	})
-	c := NewAuthed("tok", "sec")
-	notes, err := c.GetNotes(context.Background(), "9")
-	if err != nil {
-		t.Fatalf("GetNotes: %v", err)
-	}
-	if notes == nil || *notes != "hello\nworld" {
-		t.Fatalf("notes = %v", notes)
-	}
-	if ts.Requests()[0].Path != "/api/v1/checklist_items/9/notes" {
-		t.Fatalf("path = %q", ts.Requests()[0].Path)
-	}
-}
-
-func TestGetNotes_EmptyIsNil(t *testing.T) {
-	// A checklist item with no notes returns {"notes": null} — that's success,
-	// not an error, and GetNotes reports it as a nil pointer.
-	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"notes": nil})
-	})
-	c := NewAuthed("tok", "sec")
-	notes, err := c.GetNotes(context.Background(), "9")
-	if err != nil {
-		t.Fatalf("GetNotes: %v", err)
-	}
-	if notes != nil {
-		t.Fatalf("notes = %q, want nil", *notes)
-	}
-}
-
-func TestGetNotes_LegacyEmptyStringIsNil(t *testing.T) {
-	// A pre-rollout server may still echo "" — GetNotes collapses it to nil so
-	// callers see one "empty ⇒ nil" contract regardless of server version.
-	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"notes": ""})
-	})
-	c := NewAuthed("tok", "sec")
-	notes, err := c.GetNotes(context.Background(), "9")
-	if err != nil {
-		t.Fatalf("GetNotes: %v", err)
-	}
-	if notes != nil {
-		t.Fatalf("notes = %q, want nil", *notes)
-	}
-}
-
-func TestGetNotes_NotFound(t *testing.T) {
+func TestGetChecklistItem_NotFound(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "not_found")
 	})
 	c := NewAuthed("tok", "sec")
-	_, err := c.GetNotes(context.Background(), "999")
+	_, err := c.GetChecklistItem(context.Background(), "99999")
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != 404 || ae.Code != "not_found" {
 		t.Fatalf("APIError = %+v err %v", ae, err)
@@ -973,52 +966,77 @@ func TestUpdateChecklistItem_SendsItemEnvelope(t *testing.T) {
 	}
 }
 
-func TestSetNotes_RoundTrip(t *testing.T) {
+// Notes are written through the generic item PATCH — there is no notes-specific
+// route any more. The body must be wrapped in the checklist_item envelope; the
+// server 422s an unwrapped {"notes": …} (which was the retired PUT's exact
+// shape, and used to be silently cast to a no-op write).
+func TestUpdateChecklistItem_WritesNotes(t *testing.T) {
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"notes": "line one\nline two"})
+		writeJSON(w, 200, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 9, "title": "x", "completed": false, "position": 0,
+				"state": nil, "pr_number": nil, "has_notes": true,
+				"notes": "line one\nline two", "last_actor": nil,
+			},
+		})
 	})
 	c := NewAuthed("tok", "sec")
-	got, err := c.SetNotes(context.Background(), "9", "line one\nline two")
+	it, err := c.UpdateChecklistItem(context.Background(), "9", map[string]any{"notes": "line one\nline two"})
 	if err != nil {
-		t.Fatalf("SetNotes: %v", err)
+		t.Fatalf("UpdateChecklistItem: %v", err)
 	}
-	if got == nil || *got != "line one\nline two" {
-		t.Fatalf("notes = %v", got)
+	// The response echoes the saved note — this route serialises the item in
+	// full, which is what makes the write verifiable rather than assumed.
+	if it.Notes == nil || *it.Notes != "line one\nline two" {
+		t.Fatalf("notes = %v", it.Notes)
 	}
 	r := ts.Requests()[0]
-	if r.Method != "PUT" || r.Path != "/api/v1/checklist_items/9/notes" {
+	if r.Method != "PATCH" || r.Path != "/api/v1/checklist_items/9" {
 		t.Fatalf("request = %+v", r)
 	}
 	var sent struct {
-		Notes string `json:"notes"`
+		Item map[string]any `json:"checklist_item"`
 	}
 	_ = json.Unmarshal(r.Body, &sent)
-	if sent.Notes != "line one\nline two" {
-		t.Fatalf("body.notes = %q", sent.Notes)
+	if sent.Item == nil {
+		t.Fatalf("body was not wrapped in a checklist_item envelope: %s", r.Body)
+	}
+	if sent.Item["notes"] != "line one\nline two" {
+		t.Fatalf("body.notes = %v", sent.Item["notes"])
 	}
 }
 
-func TestSetNotes_EmptyStringAccepted(t *testing.T) {
-	// Clearing notes is a valid operation — the server echoes null, which
-	// SetNotes reports as nil. The cleared "" must still round-trip in the
-	// request body.
+func TestUpdateChecklistItem_EmptyNotesClears(t *testing.T) {
+	// Clearing a note is a valid write: "" goes out, null comes back. The empty
+	// string must survive into the request body rather than being dropped as a
+	// zero value.
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"notes": nil})
+		writeJSON(w, 200, map[string]any{
+			"checklist_item": map[string]any{
+				"id": 9, "title": "x", "completed": false, "position": 0,
+				"state": nil, "pr_number": nil, "has_notes": false,
+				"notes": nil, "last_actor": nil,
+			},
+		})
 	})
 	c := NewAuthed("tok", "sec")
-	got, err := c.SetNotes(context.Background(), "9", "")
+	it, err := c.UpdateChecklistItem(context.Background(), "9", map[string]any{"notes": ""})
 	if err != nil {
-		t.Fatalf("SetNotes: %v", err)
+		t.Fatalf("UpdateChecklistItem: %v", err)
 	}
-	if got != nil {
-		t.Fatalf("notes = %q, want nil", *got)
+	if it.Notes != nil {
+		t.Fatalf("notes = %q, want nil", *it.Notes)
+	}
+	if it.HasNotes {
+		t.Fatalf("has_notes should be false after a clear: %+v", it)
 	}
 	var sent struct {
-		Notes string `json:"notes"`
+		Item map[string]any `json:"checklist_item"`
 	}
 	_ = json.Unmarshal(ts.Requests()[0].Body, &sent)
-	if sent.Notes != "" {
-		t.Fatalf("body.notes = %q, want empty", sent.Notes)
+	v, present := sent.Item["notes"]
+	if !present || v != "" {
+		t.Fatalf("body.notes = %v (present=%v), want a present empty string", v, present)
 	}
 }
 
@@ -1163,8 +1181,10 @@ func TestHeaderInvariants(t *testing.T) {
 				"checklist_progress": map[string]any{"done": 0, "total": 0},
 				"created_by":         nil, "last_actor": nil,
 			}})
-		case strings.HasPrefix(p, "/api/v1/checklist_items/") && strings.HasSuffix(p, "/notes"):
-			writeJSON(w, 200, map[string]any{"notes": ""})
+		case p == "/api/v1/checklist_items":
+			// The by-state queue: a list envelope, each element an item plus its
+			// parent-task stub.
+			writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
 		case strings.HasPrefix(p, "/api/v1/checklist_items/"):
 			// DELETE returns 204; set-completed / plain update return the
 			// item envelope.
@@ -1209,11 +1229,11 @@ func TestHeaderInvariants(t *testing.T) {
 	if _, err := authed.GetTask(context.Background(), "1", false); err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if _, err := authed.ListChecklistItems(context.Background(), "1", false); err != nil {
-		t.Fatalf("ListChecklistItems: %v", err)
+	if _, err := authed.GetChecklistItem(context.Background(), "1"); err != nil {
+		t.Fatalf("GetChecklistItem: %v", err)
 	}
-	if _, err := authed.GetNotes(context.Background(), "9"); err != nil {
-		t.Fatalf("GetNotes: %v", err)
+	if _, err := authed.ListChecklistItemsByState(context.Background(), StateInReview, false); err != nil {
+		t.Fatalf("ListChecklistItemsByState: %v", err)
 	}
 	if _, err := authed.CreateTask(context.Background(), map[string]any{"title": "t"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -1229,9 +1249,6 @@ func TestHeaderInvariants(t *testing.T) {
 	}
 	if _, err := authed.UpdateChecklistItem(context.Background(), "1", map[string]any{"title": "x"}); err != nil {
 		t.Fatalf("UpdateChecklistItem: %v", err)
-	}
-	if _, err := authed.SetNotes(context.Background(), "9", "x"); err != nil {
-		t.Fatalf("SetNotes: %v", err)
 	}
 	if err := authed.DeleteTask(context.Background(), "1"); err != nil {
 		t.Fatalf("DeleteTask: %v", err)
@@ -1313,10 +1330,10 @@ func TestResponseBodyCap_Rejected(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		big := strings.Repeat("x", maxBodyBytes+10)
-		_, _ = fmt.Fprintf(w, `{"notes":%q}`, big)
+		_, _ = fmt.Fprintf(w, `{"checklist_item":{"id":1,"notes":%q}}`, big)
 	})
 	c := NewAuthed("tok", "sec")
-	_, err := c.GetNotes(context.Background(), "1")
+	_, err := c.GetChecklistItem(context.Background(), "1")
 	if err == nil {
 		t.Fatal("expected error for oversized response")
 	}

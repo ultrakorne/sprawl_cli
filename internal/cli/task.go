@@ -7,8 +7,6 @@ import (
 	"maps"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
@@ -19,13 +17,16 @@ func newTaskCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task <id>",
 		Short: "Show a task by id, or manage tasks (list, search, create, update, due, delete)",
-		Long: "With just a task id, fetches that task (GET /api/v1/tasks/:id) — mirrors " +
-			"`checklist <task_id>`, so a bare positional id falls through to this show " +
+		Long: "With just a task id, fetches that task and its items (GET /api/v1/tasks/:id) — " +
+			"mirrors `item <id>`, so a bare positional id falls through to this show " +
 			"behaviour while the list / search / create / update / due / delete subcommands " +
-			"dispatch first. Pass --full to embed the task's checklist items and their notes " +
-			"in one call.",
+			"dispatch first.\n\n" +
+			"The human view is a title/description header and then the item table; project, " +
+			"due date and progress live in `task list` and in --format=json. Items always " +
+			"come back with a NOTES column saying whether each has a note; --full is what " +
+			"pulls the note bodies and expands them under their rows.",
 		// The show behaviour is the parent RunE so `sprawl task <id>` works
-		// without a `show` subcommand, matching `checklist <task_id>`. cobra
+		// without a `show` subcommand, matching `item <id>`. cobra
 		// routes exact subcommand matches (list / search / …) before falling
 		// through here.
 		Args: textArgs(cobra.ExactArgs(1)),
@@ -34,7 +35,7 @@ func newTaskCmd(opts *runtimeOpts) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&full, "full", false,
-		"embed the task's checklist items and their notes inline (GET …/tasks/:id?full=true)")
+		"pull each item's note body and expand it under its row (GET …/tasks/:id?full=true)")
 	cmd.SilenceErrors = true
 	cmd.AddCommand(newTaskListCmd(opts))
 	cmd.AddCommand(newTaskSearchCmd(opts))
@@ -171,8 +172,8 @@ func runTaskCreate(ctx context.Context, stdout, stderr io.Writer, attrs map[stri
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task), opts)
+	payload := map[string]any{"task": taskMap(task, false)}
+	return renderPayload(stdout, payload, taskWriteSummary("created", task), opts)
 }
 
 func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, attrs map[string]any, opts *runtimeOpts) error {
@@ -184,8 +185,8 @@ func runTaskUpdate(ctx context.Context, stdout, stderr io.Writer, id string, att
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task), opts)
+	payload := map[string]any{"task": taskMap(task, false)}
+	return renderPayload(stdout, payload, taskWriteSummary("updated", task), opts)
 }
 
 // newTaskDueCmd wraps PATCH /api/v1/tasks/:id/due_date. The endpoint takes
@@ -303,8 +304,8 @@ func runTaskDue(ctx context.Context, stdout, stderr io.Writer, id, preset string
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task), opts)
+	payload := map[string]any{"task": taskMap(task, false)}
+	return renderPayload(stdout, payload, taskDueSummary(task), opts)
 }
 
 func newTaskSearchCmd(opts *runtimeOpts) *cobra.Command {
@@ -348,10 +349,10 @@ func runTaskSearch(ctx context.Context, stdout, stderr io.Writer, query string, 
 	}
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
-		items = append(items, taskMap(t))
+		items = append(items, taskMap(t, false))
 	}
 	payload := map[string]any{"tasks": items}
-	return renderPayload(stdout, payload, taskSearchListText(tasks), opts)
+	return renderPayload(stdout, payload, taskSearchText(tasks), opts)
 }
 
 func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string, full bool, opts *runtimeOpts) error {
@@ -363,14 +364,14 @@ func runTaskShow(ctx context.Context, stdout, stderr io.Writer, id string, full 
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	payload := map[string]any{"task": taskMap(task)}
-	return renderPayload(stdout, payload, taskDetailText(task), opts)
+	payload := map[string]any{"task": taskMap(task, full)}
+	return renderPayload(stdout, payload, taskShowText(task, full), opts)
 }
 
 func renderTaskList(out io.Writer, tasks []*client.Task, opts *runtimeOpts) error {
 	items := make([]any, 0, len(tasks))
 	for _, t := range tasks {
-		items = append(items, taskMap(t))
+		items = append(items, taskMap(t, false))
 	}
 	payload := map[string]any{"tasks": items}
 	return renderPayload(out, payload, taskListText(tasks), opts)
@@ -380,7 +381,16 @@ func renderTaskList(out io.Writer, tasks []*client.Task, opts *runtimeOpts) erro
 // renderPayload can hand it to either the json encoder or gotoon. Pointer
 // fields (project, created_by, last_actor) become literal `nil` map values,
 // which both encoders emit as JSON null / TOON null.
-func taskMap(t *client.Task) map[string]any {
+//
+// The envelope keeps EVERY task field — title, description, status, due_date,
+// project, checklist_progress, created_by, last_actor. `task <id> -h` shows only
+// title + description, so this is the only place the rest is reachable.
+//
+// withNotes says whether the embedded items' note bodies were fetched, and is
+// simply the caller's --full. It is a parameter rather than something inferred
+// from the payload because a null note is indistinguishable from an unfetched
+// one, and guessing wrong would report "no note" for a note that exists.
+func taskMap(t *client.Task, withNotes bool) map[string]any {
 	m := map[string]any{
 		"id":          t.ID,
 		"title":       t.Title,
@@ -403,6 +413,9 @@ func taskMap(t *client.Task) map[string]any {
 	if t.MatchedChecklistItems != nil {
 		matched := make([]any, 0, len(t.MatchedChecklistItems))
 		for _, it := range t.MatchedChecklistItems {
+			// Exactly the two fields the server sent. Running these through
+			// itemMap would emit completed / state / pr_url for values search
+			// never returned, which reads as data rather than as absence.
 			matched = append(matched, map[string]any{
 				"id":    it.ID,
 				"title": it.Title,
@@ -410,16 +423,15 @@ func taskMap(t *client.Task) map[string]any {
 		}
 		m["matched_checklist_items"] = matched
 	}
-	// checklist_items rides only on ?full=true task responses. nil ⇒ field
-	// absent ⇒ suppress so list/show/create/update payloads keep their shape.
-	// Non-nil (including empty) ⇒ embed each item via checklistItemMap, which
-	// carries the inline notes blob on the full path.
+	// checklist_items rides only on the task READ. nil ⇒ field absent on the wire
+	// ⇒ suppress it so list / search / create / update payloads keep their shape.
+	// Non-nil (including empty) ⇒ embed each item via the shared itemMap, which
+	// resolves pr_url from the task's own project — the one read path where the
+	// whole chain is in hand.
 	if t.ChecklistItems != nil {
 		items := make([]any, 0, len(t.ChecklistItems))
 		for _, it := range t.ChecklistItems {
-			// checklist_items rides only on the ?full=true task read, so each
-			// item is on the full path: emit notes (null when empty).
-			items = append(items, checklistItemMap(it, true))
+			items = append(items, itemMap(it, t.Project, withNotes))
 		}
 		m["checklist_items"] = items
 	}
@@ -501,241 +513,81 @@ func progressCol(p client.ChecklistProgress) col {
 	return styledCol(text, sty.progressStyle(p.Done, p.Total))
 }
 
-// taskSearchListText renders the list view and interleaves a
-// `matched checklist:` block under any task whose checklist items hit
-// the query — one item per line so commas, long titles, or odd
-// whitespace in titles can't garble the output. Title-only matches
-// (MatchedChecklistItems == []) get no extra line — the title speaks
-// for itself.
-func taskSearchListText(tasks []*client.Task) string {
+// taskSearchText renders one block per matching task: the task's title and
+// description, then the ids and titles of the items that matched under it.
+// Several tasks stack as several blocks, so it stays readable when a query hits
+// across the board.
+//
+// It shows id and title and nothing else because that is all /tasks/search
+// returns — search is a LOOKUP surface. It tells you which tasks and items
+// mention the query; `item <id>` and `task <id>` are how you then read them.
+// Rendering the full item table here would mean printing an unchecked box and
+// an empty state for every hit regardless of its real state, since the search
+// payload carries neither.
+//
+// A task that matched on its own title has no matching items (the server sends
+// `[]`) and renders as the header alone — the title already said why it's here.
+func taskSearchText(tasks []*client.Task) string {
 	if len(tasks) == 0 {
 		return sty.render(sty.faint, "(no tasks)")
 	}
-	// Render the aligned table, then weave each task's matched-checklist block in
-	// under its row. renderTable emits its header lines (column header + rule)
-	// first, then exactly one line per task, so the data rows are the last
-	// len(tasks) lines regardless of how many header lines there are.
-	lines := strings.Split(renderTable(taskListHeader, taskRows(tasks)), "\n")
-	head := len(lines) - len(tasks)
-
-	var b strings.Builder
-	for _, hl := range lines[:head] {
-		b.WriteString(hl)
-		b.WriteByte('\n')
-	}
-	for i, t := range tasks {
-		b.WriteString(lines[head+i])
-		b.WriteByte('\n')
-		if len(t.MatchedChecklistItems) == 0 {
-			continue
-		}
-		b.WriteString(sty.render(sty.faint, "      matched checklist:"))
-		b.WriteByte('\n')
-		for _, it := range t.MatchedChecklistItems {
-			fmt.Fprintf(&b, "        - %s\n", it.Title)
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// taskDetailText renders the human view for a single task as a bordered card,
-// identical for the non-full detail (create / update / due / bare show) and the
-// ?full=true read: title in the border, a project · due · progress grid, then
-// the optional description. The full read additionally carries the checklist
-// inline (non-nil slice), which is appended below the card. last_actor /
-// created_by are dropped from the human view — they remain in json/toon via
-// taskMap.
-func taskDetailText(t *client.Task) string {
-	card, inner := taskCard(t, taskMetaLines(t))
-	if t.ChecklistItems == nil {
-		return card
-	}
-	// Rule width inner+2 matches the card's bottom border, so the section's
-	// right edge lines up under the card. Progress isn't repeated on the
-	// CHECKLIST heading — the card above already carries it.
-	return card + "\n\n" + taskChecklistSection(t.ChecklistItems, t.Project, inner+2)
-}
-
-// Layout constants for the task card's metadata grid. keyGap pads between a key
-// and its value; colGap separates the two key/value columns.
-const (
-	metaKeyGap = 2
-	metaColGap = 3
-)
-
-// taskCard renders the bordered card shared by both detail views: the id/title
-// embedded in the top border, the supplied meta grid as the body, and the
-// optional description below. It returns the card text and the box's inner
-// content width (so a caller can size a matching rule). Structural characters
-// are unconditional and only color is gated — see renderTitledBox.
-func taskCard(t *client.Task, lines []string) (string, int) {
-	title := fmt.Sprintf("#%d  %s", t.ID, t.Title)
-	inner := lipgloss.Width(title) + 1
-	for _, ln := range lines {
-		inner = max(inner, lipgloss.Width(ln))
-	}
-	var b strings.Builder
-	b.WriteString(renderTitledBox(title, lines, inner))
-	if strings.TrimSpace(t.Description) != "" {
-		b.WriteString("\n\n")
-		for i, ln := range strings.Split(t.Description, "\n") {
-			if i > 0 {
-				b.WriteByte('\n')
+	blocks := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		b := taskHeader(t)
+		if len(t.MatchedChecklistItems) > 0 {
+			rows := make([][]col, len(t.MatchedChecklistItems))
+			for i, it := range t.MatchedChecklistItems {
+				rows[i] = []col{
+					plainCol(fmt.Sprintf("%d", it.ID)),
+					plainCol(it.Title),
+				}
 			}
-			b.WriteString("  " + ln)
+			b += "\n" + renderTable([]string{"ID", "TITLE"}, rows)
 		}
+		blocks = append(blocks, b)
 	}
-	return b.String(), inner
+	return strings.Join(blocks, "\n\n")
 }
 
-// metaCell is one key/value pair in the card's grid. style colors the value;
-// the key is always faint.
-type metaCell struct {
-	key   string
-	val   string
-	style lipgloss.Style
+// taskShowText is the human view for `task <id>`: a title + description header,
+// then the shared item table. The bordered card is gone — no box, no meta grid,
+// no project / due / progress. `task list` already carries all three per task
+// and --format=json carries them here, so repeating them above a table of the
+// task's actual work was noise.
+//
+// full expands each item's note under its row; without it the NOTES column is
+// still there, answering "is there a note to go and read?".
+func taskShowText(t *client.Task, full bool) string {
+	head := taskHeader(t)
+	if len(t.ChecklistItems) == 0 {
+		return head + "\n" + sty.render(sty.faint, "(no items)")
+	}
+	views := make([]itemView, len(t.ChecklistItems))
+	for i, it := range t.ChecklistItems {
+		// The task carries its project, so a PR number resolves to a full link.
+		views[i] = itemView{item: it, project: t.Project}
+	}
+	// renderTable opens with one newline; the extra one is the blank line that
+	// separates the header block from the table.
+	return head + "\n" + itemTable(views, itemCols{checkbox: true, state: true}, full)
 }
 
-// metaGrid lays out left/right key-value columns as card body lines: each row
-// is the left cell (padded to the widest left cell) + a column gap + the right
-// cell. Rows past the shorter column carry only the present side. Padding is
-// measured from plain widths so color can't shear the alignment.
-func metaGrid(left, right []metaCell) []string {
-	leftKeyW, leftValW := cellWidths(left)
-	rightKeyW, _ := cellWidths(right)
-	leftCellW := leftKeyW + metaKeyGap + leftValW
-
-	rows := max(len(left), len(right))
-	lines := make([]string, 0, rows)
-	for i := range rows {
-		var sb strings.Builder
-		if i < len(left) {
-			cell := renderCell(left[i], leftKeyW)
-			sb.WriteString(cell)
-			if i < len(right) {
-				sb.WriteString(strings.Repeat(" ", leftCellW-lipgloss.Width(cell)+metaColGap))
-			}
-		}
-		if i < len(right) {
-			sb.WriteString(renderCell(right[i], rightKeyW))
-		}
-		lines = append(lines, sb.String())
-	}
-	return lines
+// taskWriteSummary is the one-line confirmation for create / update: `✓ created
+// task 224  New thing`. Matches the TUI's transient vocabulary.
+func taskWriteSummary(verb string, t *client.Task) string {
+	return fmt.Sprintf("%s %s task %d  %s",
+		sty.render(sty.ok, "✓"), verb, t.ID, t.Title)
 }
 
-// taskMetaLines is the card's metadata grid, shared by both detail views:
-// project + due on the left, progress (traffic-light colored) on the right.
-func taskMetaLines(t *client.Task) []string {
-	prog := fmt.Sprintf("%d/%d", t.ChecklistProgress.Done, t.ChecklistProgress.Total)
-	return metaGrid(
-		[]metaCell{
-			boxValCell("project", projectBoxLabel(t.Project)),
-			boxValCell("due", fallback(t.DueDate, "—")),
-		},
-		[]metaCell{{"progress", prog, sty.progressStyle(t.ChecklistProgress.Done, t.ChecklistProgress.Total)}},
-	)
-}
-
-// boxValCell makes a metaCell whose value is plain unless it's the em-dash
-// placeholder, in which case it's faint so empty fields recede.
-func boxValCell(key, val string) metaCell {
-	style := sty.plain
-	if val == "—" {
-		style = sty.faint
+// taskDueSummary is `✓ task 119 due 2026-08-09`, or `due cleared` when the
+// preset was `none`. Built from the task the server returned, so it reports the
+// date the server actually resolved rather than the preset that was asked for.
+func taskDueSummary(t *client.Task) string {
+	if strings.TrimSpace(t.DueDate) == "" {
+		return fmt.Sprintf("%s task %d %s",
+			sty.render(sty.ok, "✓"), t.ID, sty.render(sty.faint, "due cleared"))
 	}
-	return metaCell{key, val, style}
-}
-
-func cellWidths(cells []metaCell) (keyW, valW int) {
-	for _, c := range cells {
-		keyW = max(keyW, len([]rune(c.key)))
-		valW = max(valW, len([]rune(c.val)))
-	}
-	return keyW, valW
-}
-
-// renderCell lays out one key/value pair: faint key padded to keyW, a keyGap,
-// then the colored value. Padding is computed from plain rune widths so color
-// never shears the alignment.
-func renderCell(c metaCell, keyW int) string {
-	pad := strings.Repeat(" ", keyW-len([]rune(c.key))+metaKeyGap)
-	return sty.render(sty.faint, c.key) + pad + sty.render(c.style, c.val)
-}
-
-// taskChecklistSection renders the checklist under the card: a bold CHECKLIST
-// heading, a rule, then one block per item — a colored checkbox + faint id +
-// title, with the item's notes nested underneath (verbatim line breaks, faint).
-// Progress isn't shown here — the card above carries it. ruleWidth sizes the
-// heading rule.
-func taskChecklistSection(items []*client.ChecklistItem, project *client.Project, ruleWidth int) string {
-	var b strings.Builder
-	b.WriteString("  " + sty.render(sty.bold, "CHECKLIST") + "\n")
-	b.WriteString("  " + sty.render(sty.accent, strings.Repeat("─", ruleWidth)))
-	if len(items) == 0 {
-		b.WriteString("\n  " + sty.render(sty.faint, "(no checklist items)"))
-		return b.String()
-	}
-
-	idW := 0
-	for _, it := range items {
-		idW = max(idW, len(fmt.Sprintf("#%d", it.ID)))
-	}
-	// Notes align under the title: 2 indent + checkbox + space + id column + 2.
-	indent := 6 + idW
-	notesIndent := strings.Repeat(" ", indent)
-	// Wrap notes to the remaining terminal width so a long line continues under
-	// where the note text starts, not back at the left margin. A wrap below
-	// noteMinWrap columns (very narrow terminal) or an unknown width (outputWidth
-	// 0, e.g. piped) skips wrapping and prints authored lines verbatim. Wrapping
-	// runs on the plain note text, so styled and plain renders break identically.
-	const noteMinWrap = 20
-	wrapAt := 0
-	if w := outputWidth - indent; w >= noteMinWrap {
-		wrapAt = w
-	}
-	emitNote := func(line string) {
-		fmt.Fprintf(&b, "\n%s%s", notesIndent, sty.render(sty.faint, line))
-	}
-	for _, it := range items {
-		id := fmt.Sprintf("#%d", it.ID)
-		// The task carries its project here, so a PR number resolves to a full
-		// link — the one read path where the whole chain is in hand.
-		fmt.Fprintf(&b, "\n  %s %s%s  %s%s",
-			sty.render(sty.checkboxStyle(it.Completed), checkboxGlyph(it.Completed)),
-			sty.render(sty.faint, id),
-			strings.Repeat(" ", idW-len(id)),
-			it.Title,
-			itemTrailer(it, project))
-		notes := ""
-		if it.Notes != nil {
-			notes = *it.Notes
-		}
-		if strings.TrimSpace(notes) == "" {
-			emitNote("(no notes)")
-			continue
-		}
-		// Wrap each authored line independently so the author's own line breaks
-		// (paragraphs) survive, and only over-long lines get re-flowed.
-		for _, ln := range strings.Split(notes, "\n") {
-			if wrapAt > 0 {
-				ln = ansi.Wrap(ln, wrapAt, "")
-			}
-			for _, wl := range strings.Split(ln, "\n") {
-				emitNote(wl)
-			}
-		}
-	}
-	return b.String()
-}
-
-// projectBoxLabel mirrors projectLabel but uses an em dash (not "-") for the
-// empty case, matching the header box's placeholder.
-func projectBoxLabel(p *client.Project) string {
-	if p == nil {
-		return "—"
-	}
-	return p.Name
+	return fmt.Sprintf("%s task %d due %s", sty.render(sty.ok, "✓"), t.ID, t.DueDate)
 }
 
 func projectLabel(p *client.Project) string {

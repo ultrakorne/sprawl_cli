@@ -36,14 +36,17 @@ Every `/api/v1/*` request sends `Authorization: Bearer <token>` plus whichever n
 | Endpoint | Effect |
 |---|---|
 | `GET /tasks`, `/tasks/search`, `/activity_log` | Pre-filtered to that project — no client-side filtering anywhere in the CLI. |
-| `GET /tasks/:id` | 200 inside the project. Outside, the API contract says 403 but the running server answers **404 `not_found`** (verified against a live backend, 2026-08-01) — treat both as "not available to me". |
+| `GET /tasks/:id` | 200 inside the project. Outside, **403 `forbidden`** (verified against a live backend, 2026-08-04; an earlier build answered 404 here, which was the drift the server has since pinned with a test). |
+| `GET /checklist_items/:id` | Same rule, inherited from the parent task: 403 outside the project, 404 only when the item genuinely doesn't exist. |
 | `POST /tasks` | Lands in the project. `project_id` may be omitted entirely; naming a *different* project is 403. |
 | Writes | Unchanged inside the project, 403 outside. `PATCH /tasks/:id` has never been able to move a task between projects, so a confined client can't escape. |
 | `PATCH /settings/theme` | 403 — user-level, not project-level. `GET` still works. |
 
 Projectless tasks are invisible under confinement: they belong to no project, so they're outside every project.
 
-Because "outside the project" surfaces as 404, `task delete` / `checklist delete` can't use their usual idempotent-404 shortcut verbatim: "already gone (no change)" would claim a delete that never happened to a record living in another project. Under a project key `deletedText` switches to `No task #<id> in project "<key>" (nothing deleted — it may exist outside this project key)`. Unconfined wording is unchanged.
+`task delete` / `item delete` treat a 404 `not_found` as idempotent success. A **403 is not** covered by that shortcut — the record exists and is out of reach, so `isNotFoundAPIError` deliberately doesn't match it and the command errors with the project-key-aware guidance below. That is the honest answer for anything outside the confined project.
+
+A 404 under a project key is still possible (the record is genuinely gone), and it stays ambiguous enough to be worth wording carefully, so `deletedText` switches to `No task #<id> in project "<key>" (nothing deleted — it may exist outside this project key)`. Unconfined wording is unchanged.
 
 ## Error-code guidance
 

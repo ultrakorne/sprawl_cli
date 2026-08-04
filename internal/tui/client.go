@@ -22,7 +22,6 @@ type Client interface {
 	CreateChecklistItem(ctx context.Context, taskID string, attrs map[string]any) (*client.ChecklistItem, error)
 	UpdateChecklistItem(ctx context.Context, itemID string, attrs map[string]any) (*client.ChecklistItem, error)
 	SetChecklistItemState(ctx context.Context, itemID string, attrs map[string]any) (*client.ChecklistItem, error)
-	SetNotes(ctx context.Context, itemID, notes string) (*string, error)
 	DeleteChecklistItem(ctx context.Context, itemID string) error
 }
 

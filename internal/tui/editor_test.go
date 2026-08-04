@@ -35,9 +35,9 @@ func TestResolveEditorFields(t *testing.T) {
 }
 
 // TestEditNoteSaveFlow covers the full $EDITOR note round-trip the review flagged
-// as untested: an editorDoneMsg carrying an edited buffer must PUT the note and
-// reflect it in the note view. (The reported bug was environmental — a non-
-// blocking $EDITOR handing back unedited content — but this locks the in-app
+// as untested: an editorDoneMsg carrying an edited buffer must PATCH the item
+// and reflect the note in the note view. (The reported bug was environmental — a
+// non-blocking $EDITOR handing back unedited content — but this locks the in-app
 // path so a regression in the wiring is caught.)
 func TestEditNoteSaveFlow(t *testing.T) {
 	fc, m, detail := checklistFixture()
@@ -52,8 +52,13 @@ func TestEditNoteSaveFlow(t *testing.T) {
 	for _, msg := range runCmd(cmd) {
 		m.send(msg)
 	}
-	if !slices.Contains(fc.calls, "SetNotes:10") {
-		t.Fatalf("expected SetNotes:10 to be called, calls=%v", fc.calls)
+	// The note goes through the generic item PATCH — there is no notes-specific
+	// route any more.
+	if !slices.Contains(fc.calls, "UpdateItem:10") {
+		t.Fatalf("expected UpdateItem:10 to be called, calls=%v", fc.calls)
+	}
+	if _, ok := fc.updateItemAttrs["notes"]; !ok {
+		t.Fatalf("PATCH body must carry a notes key, got %+v", fc.updateItemAttrs)
 	}
 	if fc.notesArg != "hello from editor" {
 		t.Fatalf("note body sent = %q, want %q (trailing newline should be trimmed)", fc.notesArg, "hello from editor")

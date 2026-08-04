@@ -85,9 +85,8 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newActivityCmd(opts))
 	root.AddCommand(newThemeCmd(opts))
 	root.AddCommand(newTaskCmd(opts))
-	root.AddCommand(newChecklistCmd(opts))
+	root.AddCommand(newItemCmd(opts))
 	root.AddCommand(newQueueCmd(opts))
-	root.AddCommand(newNoteCmd(opts))
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newTUICmd(opts))
 	return root

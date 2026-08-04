@@ -87,42 +87,79 @@ func TestTaskListText_FormatsRows(t *testing.T) {
 	}
 }
 
-func TestTaskDetailText_IncludesDescription(t *testing.T) {
+func TestTaskShowText_HeaderIsTitleAndDescription(t *testing.T) {
 	task := &client.Task{
 		ID: 17, Title: "hello", Status: "done", Description: "body copy",
 		ChecklistProgress: client.ChecklistProgress{Done: 2, Total: 3},
 		Project:           &client.Project{ID: 1, Name: "P"},
 		CreatedBy:         &client.Actor{Type: "user", ID: 5},
+		ChecklistItems:    []*client.ChecklistItem{{ID: 5, Title: "a step"}},
 	}
-	got := taskDetailText(task)
-	// The non-full view is a bordered card: title in the border, a
-	// project/due/progress grid, then the description below.
-	for _, want := range []string{"╭─ ", "#17  hello", "progress", "2/3", "body copy"} {
+	got := taskShowText(task, false)
+	for _, want := range []string{"hello", "body copy", "TITLE", "a step"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	// created_by / last_actor are intentionally dropped from the human card
-	// (still in the json/toon payload via taskMap).
-	if strings.Contains(got, "user#5") {
-		t.Errorf("created_by should not appear in the human card:\n%s", got)
+	// The bordered card is gone: no box, no meta grid, no project / due /
+	// progress. task list carries all three, and --format=json carries them here.
+	for _, unwanted := range []string{"╭─ ", "#17", "progress", "2/3", "user#5"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("card leftover %q in:\n%s", unwanted, got)
+		}
 	}
 }
 
-func TestTaskDetailText_OmitsBlankDescription(t *testing.T) {
-	task := &client.Task{ID: 1, Title: "x", Status: "done"}
-	got := taskDetailText(task)
-	// Ends with the created_by line, not with the description body.
-	if strings.Contains(got, "\n\n") {
-		t.Fatalf("blank description should not leave a trailing blank block:\n%s", got)
+func TestTaskShowText_TitleAloneWhenNoDescription(t *testing.T) {
+	task := &client.Task{ID: 1, Title: "x", Status: "done",
+		ChecklistItems: []*client.ChecklistItem{{ID: 5, Title: "a step"}}}
+	got := taskShowText(task, false)
+	// The title, then the blank line renderTable's leading newline pairs with,
+	// then the table. Never two blank lines from an absent description.
+	if !strings.HasPrefix(got, "x\n\n") {
+		t.Fatalf("header should be the title alone:\n%q", got)
+	}
+	if strings.HasPrefix(got, "x\n\n\n") {
+		t.Fatalf("blank description left a trailing blank block:\n%q", got)
 	}
 }
 
-// TestTaskFullText_WrapsNotesWithHangingIndent locks in the full view's note
-// reflow: when outputWidth is known, a long note wraps to the remaining width
-// and every continuation line is indented to where the note text starts (under
-// the title), never exceeding the terminal width. Wrapping runs on plain text,
-// so the styled render strips back to the plain one (the package invariant).
+// A task whose checklist is empty says so rather than rendering a headerless
+// table with no rows.
+func TestTaskShowText_EmptyChecklist(t *testing.T) {
+	got := taskShowText(&client.Task{ID: 1, Title: "x", ChecklistItems: []*client.ChecklistItem{}}, false)
+	if !strings.Contains(got, "(no items)") {
+		t.Fatalf("empty checklist = %q", got)
+	}
+}
+
+// --full gates the note bodies, not the table: the NOTES column is there either
+// way, because "is there a note?" is the question it answers.
+func TestTaskShowText_FullGatesNoteBodiesNotTheColumn(t *testing.T) {
+	note := "the note body"
+	task := &client.Task{
+		ID: 1, Title: "x",
+		ChecklistItems: []*client.ChecklistItem{
+			{ID: 5, Title: "a step", HasNotes: true, Notes: &note},
+		},
+	}
+	brief := taskShowText(task, false)
+	if !strings.Contains(brief, "NOTES") || !strings.Contains(brief, "o") {
+		t.Errorf("non-full view must still flag the note:\n%s", brief)
+	}
+	if strings.Contains(brief, note) {
+		t.Errorf("non-full view must not expand the note:\n%s", brief)
+	}
+	if full := taskShowText(task, true); !strings.Contains(full, "note: "+note) {
+		t.Errorf("--full should expand the note:\n%s", full)
+	}
+}
+
+// TestTaskFullText_WrapsNotesWithHangingIndent locks in the note reflow: when
+// outputWidth is known, a long note wraps to the remaining width and every
+// continuation line is indented to where the note BODY starts, never exceeding
+// the terminal width. Wrapping runs on plain text, so the styled render strips
+// back to the plain one (the package invariant).
 func TestTaskFullText_WrapsNotesWithHangingIndent(t *testing.T) {
 	defer func() { stylesEnabled = false; outputWidth = 0 }()
 
@@ -132,35 +169,22 @@ func TestTaskFullText_WrapsNotesWithHangingIndent(t *testing.T) {
 		ID: 295, Title: "Agentic", Status: "in_progress",
 		ChecklistProgress: client.ChecklistProgress{Done: 0, Total: 1},
 		ChecklistItems: []*client.ChecklistItem{
-			{ID: 295, Title: "approve as agents mark items done", Notes: &longNote},
+			{ID: 295, Title: "approve as agents mark items done", HasNotes: true, Notes: &longNote},
 		},
 	}
 
 	outputWidth = width
 	stylesEnabled = false
-	plain := taskDetailText(task)
+	plain := taskShowText(task, true)
 
-	// id "#295" ⇒ notes indent is 6 + len("#295") = 10 columns.
-	const indent = 10
-	pad := strings.Repeat(" ", indent)
 	var noteLines int
 	for _, ln := range strings.Split(plain, "\n") {
-		// Note lines are the faint, indented ones that aren't the item row
-		// (which contains the checkbox glyph) and aren't blank.
-		if !strings.HasPrefix(ln, pad) || strings.TrimSpace(ln) == "" {
-			continue
-		}
-		if strings.ContainsAny(ln, "☐☑") {
+		if strings.TrimSpace(ln) == "" || !strings.HasPrefix(ln, " ") {
 			continue
 		}
 		noteLines++
 		if w := len([]rune(ln)); w > width {
 			t.Fatalf("wrapped note line exceeds width %d (got %d): %q", width, w, ln)
-		}
-		// Continuation alignment: every note line starts exactly at the indent
-		// column — no more, no less — so the block is flush under the title.
-		if strings.HasPrefix(ln, pad+" ") || !strings.HasPrefix(ln, pad) {
-			t.Fatalf("note line not aligned to the %d-col hanging indent: %q", indent, ln)
 		}
 	}
 	if noteLines < 2 {
@@ -168,7 +192,7 @@ func TestTaskFullText_WrapsNotesWithHangingIndent(t *testing.T) {
 	}
 
 	stylesEnabled = true
-	styled := taskDetailText(task)
+	styled := taskShowText(task, true)
 	if got := stripANSI(styled); got != plain {
 		t.Fatalf("wrapping broke stripANSI==plain:\nplain:\n%q\nstripped:\n%q", plain, got)
 	}
@@ -332,16 +356,18 @@ func TestRunTaskShow_FullEmbedsChecklistAndNotes(t *testing.T) {
 		t.Fatalf("first item notes = %+v", first["notes"])
 	}
 	// Empty notes on the full path survive as a present-but-null key — not
-	// omitted, not "" — mirroring the server's null and `note show`.
+	// omitted, not "" — for a uniform "empty ⇒ null" contract.
 	second := items[1].(map[string]any)
 	if v, present := second["notes"]; !present || v != nil {
 		t.Fatalf("second item notes = %+v (present=%v), want null", v, present)
 	}
 }
 
-func TestRunTaskShow_NonFullOmitsChecklistItems(t *testing.T) {
-	// Without --full the server returns no checklist_items key; the rendered
-	// envelope must not grow one (nil slice ⇒ suppressed by taskMap).
+// The non-full read carries the items WITHOUT their bodies: has_notes says
+// whether there is a note, and no `notes` key claims to know what it says.
+// This is what makes `task <id>` cheap — reach for --full when you want the
+// bodies.
+func TestRunTaskShow_NonFullCarriesItemsWithoutNoteBodies(t *testing.T) {
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
 		if q := r.URL.Query().Get("full"); q != "" {
 			t.Errorf("full query should be absent, got %q", q)
@@ -351,8 +377,14 @@ func TestRunTaskShow_NonFullOmitsChecklistItems(t *testing.T) {
 			"task": map[string]any{
 				"id": 42, "title": "hello", "description": "", "status": "done",
 				"due_date": nil, "project": nil,
-				"checklist_progress": map[string]any{"done": 0, "total": 0},
+				"checklist_progress": map[string]any{"done": 0, "total": 1},
 				"created_by":         nil, "last_actor": nil,
+				"checklist_items": []any{
+					map[string]any{
+						"id": 5, "title": "a step", "completed": false, "position": 0,
+						"state": nil, "pr_number": nil, "has_notes": true, "last_actor": nil,
+					},
+				},
 			},
 		})
 	})
@@ -362,8 +394,36 @@ func TestRunTaskShow_NonFullOmitsChecklistItems(t *testing.T) {
 	}
 	var out map[string]any
 	_ = json.Unmarshal(stdout.Bytes(), &out)
-	if _, present := out["task"].(map[string]any)["checklist_items"]; present {
-		t.Fatalf("checklist_items must be absent on non-full show: %s", stdout.String())
+	items, ok := out["task"].(map[string]any)["checklist_items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("checklist_items = %+v", out["task"].(map[string]any)["checklist_items"])
+	}
+	first := items[0].(map[string]any)
+	if first["has_notes"] != true {
+		t.Errorf("has_notes must ride on the non-full read — it drives the NOTES column: %+v", first)
+	}
+	if _, present := first["notes"]; present {
+		t.Errorf("notes must be absent when they weren't fetched: %+v", first)
+	}
+}
+
+// A task list / search response has no checklist_items key at all (embedding
+// every item per task would multiply the payload by every checklist's length),
+// so the rendered envelope must not grow one.
+func TestTaskMap_SuppressesAbsentChecklistItems(t *testing.T) {
+	m := taskMap(&client.Task{ID: 1, Title: "x"}, false)
+	if _, present := m["checklist_items"]; present {
+		t.Fatalf("checklist_items must stay absent when the wire had none: %+v", m)
+	}
+	// An empty checklist is [] on the wire, and that is NOT the same thing —
+	// it means "this task has no items", which the renderer says out loud.
+	m = taskMap(&client.Task{ID: 1, Title: "x", ChecklistItems: []*client.ChecklistItem{}}, false)
+	items, present := m["checklist_items"]
+	if !present {
+		t.Fatalf("an empty checklist must survive as []: %+v", m)
+	}
+	if len(items.([]any)) != 0 {
+		t.Fatalf("checklist_items = %+v", items)
 	}
 }
 
@@ -394,17 +454,27 @@ func TestRunTaskShow_FullTextRendersChecklistBlock(t *testing.T) {
 		t.Fatalf("runTaskShow: %v", err)
 	}
 	got := stdout.String()
-	// The --full text view is the boxed header + clean checklist: id/title in
-	// the box, a CHECKLIST section, unicode checkboxes, and notes nested under
-	// each item verbatim (no "notes:" prefix). Empty notes read "(no notes)".
+	// The --full text view is the title header plus the shared item table, with
+	// each note expanded under its row.
 	for _, want := range []string{
-		"╭─ ", "#42  ship it", // boxed header with title in the border
-		"CHECKLIST",
-		"☑ #5", "done step", "did it", // completed item + its inline note
-		"☐ #6", "todo step", "(no notes)", // open item, no note
+		"ship it",                     // header: the title, no id, no card
+		"[x]", "ID", "NOTES", "TITLE", // the shared table
+		"5", "done step", "note: did it", // completed item + its expanded note
+		"6", "todo step", // open item
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("text output missing %q:\n%s", want, got)
+		}
+	}
+	// An item with no note gets nothing at all — the "(no notes)" placeholder is
+	// gone from the CLI entirely.
+	if strings.Contains(got, "no notes") {
+		t.Fatalf("the (no notes) placeholder is back:\n%s", got)
+	}
+	// And the card is gone with it.
+	for _, unwanted := range []string{"╭─ ", "#42", "CHECKLIST", "☑", "☐"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("card leftover %q in:\n%s", unwanted, got)
 		}
 	}
 }
@@ -526,44 +596,88 @@ func TestRunTaskSearch_TextShowsMatchedItems(t *testing.T) {
 		t.Fatalf("runTaskSearch: %v", err)
 	}
 	out := stdout.String()
-	lines := strings.Split(out, "\n")
 
-	// Walk lines and assert per-task expectations: each task row is
-	// followed (or not) by exactly the right matched block, in order.
-	type expect struct {
-		row     string
-		matches []string // empty = no matched block expected after the row
-	}
-	want := []expect{
-		{row: "items-row-A", matches: []string{"first hit"}},
-		{row: "title-only-row"},
-		{row: "items-row-B", matches: []string{"second, with comma", "third hit"}},
-	}
-	cursor := 0
-	for _, exp := range want {
-		for cursor < len(lines) && !strings.Contains(lines[cursor], exp.row) {
-			cursor++
+	// Each hit renders like `task <id>`: the title header, then a table of the
+	// items that matched — not a list row with an indented sub-block.
+	for _, want := range []string{
+		"items-row-A", "first hit",
+		"title-only-row",
+		"items-row-B", "second, with comma", "third hit",
+		"ID", "TITLE",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
 		}
-		if cursor == len(lines) {
-			t.Fatalf("row %q not found in:\n%s", exp.row, out)
+	}
+	// The old list shape is gone: no DUE / PROGRESS / PROJECT columns, and no
+	// "matched checklist:" bullet block.
+	for _, unwanted := range []string{"matched checklist:", "PROGRESS", "DUE", "- first hit"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("old search rendering leftover %q in:\n%s", unwanted, out)
 		}
-		cursor++
-		if len(exp.matches) == 0 {
-			if cursor < len(lines) && strings.Contains(lines[cursor], "matched checklist:") {
-				t.Fatalf("row %q must not have a matched-checklist block:\n%s", exp.row, out)
-			}
+	}
+	// A title-only match (matched_checklist_items == []) gets the header alone —
+	// the title already said why it's here. So it must not be followed by a table.
+	lines := strings.Split(out, "\n")
+	for i, ln := range lines {
+		if !strings.Contains(ln, "title-only-row") {
 			continue
 		}
-		if cursor >= len(lines) || !strings.Contains(lines[cursor], "matched checklist:") {
-			t.Fatalf("row %q expected matched-checklist header next, got %q:\n%s", exp.row, lines[cursor], out)
-		}
-		cursor++
-		for _, m := range exp.matches {
-			if cursor >= len(lines) || !strings.Contains(lines[cursor], "- "+m) {
-				t.Fatalf("row %q expected matched item %q at line %d, got %q:\n%s", exp.row, m, cursor, lines[cursor], out)
+		for _, after := range lines[i+1:] {
+			if strings.TrimSpace(after) == "" {
+				continue
 			}
-			cursor++
+			if strings.Contains(after, "ID") && strings.Contains(after, "TITLE") {
+				t.Errorf("a title-only match must not render an items table:\n%s", out)
+			}
+			break
 		}
+	}
+}
+
+// Search returns only {id, title} per matched item, so that is exactly what the
+// block shows. Printing an unchecked box or an empty STATE for a hit whose real
+// state the payload never carried would read as data rather than as absence —
+// search is a lookup, and `item <id>` is how you read one.
+func TestTaskSearchText_ShowsOnlyIDAndTitle(t *testing.T) {
+	got := taskSearchText([]*client.Task{{
+		ID: 1, Title: "a task",
+		Project:               &client.Project{ID: 42, Name: "p", GithubURL: "https://github.com/o/r"},
+		MatchedChecklistItems: []client.MatchedChecklistItem{{ID: 11, Title: "a hit"}},
+	}})
+	for _, want := range []string{"a task", "ID", "TITLE", "11", "a hit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"[x]", "[ ]", "STATE", "PR", "NOTES"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("search must not render %q — the payload carries no such field:\n%s", unwanted, got)
+		}
+	}
+}
+
+// Several hits stack as several blocks, each with its own title and its own
+// matched items, so a broad query stays readable.
+func TestTaskSearchText_StacksBlocksPerTask(t *testing.T) {
+	got := taskSearchText([]*client.Task{
+		{ID: 1, Title: "first task", MatchedChecklistItems: []client.MatchedChecklistItem{{ID: 11, Title: "hit one"}}},
+		{ID: 2, Title: "second task", MatchedChecklistItems: []client.MatchedChecklistItem{{ID: 22, Title: "hit two"}}},
+	})
+	first, second := strings.Index(got, "first task"), strings.Index(got, "second task")
+	h1, h2 := strings.Index(got, "hit one"), strings.Index(got, "hit two")
+	if first < 0 || second < 0 || h1 < 0 || h2 < 0 {
+		t.Fatalf("missing a task or a hit in:\n%s", got)
+	}
+	// Each task's items sit under that task, not pooled at the end.
+	if !(first < h1 && h1 < second && second < h2) {
+		t.Errorf("blocks are interleaved wrongly:\n%s", got)
+	}
+}
+
+func TestTaskSearchText_Empty(t *testing.T) {
+	if got := taskSearchText(nil); got != "(no tasks)" {
+		t.Fatalf("empty search = %q", got)
 	}
 }
 
@@ -572,7 +686,7 @@ func TestTaskMap_OmitsMatchedWhenNil(t *testing.T) {
 	// MatchedChecklistItems) must not surface the key in rendered output.
 	// Otherwise list/show envelopes would silently grow a field.
 	task := &client.Task{ID: 1, Title: "x", Status: "done"}
-	m := taskMap(task)
+	m := taskMap(task, false)
 	if _, has := m["matched_checklist_items"]; has {
 		t.Fatalf("taskMap leaked matched_checklist_items for nil slice: %+v", m)
 	}
@@ -585,7 +699,7 @@ func TestTaskMap_KeepsMatchedEmpty(t *testing.T) {
 		ID: 1, Title: "x", Status: "done",
 		MatchedChecklistItems: []client.MatchedChecklistItem{},
 	}
-	m := taskMap(task)
+	m := taskMap(task, false)
 	got, has := m["matched_checklist_items"]
 	if !has {
 		t.Fatal("taskMap dropped non-nil empty MatchedChecklistItems")

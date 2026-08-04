@@ -8,8 +8,8 @@ The UI adopts whatever theme the user's terminal is running: all colors are ANSI
 
 ## Why
 
-- The primary workflow is handing task/checklist context to an LLM. Doing that from the one-shot CLI means chaining `task show` / `checklist` / `note show` and reshaping the output by hand. The TUI makes "select a task, press `c`, paste" a two-keystroke operation, formatting the Markdown for you.
-- Toggling checklist items and jotting notes interactively is faster than composing individual `checklist check` / `note set` invocations.
+- The primary workflow is handing task/item context to an LLM. Doing that from the one-shot CLI means running `task <id> --full` and reshaping the output by hand. The TUI makes "select a task, press `c`, paste" a two-keystroke operation, formatting the Markdown for you.
+- Toggling items and jotting notes interactively is faster than composing individual `item check` / `item update --notes` invocations.
 - It stays inside the project's constraints: a single static, cgo-free binary that works over SSH. Clipboard copy is OSC 52 (no external clipboard tool), and `$EDITOR` editing suspends/resumes the program rather than shelling out to a GUI.
 
 ## Launch rules
@@ -41,7 +41,7 @@ Screens form a back stack; `esc` pops one.
 1. **Credentials prompt** (conditional) — two visible fields, agent secret and project key; `tab` switches, Enter validates via the list fetch.
 2. **Not logged in** — message + quit (token missing).
 3. **Task list** (home) — one row per task: `#id · progress (done/total, traffic-light color) · due · project · title`. Cursor is `›` + bold + cyan. Empty state: `(no tasks) — n to create`.
-4. **Checklist** (task detail) — header (`#id title · progress · due · project`); item rows `[ ]`/`[x] · #id · state icon · PR · title`, with a `🗒` flag riding at the end of the title. The state and PR columns are **always reserved**, blank when unset, so toggling a state never shifts the rows around it. Empty state: `(no checklist items) — a to add`.
+4. **Checklist** (task detail) — header (`#id title · progress · due · project`); item rows `[ ]`/`[x] · #id · state icon · PR · title`, with a `🗒` flag riding at the end of the title. The state and PR columns are **always reserved**, blank when unset, so toggling a state never shifts the rows around it. Empty state: `(no checklist items) — a to add`. The TUI keeps its own layout here (a full-screen list has different constraints than a one-shot table), but the state glyphs come from the same `internal/icons` set the CLI's table uses.
 5. **Note view** (the item view) — the selected checklist item's note body, scrollable, under a header that spells the state out in full: `note · item #7 add the migration · 󱌣 In progress · #412`. Empty state: `(no notes) — e to add`.
 
 ### Overlays
@@ -61,7 +61,7 @@ Screens form a back stack; `esc` pops one.
 - **Open a PR**: `o` hands the resolved URL to the platform's browser, detached so the TUI doesn't block on it. Over SSH there is usually no browser; that isn't an error — the URL goes to the clipboard over OSC 52 instead and the footer says so. An item with no PR number, or a project with no repo URL, each get their own footer line rather than a generic failure.
 - **Click a PR**: PR numbers are OSC 8 hyperlinks, so a click (or ctrl/cmd-click, per terminal) opens them, and they're drawn in underlined accent to say so. The colour appears **only when the link actually resolves** — a PR on a project with no repo URL stays faint, because styling something as clickable that isn't is worse than not styling it. This deliberately does **not** enable mouse capture: capturing the mouse would take the terminal's own text selection away from the user, and the terminal handles hyperlinks natively without it. Terminals that don't support OSC 8 — including tmux without passthrough — just show the plain number, which is why `o` exists as the binding that always works.
 - **Create / edit**: `n` starts a new task (inline title, optional `$EDITOR` description, optional project picker); `e` edits the highlighted title inline; `E` edits a task's description in `$EDITOR`; `t` sets a due date; `a` adds a checklist item; `d` deletes (with a confirm overlay).
-- **Edit a note**: on the note screen, `e` opens the item's note in `$EDITOR`; on save it is written back with `note set` semantics.
+- **Edit a note**: on the note screen, `e` opens the item's note in `$EDITOR`; on save it is written back through `UpdateChecklistItem` — the same `PATCH /checklist_items/:id` the `item update --notes` command uses.
 - **Search**: `/` enters live client-side filtering (case-insensitive title substring) as you type. `enter` runs a server-side search that also surfaces checklist-item-title matches (annotated with the matched item names under the row). `esc` clears the search.
 - **Refresh / errors**: `r` refetches the current screen. API errors always land on the footer status line and never crash the UI; a spinner/`loading…` shows during in-flight calls.
 
