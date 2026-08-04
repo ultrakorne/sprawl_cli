@@ -20,22 +20,26 @@ A unit of work in sprawl, identified by a numeric id, with attributes such as ti
 
 A single entry under a task's checklist, identified by its own numeric id, with a title and a completion flag. The **checklist item — not the task — is the unit the checkbox toggles**, and it is the thing a note attaches to. Completing all of a task's items is what makes the task complete.
 
+**Item** is the short form and the canonical name in user-facing surfaces; "checklist item" is the long form used when the containing checklist needs naming. They are the same thing — never treat them as distinct concepts.
+_Avoid_: subtask, todo, step, entry
+
 > **task vs checklist item** — the task is the container; the checklist item is the togglable, note-bearing unit. There is no API to mark a whole task done directly.
 
 ## Note
 
-Free-form text attached to a **checklist item** (not to a task). Each checklist item has at most one note. Read/written via `note show` / `note set` and edited in the TUI's note screen.
+Free-form text attached to a **checklist item** (not to a task). Each checklist item has at most one note. A note is a property of its item, never a standalone object — it is read and written as part of that item.
+_Avoid_: comment, description, notes (plural, as a name for a single note)
 
 ## Item state
 
-The hand-set marker on a **checklist item** saying where its work stands: `ready_to_pickup`, `in_progress`, `in_review`, or none. It is mutually exclusive with completion — an item carrying a state is incomplete by construction.
-_Avoid_: item status, stage, phase, column
+The hand-set marker on a **checklist item** saying where its work stands. Its canonical names are **`ready`**, **`progress`**, **`review`**, and **none** — one vocabulary for both reading and setting, so a value that was read back can be written again unchanged. It is mutually exclusive with completion — an item carrying a state is incomplete by construction.
+_Avoid_: item status, stage, phase, column, `ready_to_pickup` / `in_progress` / `in_review` (server-internal spellings, not the shared vocabulary)
 
 ## Task status
 
 The task-level `status` string, **derived** server-side from how many of the task's checklist items are checked. Nothing sets it by hand.
 
-> **item state vs task status** — different concepts that happen to share the string `in_progress`. The item state is hand-set on a single checklist item; the task status is computed from checked counts across the whole task. Never call an item's state its "status".
+> **item state vs task status** — different concepts that once shared the string `in_progress`. The item state is hand-set on a single checklist item and is named `progress`; the task status is computed from checked counts across the whole task and is named `in_progress`. The distinct names are deliberate — they are what keeps the two apart on sight. Never call an item's state its "status".
 
 ## PR number
 
@@ -49,7 +53,7 @@ _Avoid_: github link, repo link, remote
 
 ## Queue
 
-The set of **checklist items** in one **item state** across every task the caller can read — an agent's "what can I pick up?" view, surfaced by the top-level `queue` command. It is a query, not a stored list.
+The set of **checklist items** in one **item state** across every task the caller can read — an agent's "what can I pick up?" view. It is a query, not a stored list, and it is the only item view that crosses tasks.
 _Avoid_: backlog, inbox, board
 
 ## Relationships
@@ -60,5 +64,7 @@ _Avoid_: backlog, inbox, board
 
 ## Flagged ambiguities
 
-- "status" was used for both an item's hand-set **item state** and a task's derived **task status** — resolved: these are distinct, and only the task has a status.
+- "status" was used for both an item's hand-set **item state** and a task's derived **task status** — resolved: these are distinct, and only the task has a status. Reinforced by naming them `progress` and `in_progress` respectively.
 - "PR" was used for both the **PR number** and the assembled link — resolved: the number is what's stored; the link is built on the fly from the project's **repo URL**.
+- An **item state** had two spellings — a short one for setting it and a long one for reading it back — resolved: the short names are the vocabulary; the long ones are a server-internal encoding no user-facing surface should show.
+- "checklist" was used both for a task's collection of items and as the name of the operations on a single item — resolved: a checklist is the collection; **item** is the unit, and it is the noun every single-item operation is named after.

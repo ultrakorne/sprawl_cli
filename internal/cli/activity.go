@@ -79,7 +79,7 @@ func validateActivityParams(date, daysAgo string) error {
 func activityPayload(log *client.ActivityLog) map[string]any {
 	tasks := make([]any, 0, len(log.CompletedTasks))
 	for _, t := range log.CompletedTasks {
-		tasks = append(tasks, taskMap(t))
+		tasks = append(tasks, taskMap(t, false))
 	}
 	items := make([]any, 0, len(log.CompletedItems))
 	for _, it := range log.CompletedItems {

@@ -2,9 +2,9 @@
 
 ## Overview
 
-A checklist item now carries two optional fields beyond its title, completion flag, and note:
+An item carries two optional fields beyond its title, completion flag, and note:
 
-- an **item state** — one of `ready_to_pickup`, `in_progress`, `in_review`, or none at all;
+- an **item state** — one of `ready`, `progress`, `review`, or none at all;
 - a **PR number** — the GitHub pull-request number the work landed in.
 
 Both are hand-set. Neither is derived, and neither is required: an item that never enters review carries neither and reads exactly as it did before the feature existed.
@@ -35,7 +35,7 @@ Rules that follow from the server's model:
 
 - **States are mutually exclusive.** Setting one replaces any previous one; there is no "also".
 - **State and completion are mutually exclusive.** Setting a state on a completed item **un-completes** it, and checking an item **clears** its state. So every item carrying a state is incomplete by construction — which is why `queue` needs no `completed` filter.
-- **State is not task status.** A task's `status` is derived server-side from its checked counts; an item's state is set by hand. They happen to share the string `in_progress` and mean different things. See [CONTEXT.md](../../CONTEXT.md).
+- **State is not task status.** A task's `status` is derived server-side from its checked counts; an item's state is set by hand. On the wire they could both read `in_progress`; in CLI output they can't, because the item's is emitted short-form as `progress`. The distinct names are deliberate — they're what keeps the two apart on sight. See [CONTEXT.md](../../CONTEXT.md).
 
 ### PR number
 
@@ -49,13 +49,13 @@ The **link** is not stored — it is built by the client from the item's parent 
 
 ## Components
 
-### `checklist state <item_id> <ready|progress|review|none>`
+### `item state <id> <ready|progress|review|none>`
 
 Sets or clears the state. Accepts the short words above *and* the wire values verbatim, so an agent can echo back whatever a read handed it. Anything else fails locally, naming the accepted set, rather than round-tripping for a bare 422. The PR number is untouched.
 
-This is a separate route from `checklist update`, which ignores the field entirely.
+This is a separate route from `item update`, which ignores the field entirely.
 
-### `checklist pr <item_id> <number|none>`
+### `item pr <id> <number|none>`
 
 Attaches or clears the PR number. Non-positive or non-numeric input fails locally — the server's own rule, applied before the round-trip. The state is untouched.
 
@@ -63,7 +63,7 @@ Attaches or clears the PR number. Non-positive or non-numeric input fails locall
 
 `GET /api/v1/checklist_items?state=…` — the one read that crosses tasks. It is top-level rather than a `checklist` subcommand precisely because it is *not* scoped to a task: it answers "what is in this state anywhere I can see?", which is the question an agent asks before starting work.
 
-Defaults to `ready_to_pickup`. Also takes `progress` (what's being worked) and `review` (what's waiting on a human). `none` is rejected — the endpoint requires one of the three, and "items with no state" is just the ordinary checklist. Results honour project confinement like every other read.
+Defaults to `ready`. Also takes `progress` (what's being worked) and `review` (what's waiting on a human). `none` is rejected — the endpoint requires one of the three, and "items with no state" is just the ordinary checklist. Results honour project confinement like every other read. `--full` expands each item's note under its row.
 
 Each returned item carries its parent task and that task's project, so the human table can show *what work this is*, and the structured payload can carry a resolved `pr_url` without a second call.
 
@@ -71,8 +71,8 @@ Each returned item carries its parent task and that task's project, so the human
 
 The fields are additive everywhere else, and render as nothing when unset:
 
-- `checklist <task_id>` gains `STATE` and `PR` table columns.
-- `checklist <task_id> --full` and `task <id> --full` append a ` · review · #412` trailer to the item line. Only `task <id> --full` can resolve the full link, since it is the one read that has the task's project in hand.
+- Every item table carries a `STATE` column rendering the state **icon** — the same glyph the TUI shows, from the shared `internal/icons` — and a `PR` column rendering `#412`. `queue` drops `STATE`, because the state is its query and lives in the heading instead.
+- The `PR` cell is an OSC 8 hyperlink wherever the chain resolves, so a ctrl/cmd-click opens the pull request. Where it doesn't (no project, or no repo URL on it) the number is still shown, just inert.
 - json / toon payloads always carry `state` and `pr_number` keys, `null` when unset — so a consumer never has to distinguish "absent" from "cleared".
 
 ### Interactive TUI
@@ -86,10 +86,10 @@ A row shows the **icon** only — the same hand / crossed-tools / eye icons as t
 The states only earn their keep if every agent follows the same sequence. This is the protocol the bundled sprawl skill teaches:
 
 1. `queue` — see what's flagged ready.
-2. `checklist state <id> progress` — **claim it before starting**, so nobody duplicates the work.
+2. `item state <id> progress` — **claim it before starting**, so nobody duplicates the work.
 3. Do the work; open the PR.
-4. `checklist pr <id> <number>` — link it.
-5. `checklist state <id> review` — hand it back. **Stop here.**
+4. `item pr <id> <number>` — link it.
+5. `item state <id> review` — hand it back. **Stop here.**
 
 An agent must **not** check off an item it put in review: checking clears the state, which would hide the work from the human's review queue. Items that never involved a PR follow the ordinary rule and are checked off as they finish.
 
@@ -97,7 +97,7 @@ On hand-off, anything left mid-flight goes back to `ready` rather than being lef
 
 ## Design decisions
 
-- **A dedicated route, not `checklist update`.** The generic item PATCH silently ignores both keys, so folding them in would produce a no-op that looks like a success. The split also mirrors the existing `check` / `uncheck` precedent: fields with side effects get their own verb.
+- **A dedicated route, not `item update`.** The generic item PATCH silently ignores both keys, so folding them in would produce a no-op that looks like a success. The split also mirrors the existing `check` / `uncheck` precedent: fields with side effects get their own verb.
 - **Short words in, short words out.** The CLI prints `review`, and `review` is what you type. The wire values are accepted too so a script can round-trip a read without translating. Aliases are a CLI concept, so the CLI owns the vocabulary and validates locally.
 - **`none` rather than a `--clear` flag.** Keeps the surface positional-only and parallels `task due none`.
 - **Clearing sends an explicit null, never an omitted key.** An absent key means "leave unchanged"; the two are different requests, and conflating them would make "clear" silently do nothing.

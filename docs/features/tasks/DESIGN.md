@@ -2,7 +2,7 @@
 
 ## Overview
 
-The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows one task from a bare positional id (`task <id>`); list / search / create / update / due / delete are subcommands. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). A project key narrows that further, server-side: `list` and `search` come back pre-filtered to the one project (projectless tasks included in *nothing*), `task <id>` outside it comes back not-visible (the running server answers 404), and creates land inside it — the CLI does no filtering of its own in either case. Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
+The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows one task from a bare positional id (`task <id>`); list / search / create / update / due / delete are subcommands. Reads respect server-side per-agent permission filtering: non-owner agents only see tasks their key resolves `:read` / `:write` / `:write_create` on (task override → project override → `agent_keys.default_permission`). A project key narrows that further, server-side: `list` and `search` come back pre-filtered to the one project (projectless tasks included in *nothing*), `task <id>` outside it is refused (the running server answers 403), and creates land inside it — the CLI does no filtering of its own in either case. Writes accept explicit flags (`--title`, `--description`, `--project-id`) and / or `--from-json <path|->`; explicit flags override fields parsed from the JSON source, so agents can pipe a template and tweak one field on the command line.
 
 ## Components
 
@@ -10,12 +10,45 @@ The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows 
 `GET /api/v1/tasks`. Lists every task the caller can read. Text view is an aligned `ID DUE PROGRESS PROJECT TITLE` table; `(no tasks)` when empty. STATUS has no column — PROGRESS (traffic-light colored: red `0/x`, yellow in-progress, green `x/x`) carries that signal for humans, while `status` stays in the json/toon payload for agents.
 
 ### `task <id>` (show)
-`GET /api/v1/tasks/:id`. A bare positional id on the `task` parent command shows one task — there is no `show` subcommand (removed for symmetry with `checklist <task_id>`; see Design Decisions). 404 when the id isn't visible to the caller; 403 when visible by scope but denied by the permission resolver. Text view is a bordered card: id/title in the top border, a `project · due · progress` grid, then the description. status, last_actor, and created_by are omitted from text (progress is the human signal; actors are glance-irrelevant) but stay in the json/toon payload.
+`GET /api/v1/tasks/:id`. A bare positional id on the `task` parent command shows one task — there is no `show` subcommand (removed for symmetry with `item <id>`; see Design Decisions). 403 when the task is out of reach (including any id outside a project key's project); 404 when it doesn't exist.
 
-`--full` opts into `GET /api/v1/tasks/:id?full=true`, which embeds the task's checklist under `task.checklist_items: [...]` (ordered by position), each item carrying its `notes` blob inline alongside the usual `has_notes` flag. One server call replaces the old `task <id>` + `checklist <id>` + per-item `note show` fan-out. The CLI decodes the embedded items into `Task.ChecklistItems` (nil ⇒ field absent on a non-full fetch, so it's suppressed in output). The `--full` text view is the same card as the non-full detail (id/title in the border, a `project · due · progress` grid, the description) with a `CHECKLIST` section appended — each item a colored checkbox, faint id, title, an optional ` · review · <pr link>` trailer, and its (possibly multi-line) notes nested beneath (`(no notes)` for empty). This is the one task read that carries the project, so it's the one that renders a PR number as a full GitHub link rather than a bare `#412` — see [item-state-and-pr](../item-state-and-pr/INDEX.md). The checklist heading omits the count since the card already shows progress; last_actor / created_by stay out of the human view (still in json/toon for agents). Without `--full` the response and rendered shape are unchanged.
+The response embeds the task's items under `task.checklist_items: [...]` (ordered by position), each with `has_notes` but **no note body**. The text view is a two-line header — bold title, then the description — followed by the shared item table:
+
+```
+  Ship the CLI consolidation
+  outline the v2 API and land it behind a flag
+
+  [x]  ID   STATE  PR    NOTES  TITLE
+  ─────────────────────────────────────────────────
+  [x]  203  -      #412  o      add the migration
+  [ ]  204  ◐      -     -      write the docs
+```
+
+**No bordered card** — no box, no meta grid, no project / due / progress. The header carries title and description only; the id is absent because you typed it to get here, and an empty description leaves the title line alone. status, project, due date, progress, last_actor and created_by are all still in the json/toon payload, and `task list` carries the first four per task.
+
+The table itself is defined in [items](../items/INDEX.md) — `task <id>`, `item <id>` and `queue` all render the same row.
+
+`--full` opts into `GET /api/v1/tasks/:id?full=true`, which adds each item's `notes` body and expands it on the lines below its row, starting at the `ID` column so the prose gets the width it needs (see [items](../items/INDEX.md)). This is the task read that carries the project, so it's the one that renders a PR number as a clickable link rather than a bare `#412` — see [item-state-and-pr](../item-state-and-pr/INDEX.md).
 
 ### `task search <query>`
-`GET /api/v1/tasks/search?q=<query>`. Case-insensitive substring match on **task title and checklist item titles** (notes are not searched). Each task in the response carries an additional `matched_checklist_items: [{id,title}, …]` field — `[]` when only the title matched (UI hint: "matched on title"), otherwise one entry per checklist item whose title matched. Tasks dedupe: a task whose title and one or more items both match still appears once. Empty / whitespace query → 422 `query_required` from the server; the CLI does not pre-validate.
+`GET /api/v1/tasks/search?q=<query>`. Case-insensitive substring match on **task title and item titles** (notes are not searched). Each task in the response carries an additional `matched_checklist_items: [{id,title}, …]` field — `[]` when only the title matched, otherwise one entry per item whose title matched. Tasks dedupe: a task whose title and one or more items both match still appears once. Empty / whitespace query → 422 `query_required` from the server; the CLI does not pre-validate.
+
+**Search is a lookup, not a view.** It answers "which tasks and items mention this?" and hands back the ids you then read with `item <id>` or `task <id>`. Each hit renders as its own block — the task's title and description, then the ids and titles of the items that matched under it — so several hits stack readably:
+
+```
+  Ship the CLI consolidation
+
+  ID   TITLE
+  ────────────────────────
+  203  add the migration
+  205  ship it
+
+  Another task that matched
+```
+
+A task that matched on its own title has no matching items and renders as the header alone; the title already said why it's there.
+
+The block shows **id and title only**, and deliberately not the shared item table. `/tasks/search` serialises matched items as `{id, title}` — no `completed`, `state`, `pr_number` or `has_notes` — so every other column would print a zero value: an unchecked box next to an item that may well be checked, `-` in STATE for an item that is in review. That reads as data rather than as absence, which is the one thing worth avoiding in a surface whose entire job is telling you where to look next. `client.MatchedChecklistItem` is a distinct two-field type rather than a sparsely-populated `ChecklistItem` so the narrowness is visible at the call site.
 
 ### `task create`
 `POST /api/v1/tasks` body `{"task":{…}}`. Flags: `--title`, `--description`, `--project-id` (integer — parsed locally so non-numeric input fails before the HTTP call), `--from-json <path|->`. Rejected with a local error if the merged attrs map is empty. The caller's own permission is what lets them read the task back — no post-create grant happens server-side. Projectless create (`--project-id` omitted) requires the key's `default_permission` to be `write_create`; project-scoped create requires `write_create` resolved at project scope. A key that's only `write` on an otherwise-visible project gets a 403.
@@ -42,8 +75,9 @@ Server-side `project_id` validation runs before permission checks:
 
 ## Design Decisions
 
-- **`task <id>` instead of `task show <id>`**: a bare positional id shows the task, matching `checklist <task_id>` so the read syntax is `<noun> <id>` across both. The `show` subcommand was removed outright (no alias) — pre-public, so the churn is acceptable. `task show 42` now falls through to the parent RunE as two positional args and fails the `ExactArgs(1)` check with cobra's generic usage error; no special migration message.
-- **`--full` is opt-in, server-assembled**: the bundled task+items+notes view is one `?full=true` call the server assembles atomically, not a CLI fan-out — keeping the CLI a thin 1:1 wrapper and avoiding partial-failure semantics. Scoped to `task <id>` and `checklist <task_id>` only (not `list` / `search`, which would explode into N server-side fan-outs).
+- **`task <id>` instead of `task show <id>`**: a bare positional id shows the task, matching `item <id>` so the read syntax is `<noun> <id>` across both nouns. The `show` subcommand was removed outright (no alias) — pre-public, so the churn is acceptable. `task show 42` now falls through to the parent RunE as two positional args and fails the `ExactArgs(1)` check with cobra's generic usage error; no special migration message.
+- **`--full` is opt-in, server-assembled**: the bundled task+items+notes view is one `?full=true` call the server assembles atomically, not a CLI fan-out — keeping the CLI a thin 1:1 wrapper and avoiding partial-failure semantics. Scoped to `task <id>` and `queue` only (not `list` / `search`, which would multiply the response by every checklist's length for something those callers render as a progress bar).
+- **The card is gone.** `task <id>` used to render a bordered box with a `project · due · progress` grid above its items. All three of those already appear per task in `task list`, and the box competed with the item table for attention. The header was cut to title + description — and the description was originally cut too, then added back specifically to rescue it. Everything removed is still reachable in `--format=json`.
 - **No `--project-id` on update**: server-side changeset ignores it; surfacing it would mislead.
 - **Empty-attrs rejected locally**: prevents no-op POSTs that would otherwise waste a round-trip.
 - **`--description ""` clears**: idiomatic for agents wanting explicit empty, distinguished from the flag being unset.

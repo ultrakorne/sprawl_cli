@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ultrakorne/sprawl_cli/internal/client"
+	"github.com/ultrakorne/sprawl_cli/internal/icons"
 )
 
 // newChecklistModel opens the checklist screen on a loaded task.
@@ -57,18 +58,19 @@ func TestNextState_Cycles(t *testing.T) {
 }
 
 func TestStateIconsAreOneCell(t *testing.T) {
-	// The state column is a constant width, which only works if every glyph in
-	// both sets occupies exactly one cell. A two-cell icon would shear every row
-	// carrying it.
-	for _, set := range []iconSet{nerdIcons, plainIcons} {
-		for _, glyph := range []string{set.ready, set.progress, set.review} {
+	// The per-glyph width invariant is owned by internal/icons; what this side
+	// has to guarantee is that the TUI's own column constant agrees with it.
+	// Widen the glyphs without widening stateColW and every row carrying one
+	// shears.
+	if stateColW != icons.Width {
+		t.Fatalf("stateColW = %d but icons.Width = %d", stateColW, icons.Width)
+	}
+	for _, set := range []icons.Set{icons.Nerd, icons.Plain} {
+		for _, glyph := range []string{set.Ready, set.Progress, set.Review, icons.Unknown} {
 			if w := lipgloss.Width(glyph); w != stateColW {
 				t.Errorf("glyph %q width = %d, want %d", glyph, w, stateColW)
 			}
 		}
-	}
-	if w := lipgloss.Width("•"); w != stateColW {
-		t.Errorf("unknown-state marker width = %d", w)
 	}
 }
 
@@ -108,13 +110,15 @@ func TestStateIconAndNames(t *testing.T) {
 	}
 }
 
-func TestResolveIcons_PlainOptOut(t *testing.T) {
+// The opt-out itself is tested in internal/icons; what matters here is that the
+// TUI actually reads it when it builds its styles, rather than baking in a set.
+func TestNewStyles_HonoursIconOptOut(t *testing.T) {
 	t.Setenv("SPRAWL_ICONS", "plain")
-	if resolveIcons() != plainIcons {
+	if newStyles().icons != icons.Plain {
 		t.Fatal("SPRAWL_ICONS=plain should select the fallback set")
 	}
 	t.Setenv("SPRAWL_ICONS", "")
-	if resolveIcons() != nerdIcons {
+	if newStyles().icons != icons.Nerd {
 		t.Fatal("nerd icons are the default")
 	}
 }
@@ -202,7 +206,7 @@ func TestNoteHeader_SpellsOutStateAndPR(t *testing.T) {
 	m.push(screenNote)
 
 	view := ansi.Strip(m.viewNote())
-	for _, want := range []string{"add the migration", "In progress", m.styles.icons.progress, "#412"} {
+	for _, want := range []string{"add the migration", "In progress", m.styles.icons.Progress, "#412"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("missing %q in header:\n%s", want, view)
 		}

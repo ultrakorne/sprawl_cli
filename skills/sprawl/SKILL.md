@@ -1,16 +1,16 @@
 ---
 name: sprawl
 description: >
-  Collaborate on shared tasks, checklists, and notes with the human and other
+  Collaborate on shared tasks, items, and notes with the human and other
   agents via the sprawl CLI. Use this skill whenever the user asks you to look
   at "my tasks", "the backlog", "what's assigned to me", to pick up work that's
-  ready, check off a checklist item, mark something in progress or in review,
+  ready, check off an item, mark something in progress or in review,
   attach a PR number, leave a note for another agent, create a task, or
   coordinate work with another agent — anything that reads or writes the sprawl
   task space.
 license: 'MIT'
 metadata:
-  version: 0.4.0
+  version: 0.5.0
 allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(test:*)
 ---
 
@@ -23,7 +23,7 @@ source of truth for validation and permissions, so trust its error codes.
 
 ## When to use this skill
 
-- The user refers to tasks, checklists, notes, or the backlog in sprawl.
+- The user refers to tasks, items, notes, or the backlog in sprawl.
 - The user asks you to coordinate with another agent or leave them context.
 - You need durable state that survives beyond this conversation (a todo, a
   hand-off note, a status update another agent can pick up).
@@ -34,12 +34,12 @@ for those. sprawl is for collaboration across sessions and agents.
 
 ## Preflight
 
-**For reads, skip it.** `task list` / `task <id>` / `checklist` / `note show`
+**For reads, skip it.** `task list` / `task <id>` / `item <id>` / `queue`
 are already filtered server-side to what your key can see, so just run them.
 Probing first only burns tokens and a round-trip.
 
 **For writes, run `sprawl whoami` once.** Before the first `task create`,
-`task update`, `checklist add`, `note set`, or any other mutation in this
+`task update`, `item add`, `item update`, or any other mutation in this
 session, check your scope — see [Before you write](#before-you-write--check-your-scope).
 A wasted `403` on a write is fine; a wasted *chained* write is the trap,
 because `&&` swallows the error and the follow-up commands run with empty
@@ -107,14 +107,13 @@ creates land in that project automatically.
 Surfacing this from `whoami` saves the wasted round-trip and the confusing
 partial state from chained follow-ups.
 
-For edits (`task update`, `checklist check/uncheck/update`, `note set`),
+For edits (`task update`, `item check` / `uncheck` / `update`),
 `write` is enough on the target's project. You can usually skip the
 whoami check for edits if you've already established scope earlier in the
 session — but if this is the first write of the session, just check.
 
 **Don't chain writes with `&&` to capture the new id.** Run
-`task create` on its own, read the id from its output, *then* add checklist
-items. If the create returns 403, an `&&` chain blows past it with an empty
+`task create` on its own, read the id from its output, *then* add items. If the create returns 403, an `&&` chain blows past it with an empty
 id and the next command silently no-ops on stderr — exactly the failure
 mode that surfaces as "(no output)".
 
@@ -122,13 +121,13 @@ mode that surfaces as "(no output)".
 # Right — split so each step's outcome is visible:
 sprawl task create --title "quick reminders"
 # → note the id from the output
-sprawl checklist add <id> --title "print something"
-sprawl checklist add <id> --title "talk to Antti about AI tools"
+sprawl item add <id> --title "print something"
+sprawl item add <id> --title "talk to Antti about AI tools"
 
 # Wrong — masks 403 on create, follow-ups run on empty id:
 task_json=$(sprawl task create --title "quick reminders" --format=json) \
   && id=$(printf '%s' "$task_json" | jq -r '.task.id') \
-  && sprawl checklist add "$id" --title "..."
+  && sprawl item add "$id" --title "..."
 ```
 
 ## Project key — the scope you work in
@@ -153,9 +152,9 @@ What the key does, server-side, on every call:
   tasks" — it's all the tasks *in this project*.
 - `task create` lands in that project. **Never pass `--project-id`** — you
   don't need the id, and naming a different project is rejected.
-- Anything outside the project is invisible: a task id from another project
-  answers `403` or `404`, not its content. Tasks with no project at all are
-  invisible too.
+- Anything outside the project is out of reach: a task or item id from another
+  project answers **`403`**, not its content — reads and writes alike. `404`
+  means the id doesn't exist at all. Tasks with no project are invisible too.
 
 Run `sprawl whoami` to see which project you're in — it prints the name, the
 key, and the level you resolve to there.
@@ -170,8 +169,8 @@ answer — one level, for everything you can reach this session.
 |---|---|---|
 | `200` | Success | Carry on. |
 | `401` | Token bad / missing | Ask user to re-run `sprawl login`. |
-| `403` | Your key is scoped out of this action | Don't retry. Tell the user you lack permission and which action. |
-| `404` | Not visible to you, or genuinely gone | Treat as "not available to me". Don't assume it exists and retry. |
+| `403` | Your key is scoped out of this action — including any id outside your project | Don't retry. Tell the user you lack permission and which action. |
+| `404` | Genuinely gone or never existed | Treat as "not there". Don't assume it exists and retry. |
 | `422` | Validation (e.g. empty search query) | Fix the input. |
 
 Non-owner agents only see tasks their key resolves at least `:read` on, so
@@ -185,7 +184,7 @@ server won't change its mind.
 
 **Default to omitting `--format` for your own reads.** Toon is 30–60 % fewer
 tokens than json and lossless, so when the output is just coming back into
-your context for you to eyeball (list, show, checklist, search), let it
+your context for you to eyeball (list, task, item, queue, search), let it
 default. Passing `--format=json` to read a task list is pure token waste.
 
 Only override when you have a specific reason:
@@ -212,28 +211,29 @@ raw code.
 The owner's convention for this task space. Follow it unless the user says
 otherwise — it's what makes the board readable across agents and sessions.
 
-- **Everything is a checklist item.** The task is a lightweight container;
-  the actual work is the items underneath it.
+- **Everything is an item.** The task is a lightweight container; the actual
+  work is the items underneath it.
 - **Title: short.** Server cap is **30 characters** (enforced — longer fails
   with a 422). Aim well under that: a handful of words, no punctuation
   filler. If you can't say it in a title, the thing is probably two tasks.
 - **Skip the description.** Default to no `--description`. Don't summarise
-  the task there — summarise it in the checklist.
+  the task there — summarise it in the items.
 - **If you must use a description**, keep it brief. Server cap is **255
   characters** (enforced at the DB layer — longer currently surfaces as a
   500, not a clean 422).
-- **Itemize work as checklist items**, titles kept short like task titles.
+- **Itemize work as items**, titles kept short like task titles.
   One discrete thing per item. If an item reveals subwork, add a new item,
   don't cram it into the title.
-- **Long context → item notes.** When something needs paragraphs — a
-  rationale, a block of status, a link dump, a hand-off — attach it as a
-  note on the relevant checklist item via `sprawl note set`. Notes are
-  free-form and unbounded; that's the channel for anything that won't fit
+- **Long context → the item's note.** When something needs paragraphs — a
+  rationale, a block of status, a link dump, a hand-off — attach it as the
+  note on the relevant item via `sprawl item update <id> --notes "..."`. A note
+  is a field of its item, not a separate object; each item has at most one, and
+  it's free-form and unbounded. That's the channel for anything that won't fit
   in a title.
 
 So the usual create flow is: `task create --title "..."` (no description),
-then one or more `checklist add <task_id> --title "..."`, then
-`note set <item_id>` only on items that need the extra context.
+then one or more `item add <task_id> --title "..."`, then
+`item update <id> --notes "..."` only on items that need the extra context.
 
 ## Command reference
 
@@ -246,42 +246,62 @@ Omit `--format` — default toon is what you want here (see [Output formats](#ou
 
 ```bash
 sprawl task list
-sprawl task <id>                               # show one task (no `show` subcommand)
-sprawl task <id> --full                        # task + its checklist items + notes, one call
-sprawl task search "<query>"                   # case-insensitive substring on title
-sprawl checklist <task_id>                     # list checklist items for a task
-sprawl checklist <task_id> --full              # items with their notes inline, one call
+sprawl task <id>                               # task + its items (no `show` subcommand)
+sprawl task <id> --full                        # …and every item's note body, one call
+sprawl task search "<query>"                   # task + item titles; returns ids to fetch
+sprawl item <id>                               # one item + its note (no --full; always included)
 sprawl queue                                   # items ready to pick up, across every task
 sprawl queue --state progress|review           # what's being worked / awaiting review
-sprawl note show <item_id>                     # raw notes blob; empty is valid
+sprawl queue --full                            # …with each note expanded
 sprawl activity                                # completed tasks + items for today
 sprawl activity --days-ago 1                   # yesterday
 sprawl activity --date 2026-04-29              # specific day
 ```
 
-**`--full` is the read-before-work shortcut.** When you're about to work a
-task, `sprawl task <id> --full` (or `sprawl checklist <task_id> --full`) pulls
-the items *and* their notes in one call — prefer it over listing the checklist
-and then running `note show` per item. Reach for plain `note show` only for a
-single item's notes in isolation.
+**Two nouns: `task` and `item`.** A task is the container; an item is the unit
+of work and the thing a note hangs off. Every single-item verb takes a bare
+**item** id — the one exception is `item add <task_id>`, because the item
+doesn't exist yet. There is no `checklist` command and no `note` command.
 
-**Daily activity:** `sprawl activity` returns the calling agent's completed tasks + completed checklist items for a single day, scoped by the same key cascade as `task list`. Default is today in the user's timezone. `--date` (YYYY-MM-DD) and `--days-ago` (`0..365`, `0`=today) are mutually exclusive — passing both is a local error before any HTTP call. Empty days return an empty result, not an error. Useful for daily standup write-ups, weekly summaries (loop over `--days-ago 0..6`), and answering "what did I get done yesterday?".
+**Read cost: `task <id>` is cheap, `--full` is not.** A plain `sprawl task <id>`
+returns every item with a `has_notes` flag but no note **bodies** — enough to
+see the shape of the work and spot which items carry context. `--full` pulls
+every body over the wire. So:
 
-**Reading note content into a shell variable or another command — use `--format=text`, not json + a parser.**
+- `sprawl task <id>` — orienting, checking progress, finding an item id.
+- `sprawl task <id> --full` — you're about to work the task and need the notes.
+- `sprawl item <id>` — you want one item's note and nothing else.
 
-The `text` format on `note show` emits the notes body verbatim with no envelope, which is exactly what you want when capturing or piping the content. Reaching for `--format=json | jq -r '.notes'` works but is unnecessary; reaching for `--format=json | python3 -c "import json,sys; print(json.load(sys.stdin)['notes'])"` is pure overhead — don't do it.
+**Daily activity:** `sprawl activity` returns the calling agent's completed tasks + completed items for a single day, scoped by the same key cascade as `task list`. Default is today in the user's timezone. `--date` (YYYY-MM-DD) and `--days-ago` (`0..365`, `0`=today) are mutually exclusive — passing both is a local error before any HTTP call. Empty days return an empty result, not an error. Useful for daily standup write-ups, weekly summaries (loop over `--days-ago 0..6`), and answering "what did I get done yesterday?".
+
+**Reading a note body into a shell variable or another command — use `--format=json` and `jq`.**
+
+There is no longer a command that prints a bare note. `item <id> --format=text`
+renders a table row with the note under it, which is right for a human and wrong
+for a pipe. When you need the raw body — capturing it, piping it into `less`,
+writing it to a file — go through json and extract the field.
 
 ```bash
-# Right — raw content straight out:
-body=$(sprawl note show 203 --format=text)
-sprawl note show 203 --format=text | less
-sprawl note show 203 --format=text > note.md
+# Right — the raw body, nothing else:
+body=$(sprawl item 203 --format=json | jq -r '.checklist_item.notes')
+sprawl item 203 --format=json | jq -r '.checklist_item.notes' | less
+sprawl item 203 --format=json | jq -r '.checklist_item.notes' > note.md
 
-# Wrong — toon envelope leaks into the variable ("notes: \"...\""):
-body=$(sprawl note show 203)
+# Wrong — the table rendering leaks into the variable (columns, "note:" label):
+body=$(sprawl item 203 --format=text)
 
-# Overkill — only justified if you're extracting *other* fields too:
-sprawl note show 203 --format=json | jq -r '.notes'
+# Wrong — the toon envelope leaks in instead:
+body=$(sprawl item 203)
+```
+
+An item with no note gives `null` from `jq -r` — check for it rather than
+writing the four characters into a file.
+
+For a whole task at once, `--full` plus one `jq` beats N calls:
+
+```bash
+sprawl task 119 --full --format=json \
+  | jq -r '.task.checklist_items[] | select(.notes) | "#\(.id) \(.title)\n\(.notes)\n"'
 ```
 
 ### Writes — tasks
@@ -319,33 +339,43 @@ return the *resolved* ISO date in `due_date` — there's no echo of which
 preset is currently set, so if you need that, compute it locally by
 comparing the date against today / yesterday / the user's week-end.
 
-### Writes — checklists
+### Writes — items
 
 Wire body: `{"checklist_item": {...}}`. Server assigns `position` on add.
 Permission is checked on the **parent task**, not per item.
 
 ```bash
-sprawl checklist add <task_id> --title "write migration"
-sprawl checklist add <task_id> --title "deploy" --notes "run after backfill"
+sprawl item add <task_id> --title "write migration"
+sprawl item add <task_id> --title "deploy" --notes "run after backfill"
 
-sprawl checklist check <item_id>              # idempotent
-sprawl checklist uncheck <item_id>            # idempotent
-sprawl checklist update <item_id> --title "renamed"
-sprawl checklist delete <item_id>             # hard-delete; idempotent on 404
+sprawl item check <id>                        # idempotent
+sprawl item uncheck <id>                      # idempotent
+sprawl item update <id> --title "renamed"
+sprawl item delete <id>                       # hard-delete; idempotent on 404
 ```
 
 Use `check` / `uncheck` for completion — `update` doesn't mutate it. The split
 avoids a GET-then-PATCH race when you don't know current state.
 
+Every write prints a one-line `✓ …` confirmation in `text` mode and the
+`{"checklist_item": {…}}` envelope in `json` / `toon`.
+
 ### Writes — item state and PR number
 
-Two independent fields on a checklist item. State says where the work is; the
-PR number links it to GitHub.
+Two independent fields on an item. State says where the work is; the PR number
+links it to GitHub.
 
 ```bash
-sprawl checklist state <item_id> ready|progress|review|none
-sprawl checklist pr    <item_id> <number|none>
+sprawl item state <id> ready|progress|review|none
+sprawl item pr    <id> <number|none>
 ```
+
+`ready` / `progress` / `review` are the vocabulary in **both** directions — what
+you type and what every read gives back. The server's own spellings
+(`ready_to_pickup` / `in_progress` / `in_review`) are still accepted as input,
+but no output uses them, so a value you read can be written straight back.
+Don't confuse an item's `state` with a task's `status`: the task's is derived
+from checked counts and really is `in_progress`.
 
 Rules that bite:
 
@@ -356,24 +386,25 @@ Rules that bite:
   exclusive server-side, so never set a state on something already checked
   off unless you mean to reopen it.
 - **Checking an item clears its state**; the PR number survives.
-- `state` and `pr` are separate routes from `checklist update`, which ignores
-  both fields.
+- `state` and `pr` are separate routes from `item update`, which ignores both
+  fields.
 
-### Writes — notes (hand-off channel)
+### Writes — the note (hand-off channel)
 
-Notes are per-checklist-item free-form blobs, addressed separately so list
-responses stay small. This is the primary place to leave context for another
-agent or the human.
+A note is a free-form field **of** an item — each item has at most one, and
+`item update` is the only thing that writes it. This is the primary place to
+leave context for another agent or the human.
 
 ```bash
-sprawl note show <item_id>                    # read
-sprawl note set <item_id> "blocked on PR #418"
-sprawl note set <item_id> ""                  # clears notes
-cat status.md | sprawl note set <item_id> --stdin
+sprawl item 203                               # read it (note always included)
+sprawl item update 203 --notes "blocked on PR #418"
+sprawl item update 203 --notes ""             # clears the note
+cat status.md | sprawl item update 203 --notes -
 ```
 
-`--stdin` and the positional arg are mutually exclusive — passing both is a
-local error before any HTTP call.
+`--notes -` reads the whole body from stdin — that's how you write a multi-line
+or piped note. You can't combine it with `--from-json -`; both would claim
+stdin, and the CLI rejects that locally before any HTTP call.
 
 ### Misc
 
@@ -406,10 +437,10 @@ need the wider picture — your key already scopes both server-side.
 who's on what, live:
 
 ```bash
-sprawl checklist state 7 progress   # claiming it — do this before you start
+sprawl item state 7 progress   # claiming it — do this before you start
 # … do the work, open the PR …
-sprawl checklist pr    7 412
-sprawl checklist state 7 review     # hands it back
+sprawl item pr    7 412
+sprawl item state 7 review     # hands it back
 ```
 
 Stop at `review`. **Don't check off an item you put in review** — the human
@@ -418,56 +449,54 @@ the work from their queue.
 
 **Read the notes before you start.** Notes are where the previous agent or
 the human left hand-off context — skipping them is how you redo work someone
-already did or miss a blocker they flagged. `sprawl task <id> --full` already
-includes every item's notes inline, so prefer it when picking up a task; use
-`sprawl checklist <task_id> --full` if you only need the checklist. Fall back
-to `sprawl note show <item_id>` only for a single item's notes in isolation:
+already did or miss a blocker they flagged. `sprawl task <id> --full` pulls
+every item's note in one call, so prefer it when picking up a task; drop to
+`sprawl item <id>` when you only care about one:
 
 ```bash
-sprawl task <id> --full        # preferred: task + items + notes together
-sprawl checklist <id> --full   # just the checklist, notes inline
-sprawl note show <item_id>     # one item's notes, when that's all you need
+sprawl task <id> --full   # preferred: task + items + every note, one call
+sprawl item <id>          # one item and its note, when that's all you need
 ```
 
-A plain `sprawl checklist <id>` (no `--full`) still shows a `has_notes` marker
-per item without the bodies — fine for a quick glance, but `--full` is the
-one-call way to actually read them.
+A plain `sprawl task <id>` (no `--full`) still shows a `NOTES` column (`o` / `-`) per item
+without the bodies — fine for a quick glance or for finding an item id, but
+`--full` is the one-call way to actually read them.
 
 **When you finish an item, check it off immediately** — see
-[§2](#2-make-progress-on-a-checklist). Don't wait until the end of the task:
+[§2](#2-make-progress-on-a-task). Don't wait until the end of the task:
 other agents and the human are watching the board live, and an unchecked
 item reads as "still to do".
 
-### 2. Make progress on a checklist
+### 2. Make progress on a task
 
 Mark items as you finish them; don't batch. Other agents and the human see
 the state live.
 
 ```bash
-sprawl checklist check 203
+sprawl item check 203
 ```
 
-If an item reveals subwork, add a child item rather than stuffing it into the
-note:
+If an item reveals subwork, add a sibling item rather than stuffing it into
+the note:
 
 ```bash
-sprawl checklist add <task_id> --title "backfill legacy rows"
+sprawl item add <task_id> --title "backfill legacy rows"
 ```
 
 ### 3. Leave context for another agent or the human
 
-Use the item's notes blob. Append by reading first if you need to preserve
-prior content (`note set` is a full replace):
+Use the item's note. `--notes` is a full replace, so read it first if you need
+to preserve what's there:
 
 ```bash
-prev=$(sprawl note show 203 --format=text)
+prev=$(sprawl item 203 --format=json | jq -r '.checklist_item.notes // ""')
 printf '%s\n\n---\n\n%s\n' "$prev" "blocked on PR #418" \
-  | sprawl note set 203 --stdin
+  | sprawl item update 203 --notes -
 ```
 
 **Don't sign your edits.** No "done by <agent-name>", no "— claude". The
-server already records the last actor on each note / checklist item. Manual
-signatures just add noise the human has to skim past.
+server already records the last actor on each item. Manual signatures just add
+noise the human has to skim past.
 
 ### 4. Create a new task on behalf of the user
 
@@ -477,26 +506,26 @@ project. Run
 this session — that's the cheap way to find out before round-tripping.
 If you get a `403` anyway, surface it — don't retry.
 
-Create the task on its own, then add checklist items in separate calls so
+Create the task on its own, then add items in separate calls so
 each step's outcome is visible — see the chaining warning in
 [Before you write](#before-you-write--check-your-scope).
 
 ```bash
 sprawl task create --title "flaky deploy"     # lands in your project automatically
 # → note the task id from the output
-sprawl checklist add <task_id> --title "repro on staging"
-sprawl checklist add <task_id> --title "check #ops logs"
+sprawl item add <task_id> --title "repro on staging"
+sprawl item add <task_id> --title "check #ops logs"
 ```
 
 ### 5. Hand off
 
 Finishing your slice and passing to another agent or the human:
 
-1. `checklist check` the items you finished.
-2. `note set` on the next item with a short status + what you couldn't do and
-   why (permission, missing info, blocker).
+1. `item check` the items you finished.
+2. `item update --notes` on the next item with a short status + what you
+   couldn't do and why (permission, missing info, blocker).
 3. Do **not** `task update` the title / description just to log status — that
-   rewrites the task. Status belongs in notes or new checklist items.
+   rewrites the task. Status belongs in notes or new items.
 
 ## Guardrails
 
@@ -507,11 +536,10 @@ Finishing your slice and passing to another agent or the human:
   task lands; naming a project id is at best redundant and at worst rejected.
 - **Never** attempt `sprawl login` — it's interactive; ask the user instead.
 - **Never** retry `403` responses. Permission won't flip mid-session.
-- **Don't** use `task update` as a status channel. Use notes / checklist
-  items.
-- **Don't delete tasks or checklist items the user didn't ask you to remove.**
+- **Don't** use `task update` as a status channel. Use notes / items.
+- **Don't delete tasks or items the user didn't ask you to remove.**
   `task delete` is a soft-delete and can only be undone via the LiveView
-  trash bin (no API to restore). `checklist delete` is a hard delete and
+  trash bin (no API to restore). `item delete` is a hard delete and
   has no undo. When in doubt, leave a note on the item instead.
 - **Don't set due dates the user didn't ask for.** `task due` is for when
   the human explicitly tells you to schedule something (or you're acting
@@ -523,7 +551,7 @@ Finishing your slice and passing to another agent or the human:
   default.
 - **Don't** `--from-json` with untrusted input without reading it first — the
   file / stdin is parsed as the full task/item attrs map.
-- **Empty strings matter**: `--description ""` and `note set X ""` are
+- **Empty strings matter**: `--description ""` and `item update X --notes ""` are
   *explicit clears*, distinct from "flag unset". Use them deliberately.
 - **Write only what the user asked for.** The task space is shared with the
   human and other agents; spurious tasks or notes are noise for everyone.

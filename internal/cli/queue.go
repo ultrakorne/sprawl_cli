@@ -17,6 +17,7 @@ import (
 // work.
 func newQueueCmd(opts *runtimeOpts) *cobra.Command {
 	var state string
+	var full bool
 	cmd := &cobra.Command{
 		Use:   "queue",
 		Short: "List checklist items in a given state across every visible task (GET /api/v1/checklist_items?state=)",
@@ -41,69 +42,66 @@ func newQueueCmd(opts *runtimeOpts) *cobra.Command {
 				err := fmt.Errorf("--state must be one of ready|progress|review (there is no queue of stateless items)")
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
-			return runQueue(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), wire, opts)
+			return runQueue(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), wire, full, opts)
 		},
 	}
-	cmd.Flags().StringVar(&state, "state", client.StateReadyToPickup,
-		"state to list: ready|progress|review (or the wire values ready_to_pickup|in_progress|in_review)")
+	cmd.Flags().StringVar(&state, "state", "ready",
+		"state to list: ready|progress|review (the server's own spellings are accepted too)")
+	cmd.Flags().BoolVar(&full, "full", false,
+		"expand each item's note under its row")
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func runQueue(ctx context.Context, stdout, stderr io.Writer, state string, opts *runtimeOpts) error {
+func runQueue(ctx context.Context, stdout, stderr io.Writer, state string, full bool, opts *runtimeOpts) error {
 	c, err := newAuthedClient(opts)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	items, err := c.ListChecklistItemsByState(ctx, state)
+	items, err := c.ListChecklistItemsByState(ctx, state, full)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
 	rows := make([]any, 0, len(items))
 	for _, it := range items {
-		rows = append(rows, queueItemMap(it))
+		rows = append(rows, queueItemMap(it, full))
 	}
 	payload := map[string]any{"checklist_items": rows}
-	return renderPayload(stdout, payload, queueText(items, state), opts)
+	return renderPayload(stdout, payload, queueText(items, state, full), opts)
 }
 
-// queueItemMap is the item shape plus the parent-task stub the endpoint embeds.
-// It adds one key the server doesn't send: `pr_url`, the resolved GitHub link
-// (null when the item has no PR number, the task has no project, or the project
-// has no github_url). Building it here is the whole point of the project's
-// github_url riding along — every consumer would otherwise concatenate it by
-// hand, and the "render it unlinked" rule is easy to get wrong.
-func queueItemMap(it *client.QueueItem) map[string]any {
-	m := checklistItemMap(&it.ChecklistItem, false)
-	m["pr_url"] = nilIfEmpty(client.PRURL(it.Task.Project, it.PRNumber))
-	m["task"] = map[string]any{
-		"id":      it.Task.ID,
-		"title":   it.Task.Title,
-		"project": projectMap(it.Task.Project),
-	}
+// queueItemMap is the shared item shape plus the parent-task stub the endpoint
+// embeds. pr_url is resolved through the stub's project — the reason the project
+// rides along at all.
+func queueItemMap(it *client.ItemDetail, full bool) map[string]any {
+	m := itemMap(&it.ChecklistItem, it.Task.Project, full)
+	m["task"] = itemTaskMap(&it.Task)
 	return m
 }
 
-// queueText is the human view: one row per item with its parent task, so the
-// list reads as work rather than as orphaned item ids. PR numbers stay bare in
-// the table (the full URL would dominate the width) — json/toon carry pr_url.
-func queueText(items []*client.QueueItem, state string) string {
+// queueViews adapts queue elements to the shared renderer. Each item's project
+// comes from its own parent task — unlike `task <id>`, a queue crosses tasks, so
+// the project is per row.
+func queueViews(items []*client.ItemDetail) []itemView {
+	views := make([]itemView, len(items))
+	for i, it := range items {
+		views[i] = itemView{item: &it.ChecklistItem, project: it.Task.Project, task: &it.Task}
+	}
+	return views
+}
+
+// queueText is the human view: the same table every other item view renders,
+// minus the checkbox and STATE columns. Both are constant within one queue —
+// every queued item is incomplete by construction, and the state is the query,
+// so it goes in the heading rather than repeating identically down a column.
+// TASK and PROJECT take their place, because this is the one item view that
+// crosses tasks and an id alone wouldn't say whose work it is.
+func queueText(items []*client.ItemDetail, state string, full bool) string {
 	if len(items) == 0 {
 		return sty.render(sty.faint, fmt.Sprintf("(no items in %s)", stateLabel(state)))
 	}
-	rows := make([][]col, len(items))
-	for i, it := range items {
-		rows[i] = []col{
-			plainCol(fmt.Sprintf("%d", it.ID)),
-			plainCol(prCell(it.PRNumber)),
-			plainCol(notesFlag(it.HasNotes)),
-			plainCol(it.Title),
-			plainCol(fmt.Sprintf("#%d %s", it.Task.ID, it.Task.Title)),
-			plainCol(projectLabel(it.Task.Project)),
-		}
-	}
-	// The state is the query, not a per-row value — it goes in the heading
-	// instead of repeating identically down a column.
 	head := sty.render(sty.bold, stateLabel(state)) + sty.render(sty.faint, fmt.Sprintf("  (%d)", len(items)))
-	return head + renderTable([]string{"ID", "PR", "NOTES", "TITLE", "TASK", "PROJECT"}, rows)
+	// renderTable opens with one newline; the extra one is the blank line that
+	// separates the heading from the table, matching `task <id>`.
+	return head + "\n" + itemTable(queueViews(items), itemCols{task: true, project: true}, full)
 }

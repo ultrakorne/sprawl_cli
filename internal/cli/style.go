@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -34,6 +35,7 @@ type styler struct {
 	danger lipgloss.Style // blocked / errors
 	plain  lipgloss.Style // no-op style (renders the string unchanged)
 	errTag lipgloss.Style // the leading "error:" on stderr
+	link   lipgloss.Style // clickable text (PR numbers): accent + underline
 }
 
 // sty is the shared, read-only style set. lipgloss.Style values are immutable
@@ -107,6 +109,11 @@ func newStyler() *styler {
 		danger: ns().Foreground(lipgloss.Color("1")),
 		plain:  ns(),
 		errTag: ns().Bold(true).Foreground(lipgloss.Color("1")),
+		// Underlined accent is the terminal's own convention for a link, and it
+		// matches the TUI's. It is applied ONLY where the URL actually resolves,
+		// so the styling is a promise that clicking does something — a PR number
+		// on a project with no repo stays plain like any other inert field.
+		link: ns().Foreground(lipgloss.Color("6")).Underline(true),
 	}
 }
 
@@ -136,50 +143,6 @@ func (s *styler) checkboxStyle(done bool) lipgloss.Style {
 	return s.faint
 }
 
-// checkboxGlyph is the unicode checkbox used by the rich `task <id> --full`
-// view: a filled ballot box when done, an empty one when open. It's distinct
-// from checkbox() ([x]/[ ]), which the list/single-item views still use; only
-// the full-task detail adopts the heavier glyph.
-func checkboxGlyph(done bool) string {
-	if done {
-		return "☑"
-	}
-	return "☐"
-}
-
-// renderTitledBox draws a rounded box with `title` embedded in the top border
-// and `lines` (each already colored, measured ANSI-aware) as the body. `inner`
-// is the content width every body line is padded to; the caller computes it
-// (so a sibling rule can match the box) — it must be ≥ the widest line and
-// ≥ title width + 1.
-//
-// Box-drawing characters, padding, and width are emitted UNCONDITIONALLY; only
-// the border/title color is gated on stylesEnabled (via sty.render, a no-op
-// when off). So stripping ANSI from a styled box yields the exact plain box —
-// the package invariant guarded by TestStyling_PreservesPlainLayout.
-func renderTitledBox(title string, lines []string, inner int) string {
-	titleW := lipgloss.Width(title)
-	dashes := max(inner-1-titleW, 0)
-	var b strings.Builder
-	// Top: ╭─ <title> <fill>╮ — interior (between corners) spans inner+2.
-	b.WriteString(sty.render(sty.accent, "╭─ "))
-	b.WriteString(sty.render(sty.bold, title))
-	b.WriteString(sty.render(sty.accent, " "+strings.Repeat("─", dashes)+"╮"))
-	b.WriteByte('\n')
-	for _, ln := range lines {
-		pad := inner - lipgloss.Width(ln)
-		if pad < 0 {
-			pad = 0
-		}
-		b.WriteString(sty.render(sty.accent, "│"))
-		b.WriteString(" " + ln + strings.Repeat(" ", pad) + " ")
-		b.WriteString(sty.render(sty.accent, "│"))
-		b.WriteByte('\n')
-	}
-	b.WriteString(sty.render(sty.accent, "╰"+strings.Repeat("─", inner+2)+"╯"))
-	return b.String()
-}
-
 // render styles text for free-flowing (non-tabular) output.
 func (s *styler) render(st lipgloss.Style, text string) string {
 	if !stylesEnabled {
@@ -188,19 +151,49 @@ func (s *styler) render(st lipgloss.Style, text string) string {
 	return st.Render(text)
 }
 
+// hyperlink wraps already-rendered text in an OSC 8 escape so a ctrl/cmd-click
+// opens url, leaving the visible characters untouched. An empty url (or styling
+// off) returns text unchanged, so an unresolvable link is plain text rather than
+// a dangling escape.
+//
+// Order matters and is the reason this is a separate step rather than part of a
+// lipgloss style: the escape must go OUTSIDE the styling. Feeding an OSC 8
+// sequence *into* lipgloss makes it render the URL as literal text — the link
+// ends up printed on screen instead of attached to the number. Same constraint
+// the TUI documents on Model.prField.
+func hyperlink(text, url string) string {
+	if url == "" || text == "" || !stylesEnabled {
+		return text
+	}
+	return ansi.SetHyperlink(url) + text + ansi.ResetHyperlink()
+}
+
 // col is one table cell: text is the plain value (used to measure column
 // width) and style is applied to it when styling is enabled. Keeping the plain
 // text separate is what lets colored tables stay aligned — Go's tabwriter
 // counts a colored cell's escape bytes toward its width, so it can't align
 // colored columns; we measure from the plain text and lay the table out
 // ourselves.
+//
+// link, when set, makes the cell an OSC 8 hyperlink to that URL. The escapes are
+// zero-width, so they never enter the width maths — but they are only emitted
+// when styling is on, for the same reason color is: a pipe or a redirect gets
+// the plain characters and nothing else (see stylesEnabled).
 type col struct {
 	text  string
 	style lipgloss.Style
+	link  string
 }
 
-func plainCol(text string) col                    { return col{text, sty.plain} }
-func styledCol(text string, s lipgloss.Style) col { return col{text, s} }
+func plainCol(text string) col                    { return col{text: text, style: sty.plain} }
+func styledCol(text string, s lipgloss.Style) col { return col{text: text, style: s} }
+
+// linkedCol is a styled cell that is also a hyperlink. url == "" degrades to a
+// plain styled cell, so callers can pass a resolved-but-possibly-empty URL
+// unconditionally.
+func linkedCol(text string, s lipgloss.Style, url string) col {
+	return col{text: text, style: s, link: url}
+}
 
 // renderTable lays out header + rows as a left-aligned table with a two-space
 // gap, padding every column except the last to its widest plain value. The
@@ -209,17 +202,7 @@ func styledCol(text string, s lipgloss.Style) col { return col{text, s} }
 // of the plain text, matching the previous tabwriter behavior for the ASCII
 // columns it pads.
 func renderTable(header []string, rows [][]col) string {
-	width := make([]int, len(header))
-	for i, h := range header {
-		width[i] = len([]rune(h))
-	}
-	for _, row := range rows {
-		for i, c := range row {
-			if w := len([]rune(c.text)); w > width[i] {
-				width[i] = w
-			}
-		}
-	}
+	width := colWidths(header, rows)
 
 	hdrCols := make([]col, len(header))
 	for i, h := range header {
@@ -238,6 +221,36 @@ func renderTable(header []string, rows [][]col) string {
 		b.WriteString(layoutRow(row, width))
 	}
 	return b.String()
+}
+
+// colWidths is the layout renderTable lays a table out on: each column is as
+// wide as its widest plain value, and never narrower than its own header. It's
+// exposed separately from renderTable so a renderer that has to align text
+// *under* a column (the item table's notes) can ask where that column starts
+// without re-deriving the layout — one source of truth for both.
+func colWidths(header []string, rows [][]col) []int {
+	width := make([]int, len(header))
+	for i, h := range header {
+		width[i] = len([]rune(h))
+	}
+	for _, row := range rows {
+		for i, c := range row {
+			if w := len([]rune(c.text)); w > width[i] {
+				width[i] = w
+			}
+		}
+	}
+	return width
+}
+
+// colOffset is the display column that column i starts at: every preceding
+// column's width plus the two-space gap after each. colOffset(w, 0) is 0.
+func colOffset(width []int, i int) int {
+	off := 0
+	for _, w := range width[:i] {
+		off += w + 2
+	}
+	return off
 }
 
 // tableRule is the horizontal bar drawn under the header: one ─ line spanning
@@ -261,7 +274,7 @@ func layoutRow(cells []col, width []int) string {
 	var b strings.Builder
 	last := len(cells) - 1
 	for i, c := range cells {
-		b.WriteString(sty.render(c.style, c.text))
+		b.WriteString(hyperlink(sty.render(c.style, c.text), c.link))
 		if i == last {
 			break
 		}

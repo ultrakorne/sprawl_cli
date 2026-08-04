@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -109,7 +110,7 @@ func TestListChecklistItemsByState(t *testing.T) {
 	})
 	c := NewAuthed("tok", "sec")
 
-	items, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup)
+	items, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false)
 	if err != nil {
 		t.Fatalf("ListChecklistItemsByState: %v", err)
 	}
@@ -138,6 +139,74 @@ func TestListChecklistItemsByState(t *testing.T) {
 	}
 	if gotQuery != StateReadyToPickup {
 		t.Fatalf("state query = %q", gotQuery)
+	}
+}
+
+// The `full` param has to actually reach the wire, and the notes it buys have
+// to decode. Rendering-level tests can't catch a dropped query param — they'd
+// stay green while `queue --full` silently returned bodyless items.
+func TestListChecklistItemsByState_Full(t *testing.T) {
+	var gotFull string
+	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotFull = r.URL.Query().Get("full")
+		writeJSON(w, 200, map[string]any{"checklist_items": []any{
+			map[string]any{
+				"id": 7, "title": "add the migration", "completed": false, "position": 1,
+				"state": "in_review", "pr_number": 412, "has_notes": true,
+				"notes": "blocked on the backfill",
+				"task": map[string]any{
+					"id": 3, "title": "Ship the API", "project": nil,
+				},
+			},
+			map[string]any{
+				"id": 8, "title": "no note here", "completed": false, "position": 2,
+				"state": "in_review", "pr_number": nil, "has_notes": false,
+				"notes": nil,
+				"task":  map[string]any{"id": 3, "title": "Ship the API", "project": nil},
+			},
+		}})
+	})
+	c := NewAuthed("tok", "sec")
+
+	items, err := c.ListChecklistItemsByState(context.Background(), StateInReview, true)
+	if err != nil {
+		t.Fatalf("ListChecklistItemsByState: %v", err)
+	}
+	if gotFull != "true" {
+		t.Fatalf("full query = %q, want %q — the flag never reached the server", gotFull, "true")
+	}
+	if req := ts.Requests()[0]; req.Path != "/api/v1/checklist_items" {
+		t.Fatalf("path = %q", req.Path)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len = %d", len(items))
+	}
+	if items[0].Notes == nil || *items[0].Notes != "blocked on the backfill" {
+		t.Fatalf("notes = %v", items[0].Notes)
+	}
+	// An empty note decodes to nil, indistinguishable from "not fetched" — which
+	// is exactly why the renderers are told whether they asked for bodies rather
+	// than inferring it from the payload.
+	if items[1].Notes != nil {
+		t.Fatalf("empty notes = %q, want nil", *items[1].Notes)
+	}
+}
+
+// Without the flag the param must be absent entirely, not `full=false` — the
+// server keys on presence, and sending it would ask for bodies on every queue
+// read.
+func TestListChecklistItemsByState_NonFullOmitsParam(t *testing.T) {
+	var raw string
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		raw = r.URL.RawQuery
+		writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+	})
+	c := NewAuthed("tok", "sec")
+	if _, err := c.ListChecklistItemsByState(context.Background(), StateInReview, false); err != nil {
+		t.Fatalf("ListChecklistItemsByState: %v", err)
+	}
+	if strings.Contains(raw, "full") {
+		t.Fatalf("query = %q, want no `full` key at all", raw)
 	}
 }
 

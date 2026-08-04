@@ -96,15 +96,27 @@ func (f *fakeClient) CreateChecklistItem(_ context.Context, taskID string, attrs
 	f.createItemAttrs = attrs
 	return f.itemResp, f.itemErr
 }
+
+// UpdateChecklistItem serves both the title edit and the note write — a note is
+// a field of an item, so one route writes it. The fake mirrors the real server
+// by echoing the notes it was handed, which is what the note flow reads back.
 func (f *fakeClient) UpdateChecklistItem(_ context.Context, id string, attrs map[string]any) (*client.ChecklistItem, error) {
 	f.calls = append(f.calls, "UpdateItem:"+id)
 	f.updateItemAttrs = attrs
+	if notes, ok := attrs["notes"].(string); ok {
+		f.notesArg = notes
+		if f.notesErr != nil {
+			return nil, f.notesErr
+		}
+		resp := client.ChecklistItem{}
+		if f.itemResp != nil {
+			resp = *f.itemResp
+		}
+		resp.Notes = f.notesResp
+		resp.HasNotes = f.notesResp != nil
+		return &resp, nil
+	}
 	return f.itemResp, f.itemErr
-}
-func (f *fakeClient) SetNotes(_ context.Context, id, notes string) (*string, error) {
-	f.calls = append(f.calls, "SetNotes:"+id)
-	f.notesArg = notes
-	return f.notesResp, f.notesErr
 }
 func (f *fakeClient) DeleteChecklistItem(_ context.Context, id string) error {
 	f.calls = append(f.calls, "DeleteItem:"+id)

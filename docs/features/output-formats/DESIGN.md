@@ -8,7 +8,7 @@ Every `/api/v1/*`-wrapping subcommand honours a uniform `--format=text|json|toon
 
 `text` output is the only format that gets dressed up. It is color-styled with [lipgloss v2](https://charm.land/lipgloss) (`charm.land/lipgloss/v2`):
 
-- **Tables** are preceded by a blank line (breathing room from the prompt) and led by a header row + a `─` rule beneath it — both in **cyan** (ANSI 6), a distinct accent that doesn't collide with the status traffic-light. The rule separates header from rows without any column dividers or grid. Applies to every table view (`task list` / `search`, `activity`'s two tables, `checklist`).
+- **Tables** are preceded by a blank line (breathing room from the prompt) and led by a header row + a `─` rule beneath it — both in **cyan** (ANSI 6), a distinct accent that doesn't collide with the status traffic-light. The rule separates header from rows without any column dividers or grid. Applies to every table view (`task list` / `search`, `activity`'s two tables, and the shared item table behind `task <id>` / `item <id>` / `queue`).
 - **Checklist progress** is traffic-light colored (`0/x` red, in-progress yellow, `x/x` green; `0/0` plain), and **checkboxes** green / faint.
 - **Detail / section** views use bold titles & section labels and faint keys / placeholders.
 

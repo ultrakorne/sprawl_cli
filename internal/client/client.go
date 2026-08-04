@@ -266,17 +266,24 @@ func PRURL(p *Project, prNumber int64) string {
 	return fmt.Sprintf("%s/pull/%d", p.GithubURL, prNumber)
 }
 
+// MatchedChecklistItem is the (id, title) of an item whose title matched a
+// /tasks/search query. Two fields is the whole shape, deliberately: search is a
+// LOOKUP, not a view. It answers "which items mention this?" and hands back the
+// ids you then fetch with `item <id>` or `task <id>`.
+//
+// It is a distinct type from ChecklistItem rather than a sparsely-populated one
+// so the narrowness is visible at the call site. Decoding a search hit into a
+// full item would leave `completed` false and `state` empty for items that are
+// neither, and nothing downstream could tell those zero values from real ones.
+type MatchedChecklistItem struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
 // ChecklistProgress summarises a task's checklist without paginating items.
 type ChecklistProgress struct {
 	Done  int `json:"done"`
 	Total int `json:"total"`
-}
-
-// MatchedChecklistItem is the (id, title) of a checklist item whose title
-// matched a /tasks/search query. Server only ever returns the two fields.
-type MatchedChecklistItem struct {
-	ID    int64  `json:"id"`
-	Title string `json:"title"`
 }
 
 // Task matches the shape documented in task_json.ex. Nullable fields are
@@ -285,8 +292,8 @@ type MatchedChecklistItem struct {
 // MatchedChecklistItems is search-only: present (possibly `[]`) on
 // /api/v1/tasks/search responses, absent on every other endpoint. Decoding
 // keeps that distinction — `nil` slice means "field not in payload",
-// non-nil-empty means "search returned no checklist matches (title-only
-// hit)". taskMap relies on that to suppress emission off the search path.
+// non-nil-empty means "search returned no item matches (title-only hit)".
+// taskMap relies on that to suppress emission off the search path.
 type Task struct {
 	ID                    int64                  `json:"id"`
 	Title                 string                 `json:"title"`
@@ -312,7 +319,7 @@ type Task struct {
 // and single-item write responses, and serializes empty notes as JSON null on
 // the full path — so a nil pointer means either "field absent" or "present but
 // empty", indistinguishable from the wire alone. Renderers use the `full` flag
-// they already carry to decide whether to emit the key (see checklistItemMap).
+// they already carry to decide whether to emit the key (see cli.itemMap).
 // State and PRNumber ride on every item payload. Both are nullable on the wire
 // and both use their zero value for null: "" for State, 0 for PRNumber (the
 // server rejects a pr_number <= 0, so 0 can't be a real value). That keeps
@@ -355,27 +362,8 @@ type taskEnvelope struct {
 	Task *Task `json:"task"`
 }
 
-type checklistEnvelope struct {
-	Items []*ChecklistItem `json:"checklist_items"`
-}
-
 type checklistItemEnvelope struct {
 	Item *ChecklistItem `json:"checklist_item"`
-}
-
-type notesEnvelope struct {
-	Notes *string `json:"notes"`
-}
-
-// emptyNotesToNil collapses an empty notes blob to nil. The server serializes
-// empty notes as JSON null on every read path, but a pre-rollout server may
-// still echo "". Normalizing both lets callers present a single "empty ⇒ null"
-// contract regardless of which server version they reach.
-func emptyNotesToNil(p *string) *string {
-	if p == nil || *p == "" {
-		return nil
-	}
-	return p
 }
 
 func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
@@ -416,34 +404,6 @@ func (c *Client) GetTask(ctx context.Context, id string, full bool) (*Task, erro
 		return nil, err
 	}
 	return env.Task, nil
-}
-
-// ListChecklistItems fetches a task's checklist items. When full is true the
-// CLI requests ?full=true so each item carries its notes blob inline; without
-// it items carry the has_notes flag only.
-func (c *Client) ListChecklistItems(ctx context.Context, taskID string, full bool) ([]*ChecklistItem, error) {
-	var env checklistEnvelope
-	path := "/api/v1/tasks/" + url.PathEscape(taskID) + "/checklist"
-	if full {
-		path += "?full=true"
-	}
-	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
-		return nil, err
-	}
-	return env.Items, nil
-}
-
-// GetNotes returns the notes blob for a checklist item, or nil when the item
-// has no notes. The server serializes empty notes as JSON null; a pre-rollout
-// server may still echo "" — emptyNotesToNil collapses both to nil so callers
-// see one "empty ⇒ nil" contract. 404 / 403 surface as APIError.
-func (c *Client) GetNotes(ctx context.Context, itemID string) (*string, error) {
-	var env notesEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
-	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
-		return nil, err
-	}
-	return emptyNotesToNil(env.Notes), nil
 }
 
 // ActivityLog mirrors GET /api/v1/activity_log: completed tasks + completed
@@ -611,16 +571,43 @@ func (c *Client) SetChecklistItemState(ctx context.Context, itemID string, attrs
 	return env.Item, nil
 }
 
-// QueueItem is a checklist item from the by-state query. It carries the same
-// fields as any item plus the trimmed parent task (with its project) so a
-// caller can render "what can I pick up?" without a follow-up fetch per item.
-type QueueItem struct {
+// ItemDetail is a checklist item plus the trimmed parent task (with its
+// project). It is the shape of BOTH single-item reads that carry context: the
+// by-state queue's elements and GET /checklist_items/:id. The task stub is what
+// carries the project, and the project's github_url is what turns pr_number into
+// a link — drop it and PR links silently stop resolving.
+//
+// Notes ride on the detail read (always, it has no ?full variant) and not on the
+// queue, which is exactly the ChecklistItem.Notes contract.
+type ItemDetail struct {
 	ChecklistItem
 	Task ItemTask `json:"task"`
 }
 
 type queueEnvelope struct {
-	Items []*QueueItem `json:"checklist_items"`
+	Items []*ItemDetail `json:"checklist_items"`
+}
+
+type itemDetailEnvelope struct {
+	Item *ItemDetail `json:"checklist_item"`
+}
+
+// GetChecklistItem fetches one checklist item by id, with its notes and its
+// parent-task stub. This is the only single-item READ — every other single-item
+// route is a write — so it is what makes a bare item id inspectable rather than
+// merely writable.
+//
+// Permission inherits from the parent task, like every other /checklist_items/*
+// route: 403 when the caller can't read it (which is what a project-key-confined
+// caller gets for an item outside the confined project), 404 when it doesn't
+// exist. Both surface as APIError.
+func (c *Client) GetChecklistItem(ctx context.Context, itemID string) (*ItemDetail, error) {
+	var env itemDetailEnvelope
+	path := "/api/v1/checklist_items/" + url.PathEscape(itemID)
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Item, nil
 }
 
 // ListChecklistItemsByState issues GET /api/v1/checklist_items?state=<state>,
@@ -631,8 +618,17 @@ type queueEnvelope struct {
 //
 // No `completed` filter is needed: completing an item clears its state, so any
 // item carrying a state is by construction incomplete.
-func (c *Client) ListChecklistItemsByState(ctx context.Context, state string) ([]*QueueItem, error) {
-	path := "/api/v1/checklist_items?" + url.Values{"state": []string{state}}.Encode()
+//
+// full asks the server to include each item's notes inline, the same ?full=true
+// this CLI sends on the task read. A server that doesn't implement it simply
+// ignores the param and returns items without notes, which renders as "no note
+// to show" rather than as an error.
+func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, full bool) ([]*ItemDetail, error) {
+	params := url.Values{"state": []string{state}}
+	if full {
+		params.Set("full", "true")
+	}
+	path := "/api/v1/checklist_items?" + params.Encode()
 	var env queueEnvelope
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
@@ -652,19 +648,6 @@ func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs m
 		return nil, err
 	}
 	return env.Item, nil
-}
-
-// SetNotes replaces the notes blob on an item. An empty string is a valid
-// value (clears the notes). The server echoes the saved notes — null once
-// cleared — which SetNotes returns as nil (see emptyNotesToNil).
-func (c *Client) SetNotes(ctx context.Context, itemID, notes string) (*string, error) {
-	body := map[string]string{"notes": notes}
-	var env notesEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/notes"
-	if err := c.do(ctx, http.MethodPut, path, body, &env); err != nil {
-		return nil, err
-	}
-	return emptyNotesToNil(env.Notes), nil
 }
 
 // DeleteTask soft-deletes a task. The server returns 204 No Content on

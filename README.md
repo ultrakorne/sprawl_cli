@@ -107,22 +107,20 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
 | `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only, and the one command a project key can't authorize — a theme is user-level, so this always needs an agent secret. |
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
-| `sprawl task <id>` | Fetches a single task by id. Returns 404 when the id isn't visible, 403 when the permission resolver says no. Add `--full` to embed the task's checklist items and their notes in one call. |
-| `sprawl task search <query>` | Substring search on task title (case-insensitive, server-side). Empty query → 422. |
+| `sprawl task <id>` | Fetches a task and its items: a title/description header, then the item table. Returns 404 when the id doesn't exist, 403 when the permission resolver says no. Add `--full` to pull each item's note body and expand it under its row. |
+| `sprawl task search <query>` | Substring search on task **and item** titles (case-insensitive, server-side; notes are not searched). A lookup rather than a view: each hit renders as the task's title plus the ids and titles of the items that matched, which you then read with `item <id>` or `task <id>`. Empty query → 422. |
 | `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. Under a project key the task lands in that project and `--project-id` is unnecessary. |
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl task delete <id>` | Soft-deletes a task. Server reflows neighbor cards on the canvas. A 404 (already deleted or never visible) is treated as success — the CLI is idempotent. There is no API to restore a soft-deleted task. |
-| `sprawl checklist <task_id>` | Lists checklist items for a task. Ownership and permission are both checked on the parent task. Add `--full` to include each item's notes inline (one call instead of an N-call `note show` loop). |
-| `sprawl checklist add <task_id>` | Adds an item. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). |
-| `sprawl checklist check <item_id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
-| `sprawl checklist uncheck <item_id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
-| `sprawl checklist update <item_id>` | Updates an item's `title` / `notes`. Flags: `--title`, `--notes`, `--from-json <path\|->`. Use `check` / `uncheck` for completion. |
-| `sprawl checklist state <item_id> <ready\|progress\|review\|none>` | Sets the item's hand-set state (`ready_to_pickup` / `in_progress` / `in_review`), or clears it with `none`. States are mutually exclusive, and setting one **un-completes** the item. Separate route from `checklist update`, which ignores the field. |
-| `sprawl checklist pr <item_id> <number\|none>` | Attaches a GitHub PR number to the item, or clears it. Independent of state and completion — only an explicit `none` removes it. The link is built client-side from the project's `github_url`; without one the number renders bare. |
-| `sprawl checklist delete <item_id>` | Hard-deletes a checklist item. May flip the parent task's `completed_at`. Idempotent on 404 like `task delete`. |
-| `sprawl queue` | Lists checklist items in a given state across every visible task — the "what can I pick up?" query. Defaults to `--state ready_to_pickup`; also accepts `progress` / `review`. Every result is incomplete by construction (completing an item clears its state). |
-| `sprawl note show <item_id>` | Prints the raw notes blob for a checklist item. An item with no notes is a legitimate success (`notes: null` in json/toon, empty body in text). |
-| `sprawl note set <item_id> [<notes>]` | Replaces the notes blob. Pass the text as a positional arg or via `--stdin` (mutually exclusive). Empty string clears notes. |
+| `sprawl item <id>` | Fetches one item with its note — the detail view, so the note is always included and there is no `--full`. Human output is a single table row; `json`/`toon` additionally carry a `task` stub (id, title, project). |
+| `sprawl item add <task_id>` | Adds an item to a task. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). Note the argument is a **task** id — the one item verb that takes one. |
+| `sprawl item update <id>` | Updates an item's `title` and/or its note — the only way to write a note. Flags: `--title`, `--notes`, `--from-json <path\|->`. `--notes -` reads the body from stdin; `--notes ""` clears it. Use `check` / `uncheck` for completion. |
+| `sprawl item check <id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
+| `sprawl item uncheck <id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
+| `sprawl item state <id> <ready\|progress\|review\|none>` | Sets the item's hand-set state, or clears it with `none`. These short names are the vocabulary — they're what reads emit too. States are mutually exclusive, and setting one **un-completes** the item. Separate route from `item update`, which ignores the field. |
+| `sprawl item pr <id> <number\|none>` | Attaches a GitHub PR number to the item, or clears it. Independent of state and completion — only an explicit `none` removes it. The link is built client-side from the project's repo URL; without one the number renders bare. |
+| `sprawl item delete <id>` | Hard-deletes an item. May flip the parent task's `completed_at`. A 404 is idempotent success like `task delete`; a **403** (the item exists but is outside your project key) is a real error. |
+| `sprawl queue` | Lists items in a given state across every visible task — the "what can I pick up?" query, and the only item view that crosses tasks. Defaults to `--state ready`; also accepts `progress` / `review`. Every result is incomplete by construction (completing an item clears its state). `--full` expands each note. |
 | `sprawl update` | Downloads the latest GitHub release, verifies SHA256, and atomically replaces the running binary. Refuses on `sprawl_dev` and on local builds. Pass `--yes` to skip the confirmation prompt. See [features/auto-update](docs/features/auto-update/INDEX.md). |
 
 ## AI-tool integration
@@ -147,11 +145,20 @@ curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/agents
   -o ~/.claude/agents/sprawl-bookkeeper.md
 ```
 
-All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, list commands render aligned tables and write commands render a compact summary line; in `json` / `toon` mode they return the server envelope unchanged (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`, `{notes:"…"}`). The two delete commands return `{id:"…", deleted:true}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
+All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, read commands render aligned tables and write commands render a one-line `✓ …` summary; in `json` / `toon` mode they return the server envelope (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`) with the item shape **normalized** — the CLI does not pass items through untouched:
 
-Text (`-h`) output is color-styled with [lipgloss](https://charm.land/lipgloss) using your terminal's own ANSI palette — cyan table headers with a `─` rule beneath them, traffic-light checklist progress (`0/x` red, in-progress yellow, `x/x` green) and colored checkboxes. (Task status isn't shown in text — progress carries the signal — but it's still in the json/toon payload.) Styling is **text-only** and applied **only when writing to a terminal**: `json`/`toon`, pipes, files, and `$NO_COLOR` all stay plain.
+- **`state` is short-form on output** — `ready` / `progress` / `review` / `null`, never the server's `ready_to_pickup` / `in_progress` / `in_review`. Input still accepts both. This is what keeps an item's state from colliding with a task's `status`, which really is `in_progress`.
+- **`pr_url` is added** — the assembled GitHub link, or `null` when the chain can't resolve (no PR number, no project, or no repo URL on it). None of those is an error.
+- **`position` is dropped.** Array order already carries ordering; the server returns items in position order.
+- **`notes` rides only where the bodies were fetched** — `item <id>` always, `task <id>` / `queue` only under `--full`. `has_notes` is always present.
 
-`--full` (on `task <id>` and `checklist <task_id>`) opts into the heavier read shape via `?full=true`. `task <id> --full` embeds the checklist under the task as `task.checklist_items: [...]`, and both commands give each item a `notes` string (alongside the usual `has_notes` flag). In `text` mode the full views drop the table for a per-item block so multi-line notes stay readable. Without `--full`, responses are unchanged.
+The two delete commands return `{id:"…", deleted:true, existed:…}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
+
+Text (`-h`) output is color-styled with [lipgloss](https://charm.land/lipgloss) using your terminal's own ANSI palette — cyan table headers with a `─` rule beneath them, traffic-light checklist progress (`0/x` red, in-progress yellow, `x/x` green), colored checkboxes, and item-state glyphs. PR numbers are OSC 8 hyperlinks where the project has a repo URL, so a ctrl/cmd-click opens the pull request. Styling is **text-only** and applied **only when writing to a terminal**: `json`/`toon`, pipes, files, and `$NO_COLOR` all stay plain — including the hyperlinks.
+
+The state glyphs are Nerd Font icons by default, matching the TUI and the web app's state pills. Set `SPRAWL_ICONS=plain` if your terminal font renders them as tofu; you get one-cell geometric shapes instead.
+
+**`--full` gates the fetch *and* the render.** `task <id>` and `queue` always show a `NOTES` column (`o` / `-`, driven by `has_notes`), because "is there a note here?" is the cheap question. `--full` sends `?full=true`, which pulls every note **body** over the wire and expands each one under its row. Reach for it when you want to read the notes; leave it off when you only want to know they exist. `item <id>` has no `--full` — it is the detail view, so its note is always there.
 
 ## Write command examples
 
@@ -190,46 +197,55 @@ sprawl task update 17 --description ""          # clears the field (distinct fro
 echo '{"description":"rewritten"}' | sprawl task update 17 --from-json -
 ```
 
-### `checklist add <task_id>`
+### `item add <task_id>`
 
 Wire body is `{"checklist_item": {"title": "...", "notes": "..."}}`. Server assigns position (appended).
 
 ```sh
-sprawl checklist add 17 --title "write migration"
-sprawl checklist add 17 --title "deploy" --notes "run after backfill"
-echo '{"title":"smoke test","notes":"hit /whoami"}' | sprawl checklist add 17 --from-json -
+sprawl item add 17 --title "write migration"
+sprawl item add 17 --title "deploy" --notes "run after backfill"
+echo '{"title":"smoke test","notes":"hit /whoami"}' | sprawl item add 17 --from-json -
 ```
 
-### `checklist update <item_id>` / `check` / `uncheck`
+### `item update <id>` / `check` / `uncheck`
 
 ```sh
-sprawl checklist update 203 --title "renamed"
-sprawl checklist check 203                     # idempotent
-sprawl checklist uncheck 203                   # idempotent
+sprawl item update 203 --title "renamed"
+sprawl item check 203                          # idempotent
+sprawl item uncheck 203                        # idempotent
 ```
 
-### `checklist state <item_id>` / `pr` / `queue`
+### `item state <id>` / `pr` / `queue`
 
 ```sh
 sprawl queue                                   # what's ready to pick up, across tasks
-sprawl checklist state 203 progress            # claim it
-sprawl checklist pr    203 412                 # link the PR
-sprawl checklist state 203 review              # hand it back for review
-sprawl checklist state 203 none                # clear the state (PR number survives)
-sprawl checklist pr    203 none                # clear the PR number
+sprawl item state 203 progress                 # claim it
+sprawl item pr    203 412                      # link the PR
+sprawl item state 203 review                   # hand it back for review
+sprawl item state 203 none                     # clear the state (PR number survives)
+sprawl item pr    203 none                     # clear the PR number
 sprawl queue --state review                    # what's waiting on a human
 ```
 
 Setting a state on a **completed** item un-completes it — the two are mutually
-exclusive server-side. Conversely, `checklist check` clears the state and keeps
+exclusive server-side. Conversely, `item check` clears the state and keeps
 the PR number.
 
-### `note set <item_id>`
+### Writing a note
+
+A note is a field of an item, not an object of its own, so `item update` writes it —
+there is no `note` command.
 
 ```sh
-sprawl note set 203 "blocked on PR #418"
-sprawl note set 203 ""                          # clears notes
-cat long-notes.md | sprawl note set 203 --stdin
+sprawl item update 203 --notes "blocked on PR #418"
+sprawl item update 203 --notes ""               # clears the note
+cat long-notes.md | sprawl item update 203 --notes -
+```
+
+To read one back as raw text — piping into `less`, `rg`, a file — go through json:
+
+```sh
+sprawl item 203 --format=json | jq -r '.checklist_item.notes'
 ```
 
 ### `theme set <id>`
@@ -258,7 +274,7 @@ Environment variables:
 | `SPRAWL_TOKEN` | Bearer token override. If unset, the token comes from `config.toml`. |
 | `SPRAWL_OUTPUT` | Session-wide default for `--format` (`text`, `json`, or `toon`). |
 | `SPRAWL_API_URL` | One-off API URL override. Use sparingly — the binary is the environment switch. |
-| `SPRAWL_ICONS` | Set to `plain` when your terminal font has no [Nerd Font](https://www.nerdfonts.com/) glyphs, so the TUI's item-state icons render as geometric shapes (`▸ ◐ ◉`) instead of tofu boxes. Default is the Nerd Font Material icons. |
+| `SPRAWL_ICONS` | Set to `plain` when your terminal font has no [Nerd Font](https://www.nerdfonts.com/) glyphs, so the item-state icons render as geometric shapes (`▸ ◐ ◉`) instead of tofu boxes. Applies to the `STATE` column in `-h` output and to the TUI alike — they share one icon set. Default is the Nerd Font Material icons. |
 | `SPRAWL_NO_UPDATE_CHECK` | Set to `1` to suppress the once-per-day "newer version available" notice on the prod `sprawl` binary. The notice is otherwise on stderr only and never blocks. |
 
 Why TOON by default? The CLI's output is mostly consumed by LLMs, and TOON is 30–60 % cheaper than JSON in tokens while staying lossless. Pass `-h` (or `--format=text`) for human-friendly, color-styled output or `--format=json` if you're piping into `jq`.

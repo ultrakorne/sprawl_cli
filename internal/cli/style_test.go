@@ -24,8 +24,8 @@ func TestResolveFormat_HumanFlag(t *testing.T) {
 // TestStyling_PreservesPlainLayout is the load-bearing test for the whole
 // feature: enabling styling must not change a single visible character once the
 // ANSI is stripped (as the colorprofile.Writer does on any non-terminal). This
-// guards the tabwriter alignment (colored cells are \xff-bracketed so they
-// don't shear columns) and the hand-spaced detail view.
+// guards the table alignment (colored cells are measured from their plain text
+// so they can't shear columns) and the hand-spaced note indentation.
 func TestStyling_PreservesPlainLayout(t *testing.T) {
 	defer func() { stylesEnabled = false }()
 
@@ -35,29 +35,39 @@ func TestStyling_PreservesPlainLayout(t *testing.T) {
 		{ID: 200, Status: "in_progress", Title: "a longer title",
 			ChecklistProgress: client.ChecklistProgress{Done: 0, Total: 2}},
 	}
-	detail := &client.Task{ID: 17, Status: "blocked", Title: "hello",
-		ChecklistProgress: client.ChecklistProgress{Done: 2, Total: 3}}
 
 	doneNotes := "did it"
-	// A full task (non-nil ChecklistItems) routes to the boxed --full view. Its
-	// border/box-drawing characters are emitted unconditionally and only color
-	// is gated, so stripping ANSI must still reproduce the plain box exactly.
-	full := &client.Task{ID: 77, Status: "in_progress", Title: "Agentic",
+	// A task read carries its items. Structural characters (padding, the header
+	// rule, the note indentation) are emitted unconditionally and only color and
+	// the OSC 8 link are gated, so stripping ANSI must reproduce the plain
+	// rendering exactly.
+	shown := &client.Task{ID: 77, Status: "in_progress", Title: "Agentic",
+		Description:       "a description\nover two lines",
 		ChecklistProgress: client.ChecklistProgress{Done: 1, Total: 2},
-		Project:           &client.Project{ID: 3, Name: "Sprawl"},
+		Project:           &client.Project{ID: 3, Name: "Sprawl", GithubURL: "https://github.com/ultrakorne/sprawl"},
 		CreatedBy:         &client.Actor{Type: "user", ID: 1},
 		ChecklistItems: []*client.ChecklistItem{
-			{ID: 5, Title: "done step", Completed: true, Notes: &doneNotes},
+			{ID: 5, Title: "done step", Completed: true, HasNotes: true, Notes: &doneNotes,
+				State: client.StateInReview, PRNumber: 412},
 			{ID: 6, Title: "todo step", Completed: false},
 		}}
+
+	queue := []*client.ItemDetail{{
+		ChecklistItem: client.ChecklistItem{ID: 7, Title: "add the migration",
+			State: client.StateInReview, PRNumber: 412, HasNotes: true, Notes: &doneNotes},
+		Task: client.ItemTask{ID: 3, Title: "Ship the API",
+			Project: &client.Project{ID: 1, Name: "Sprawl", GithubURL: "https://github.com/ultrakorne/sprawl"}},
+	}}
 
 	for _, tc := range []struct {
 		name  string
 		build func() string
 	}{
 		{"task list", func() string { return taskListText(tasks) }},
-		{"task detail", func() string { return taskDetailText(detail) }},
-		{"task full", func() string { return taskDetailText(full) }},
+		{"task show", func() string { return taskShowText(shown, false) }},
+		{"task show --full", func() string { return taskShowText(shown, true) }},
+		{"queue", func() string { return queueText(queue, client.StateInReview, false) }},
+		{"queue --full", func() string { return queueText(queue, client.StateInReview, true) }},
 	} {
 		stylesEnabled = false
 		plain := tc.build()
