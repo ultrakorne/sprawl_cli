@@ -34,10 +34,10 @@ func TestDispatch_ListScreen(t *testing.T) {
 func TestDispatch_ChecklistScreen(t *testing.T) {
 	cases := map[string]action{
 		"space": actToggle, "x": actToggle, "enter": actOpen,
-		"a": actAddItem, "e": actEditTitle, "d": actDelete,
+		"n": actAddItem, "e": actEditTitle, "d": actDelete,
 		"c": actCopy, "g": actTop, "G": actBottom, "esc": actBack,
 		// list-only keys must not leak onto the checklist
-		"n": actNone, "E": actNone, "t": actNone, "/": actNone,
+		"a": actNone, "E": actNone, "t": actNone, "/": actNone,
 	}
 	for key, want := range cases {
 		if got := dispatch(screenChecklist, key); got != want {

@@ -88,7 +88,7 @@ func hintsFor(s screen) string {
 	case screenList:
 		return "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · r refresh · ? help · q quit"
 	case screenChecklist:
-		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · a add · e title · d delete · esc back · ? help"
+		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · n add · e title · d delete · esc back · ? help"
 	case screenNote:
 		return "e edit · c copy · o open pr · ↑↓ scroll · esc back · ? help"
 	}
@@ -380,7 +380,7 @@ func (m *Model) viewChecklist() string {
 	hints := hintsFor(screenChecklist)
 	var body []string
 	if len(t.ChecklistItems) == 0 {
-		body = []string{m.styles.faint.Render("(no checklist items) — a to add")}
+		body = []string{m.styles.faint.Render("(no checklist items) — n to add")}
 	} else {
 		body = m.checklistRows(t.ChecklistItems, m.bodyHeight(hints))
 	}
@@ -727,7 +727,7 @@ func helpLines(s styles) []string {
 		{"List", "↑↓/jk move · g/G top/bottom · enter open · / search · q quit"},
 		{"", "c copy task · n new · e title · E description · t due · d delete"},
 		{"Checklist", "↑↓/jk move · g/G top/bottom · space/x toggle · enter note"},
-		{"", "c copy item · a add · e title · d delete · esc back"},
+		{"", "c copy item · n add · e title · d delete · esc back"},
 		{"", "s cycle state (ready → progress → review → none) · p set PR number"},
 		{"", "o open the PR in a browser (copies the link if it can't)"},
 		{"", "PR numbers are clickable in terminals that support hyperlinks"},

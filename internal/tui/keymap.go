@@ -25,7 +25,7 @@ const (
 	actEditDesc          // E — edit task description in $EDITOR (list)
 	actSetDue            // t — set due date
 	actDelete            // d — delete (with confirm)
-	actAddItem           // a — add checklist item
+	actAddItem           // n — add checklist item
 	actEditNote          // e — edit item note in $EDITOR (note screen)
 	actCycleState        // s — advance item state: none → ready → progress → review → none
 	actSetPR             // p — set / clear the item's PR number
@@ -108,7 +108,7 @@ func checklistAction(key string) action {
 		return actBack
 	case "c":
 		return actCopy
-	case "a":
+	case "n":
 		return actAddItem
 	case "e":
 		return actEditTitle
