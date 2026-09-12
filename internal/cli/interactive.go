@@ -45,18 +45,26 @@ func launchTUI(ctx context.Context, stderr io.Writer, opts *runtimeOpts) error {
 	// validated by the TUI's first list fetch.
 	secret, _ := resolveAgentSecret(opts)
 	projectKey := resolveProjectKey(opts)
+	// Already validated by the root PersistentPreRunE; a bare `sprawl` runs
+	// through the same hook, so this can't fail here.
+	workspace, err := resolveWorkspace(opts)
+	if err != nil {
+		return err
+	}
 
 	deps := tui.Deps{
 		LoggedIn:       loggedIn,
 		Secret:         secret,
 		SecretProvided: secret != "",
 		ProjectKey:     projectKey,
-		NewClient: func(secret, key string) tui.Client {
-			return client.NewAuthed(token, secret, client.WithProjectKey(key))
+		Workspace:      workspace,
+		NewClient: func(secret, key, workspace string) tui.Client {
+			return client.NewAuthed(token, secret,
+				client.WithProjectKey(key), client.WithWorkspace(workspace))
 		},
 	}
 
-	err := tui.Run(ctx, deps)
+	err = tui.Run(ctx, deps)
 	if errors.Is(err, tui.ErrNotATTY) {
 		fmt.Fprintln(stderr, "error: interactive mode requires a terminal")
 	}

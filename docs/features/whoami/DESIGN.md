@@ -2,51 +2,34 @@
 
 ## Overview
 
-`sprawl whoami` resolves credentials (token + agent secret) and calls `GET /api/v1/whoami`. The command renders the calling agent and any project-scoped permission overrides; a 200 doubles as proof the auth pipeline is healthy. Exit 1 on any failure.
+`sprawl whoami` resolves credentials and calls `GET /api/v1/whoami`. It answers three questions in one call: who the server thinks you are, which workspace and project this session's calls land in, and what you may do there. A 200 doubles as proof the auth pipeline is healthy. Exit 1 on any failure.
 
-## Wire shape
+## Surface
 
-```json
-{
-  "status": "ok",
-  "agent": {
-    "id": <int>,
-    "name": "<string>",
-    "emoji": "<string>",
-    "is_owner": <bool>,
-    "default_permission": "none" | "read" | "write" | "write_create"
-  },
-  "project": {
-    "id": <int>,
-    "name": "<string>",
-    "key": "<string>",
-    "level": "none" | "read" | "write" | "write_create",
-    "github_url": "<string>" | null
-  } | null,
-  "project_permissions": [
-    { "project_id": <int>, "name": "<string>", "level": "read" | "write" | "write_create" }
-  ]
-}
-```
+The response (mirrored in json with `status: ok`) carries:
 
-`project` is the confinement this call ran under — non-null only when a project key was sent (`--project-key` / `$SPRAWL_PROJECT_KEY`). `level` is what the caller actually resolves to there, and can be `"none"`: a valid key naming a project this agent key cannot reach. That is deliberately not an auth error, so `whoami` can say "the key is valid but this agent has no access" instead of leaving the user staring at an empty task list.
+- **`agent`** — id, name, emoji, `is_owner`, and `default_permission` (`none` / `read` / `write` / `write_create`), the key's baseline scope.
+- **`workspace`** — the workspace this session's calls run in: the server's default for the factors, or the `--workspace` selection resolved against the reachable list. Each workspace carries id, name, **role** (the user's own standing) and **level** (what the presented key resolves to there).
+- **`workspaces`** — every workspace the user can reach, same shape.
+- **`project`** — the confinement this call ran under: id, name, key, the **level** the caller resolves to there, and `github_url` (the repo PR numbers are resolved against; `null` when the project has none). `null` when no project key was sent.
+- **`project_permissions`** — per-project overrides ranking strictly above the default, `[]` for owners and `write_create` defaults. Sent only by servers that report permissions this way rather than through workspaces.
 
-`github_url` is the confined project's repo — the address a checklist item's PR number is resolved against (see [item-state-and-pr](../item-state-and-pr/INDEX.md)). It is always emitted, `null` when the project has no repo, which is also how a pre-rollout server's absent field decodes. It is reachable here **only under a project key**: an unconfined `whoami` has no project block at all, so the URL then only arrives nested in task payloads.
+`project.level` can be `none`: a valid key naming a project this agent cannot reach. That is deliberately not an auth error, so the command can say "the key is valid but this agent has no access" instead of leaving the user staring at an empty list.
 
-`project_permissions` lists only overrides whose level rank is strictly higher than `default_permission`. Owner keys and `write_create` defaults always come back with `[]` because nothing can elevate them. The list is sorted by `project_id` ascending; level strings are full (`"read"` / `"write"` / `"write_create"`), not abbreviated.
+In `text` the view reads top to bottom: `agent:` with `role: owner` or `default:`; `workspace:` (or `workspace (selected):` under a selector) with `role:` and `access:`; `working in:` with `access:` and `github:` when a project key is set; then `elevated project permissions:` grouped one line per level when the server reports them. A level of `none` is spelled out with why lists come back empty rather than shown as a bare word.
 
-## Behaviour
+## Flows
 
-- **No narrowing factor fails before the HTTP call** with a clear pre-flight error, catching misconfiguration without burning a server round-trip.
-- Structured output honours `--format` / `SPRAWL_OUTPUT` like every other command. Default is JSON.
-- `--format=text` shows agent identity (`emoji name #id`), the default permission (or `role: owner`), and one line per *level* group of elevated projects (`write_create in: Foo, Bar`). Empty list renders as `(none)`.
-- Under a project key, `--format=text` adds these lines between the agent and the permission list:
+- **Liveness check** — run it after `login` and exporting a factor; a 200 means the token, the factor and the server all agree.
+- **Confirm the scope before writing** — the bundled skill runs it once before the first mutation to read `project.level`.
+- **Diagnose an empty list** — `access: none` on the workspace or project says the key cannot reach it; `whoami` names it, `task list` would only be empty.
+- **Catch a workspace mismatch early** — under a project key, a `--workspace` naming another workspace than the project's earns a warning here, because every task call would be refused with `workspace_mismatch`.
 
-  ```
-  working in: Acme Corp (acme)
-    access:   write_create
-    github:   https://github.com/acme/widgets
-  ```
+## Decisions
 
-  With `level: none` the access line spells out the situation instead of showing a bare word: *"none — the key is valid but this agent has no access to that project"*. The `github:` line is printed **only when the project has a repo** — its absence is not an error, it just means PR numbers on this project's items render bare. Without a project key the output is unchanged from before project keys existed — no project lines at all.
-- Errors come through the standard envelope: 401 on bad/missing token, 403 on `invalid_project_key` / `invalid_agent_secret` / `agent_key_revoked` / `forbidden`. The auth codes also carry a `hint` (see [output-formats](../output-formats/DESIGN.md)).
+- **No narrowing factor fails before the HTTP call**, with the same message as every other authed command.
+- **The selection is resolved locally.** `whoami` is user-level and ignores the selector, so the CLI matches the selected id against `workspaces` and fails plainly when it is unreachable — before the first task call turns it into a bare 404.
+- **Keys are emitted only when the server sent them.** Workspace keys, `project_permissions` and `github_url` follow what the answering server reports; the CLI never invents an empty key, so consumers branch on one condition per feature.
+- **`project` is always present**, `null` when unconfined — a server predating project keys omits the field and decodes the same way.
+- **Level `none` is explained, not printed.** A bare `none` reads as an error; the sentence says what it means.
+- Errors come through the standard envelope with the auth `hint`s (see [output-formats](../output-formats/DESIGN.md)).

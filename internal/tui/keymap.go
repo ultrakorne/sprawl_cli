@@ -30,6 +30,7 @@ const (
 	actCycleState        // s — advance item state: none → ready → progress → review → none
 	actSetPR             // p — set / clear the item's PR number
 	actOpenPR            // o — open the item's PR in a browser
+	actWorkspace         // w — pick the workspace to work in (list)
 )
 
 // dispatch maps a key (bubbletea String() form) to an action for the given base
@@ -86,6 +87,8 @@ func listAction(key string) action {
 		return actSetDue
 	case "d":
 		return actDelete
+	case "w":
+		return actWorkspace
 	}
 	return actNone
 }

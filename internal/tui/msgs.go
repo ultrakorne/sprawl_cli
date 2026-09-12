@@ -18,12 +18,14 @@ import (
 type tasksLoadedMsg struct {
 	tasks     []*client.Task
 	validated bool
+	from      Client // the client that answered; stale once the session re-pins
 }
 
 // searchResultMsg carries server-side search results (title + item matches).
 type searchResultMsg struct {
 	tasks []*client.Task
 	query string
+	from  Client
 }
 
 // taskLoadedMsg carries a single full task (checklist + notes). forCopy routes
@@ -94,6 +96,16 @@ type notesSetMsg struct {
 	notes  *string
 }
 
+// whoamiLoadedMsg carries the workspace picture from whoami. openPicker is
+// set when the fetch was triggered by `w`, so the reducer opens the picker
+// once the fresh list is in; the silent post-validation fetch leaves it unset
+// and only updates the header.
+type whoamiLoadedMsg struct {
+	who        *client.Whoami
+	openPicker bool
+	from       Client
+}
+
 // errMsg is a non-fatal error surfaced on the footer status line.
 type errMsg struct {
 	err     error
@@ -158,10 +170,34 @@ func isSecretAuthErr(err error) bool {
 	return false
 }
 
+// workspaceErr recognises the two 403 codes that are about the workspace
+// selector, not the credentials: a project key pinning another workspace than
+// --workspace names, or an agent key whose own workspace is gone. Neither is
+// fixable at the credentials prompt (it has no workspace field), so they are
+// reported as a plain error that says what to change instead. Returns nil for
+// every other error.
+func workspaceErr(err error) error {
+	var ae *client.APIError
+	if !errors.As(err, &ae) || ae.Status != 403 {
+		return nil
+	}
+	switch ae.Code {
+	case "workspace_mismatch":
+		return errors.New("the project key pins its own workspace — unset --workspace / $SPRAWL_WORKSPACE (the key already selects it), or drop the key")
+	case "workspace_required":
+		return errors.New("this agent key isn't bound to a workspace any more — pass --workspace <id> or export SPRAWL_PROJECT_KEY")
+	}
+	return nil
+}
+
 // validationErrMsg turns a validating fetch's error into the right message:
 // 401 OR 403 → credentials prompt (spec: both are auth failures at validation
-// time), where either narrowing factor can be re-entered.
+// time), where either narrowing factor can be re-entered — except a
+// workspace-coded 403, which the prompt can't fix and is a footer error.
 func validationErrMsg(err error) tea.Msg {
+	if werr := workspaceErr(err); werr != nil {
+		return errMsg{err: werr, context: "workspace"}
+	}
 	if isAuthErr(err) {
 		return authFailedMsg{err}
 	}
@@ -173,6 +209,9 @@ func validationErrMsg(err error) tea.Msg {
 // prompt so the user can re-enter a revoked/invalid secret; everything else (incl.
 // a plain 403 "forbidden" permission error) stays a footer error.
 func opErrMsg(err error, ctx string) tea.Msg {
+	if werr := workspaceErr(err); werr != nil {
+		return errMsg{err: werr, context: "workspace"}
+	}
 	if isSecretAuthErr(err) {
 		return authFailedMsg{err}
 	}
@@ -190,7 +229,23 @@ func validateAndListCmd(ctx context.Context, c Client) tea.Cmd {
 		if err != nil {
 			return validationErrMsg(err)
 		}
-		return tasksLoadedMsg{tasks: tasks, validated: true}
+		return tasksLoadedMsg{tasks: tasks, validated: true, from: c}
+	}
+}
+
+// whoamiCmd fetches the workspace picture. A failure on the silent header
+// fetch is dropped — the header just stays without a name — while a failure
+// on the `w` path (openPicker) is worth a footer line, since the user asked.
+func whoamiCmd(ctx context.Context, c Client, openPicker bool) tea.Cmd {
+	return func() tea.Msg {
+		w, err := c.Whoami(ctx)
+		if err != nil {
+			if !openPicker {
+				return nil
+			}
+			return opErrMsg(err, "workspaces")
+		}
+		return whoamiLoadedMsg{who: w, openPicker: openPicker, from: c}
 	}
 }
 
@@ -200,7 +255,7 @@ func listTasksCmd(ctx context.Context, c Client) tea.Cmd {
 		if err != nil {
 			return opErrMsg(err, "load tasks")
 		}
-		return tasksLoadedMsg{tasks: tasks}
+		return tasksLoadedMsg{tasks: tasks, from: c}
 	}
 }
 
@@ -210,7 +265,7 @@ func searchTasksCmd(ctx context.Context, c Client, query string) tea.Cmd {
 		if err != nil {
 			return opErrMsg(err, "search")
 		}
-		return searchResultMsg{tasks: tasks, query: query}
+		return searchResultMsg{tasks: tasks, query: query, from: c}
 	}
 }
 

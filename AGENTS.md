@@ -4,7 +4,7 @@ HTTP client. Single static Go binary (two variants from one codebase), JSON on t
 
 ## Documentation
 
-Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, items, item-state-and-pr, interactive-tui, activity, auto-update, theme, whoami). `docs/CONTEXT.md` is the glossary — check it before naming a concept in code or docs.
+Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered incrementally — start at `docs/INDEX.md`, then open the feature folder that matches the task (auth-and-config, output-formats, tasks, items, item-state-and-pr, interactive-tui, activity, auto-update, theme, whoami, workspaces). `docs/CONTEXT.md` is the glossary — check it before naming a concept in code or docs.
 
 ## Stack
 
@@ -41,6 +41,15 @@ server requires the bearer plus **at least one** of them, and intersects both
 when both are sent (effective permission is the min — a project key can only
 narrow, never widen).
 
+The **workspace** (`--workspace` / `-w` flag, `SPRAWL_WORKSPACE` env) is a
+**selector, not a factor**: it picks which workspace the factors work in (a
+path prefix on the wire, `/api/v1/workspaces/<id>/…`; user-level routes stay
+flat) and never satisfies the narrowing rule. Never persisted — there is
+deliberately no `workspace use`; a shell's workspace is the shell's job, same
+as the project key. Under a project key it is redundant (the key pins its
+project's workspace; another id is `403 workspace_mismatch`). Per-command
+detail: [`docs/features/workspaces/INDEX.md`](docs/features/workspaces/INDEX.md).
+
 Resolution order per request:
 
 1. `SPRAWL_TOKEN` env → `config.toml` `token`. Missing → "not logged in, run `sprawl login`".
@@ -49,6 +58,9 @@ Resolution order per request:
 4. Neither 2 nor 3 → **fail before the HTTP call**, naming both. The server's
    `403 second_factor_required` can't say which one the user meant, so we don't
    let it get that far.
+5. `--workspace` flag → `SPRAWL_WORKSPACE` env. Empty is the default and fine;
+   a non-empty value must be a positive integer id, checked locally in the
+   root `PersistentPreRunE` — the server would only ever answer a bare 404.
 
 Every `/api/v1/*` call sends `Authorization: Bearer <token>` plus whichever of
 `X-Agent-Secret: <secret>` / `X-Project-Key: <key>` is configured.
@@ -63,7 +75,7 @@ theme write that carries a project key.
 ## Invariants (don't break these)
 
 1. Every structured-output subcommand honours `--format=text|json` (persistent flag on root). Default is `json`; session-wide override via `SPRAWL_OUTPUT`. `-h` / `--human` is a shorthand for `--format=text` (an explicit `--format` wins). Login is interactive and stays plain text regardless. **Styling is text-only:** human (`text`) output is color-styled with lipgloss using the terminal's own ANSI palette, and only when stdout is a real TTY. `json` is a machine format and is never styled; piped / redirected / `$NO_COLOR` output degrades to plain text identical to the unstyled rendering.
-2. No command writes `agent_secret` or `project_key` to any file, log, or flag default.
+2. No command writes `agent_secret`, `project_key` or the workspace selection to any file, log, or flag default.
 3. No command prints the `token` or `agent_secret` to stdout / stderr. (The project key is *not* a credential and may be shown — `whoami` and the TUI header do.)
 4. URL is never read from config; only baked-in or `SPRAWL_API_URL` env override.
 5. Two binaries share 100 % of the code; divergence happens only via `internal/build` vars.
@@ -113,7 +125,10 @@ errors clearly; a bare non-TTY `sprawl` still prints help). The TUI reuses
 `internal/client` and the `internal/cli` credential resolvers; its colors come
 exclusively from the terminal's ANSI palette (indices 0–15), same as the CLI's
 text styling. The agent-secret prompt is masked and kept in memory only — never
-written to disk, logged, or echoed (invariants #2/#3). Clipboard copy uses
+written to disk, logged, or echoed (invariants #2/#3). The header names the
+workspace (`sprawl · <workspace> · tasks[ · <project key>]`); `w` on the task
+list opens the workspace picker and re-pins the session in memory only, and
+under a project key it says the key pins the workspace instead. Clipboard copy uses
 OSC 52 (`tea.SetClipboard`) and `$EDITOR` editing uses `tea.ExecProcess`, so the
 single static, cgo-free binary promise is preserved.
 

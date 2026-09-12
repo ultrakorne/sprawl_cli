@@ -11,6 +11,10 @@ import (
 // inject a fake (or a real *client.Client wired to an httptest server, matching
 // internal/client/testhelper_test.go). *client.Client satisfies it directly.
 type Client interface {
+	// Whoami is the one user-level call the TUI makes: it yields the workspace
+	// the session runs in by default plus every workspace the user can reach,
+	// which is what the header names and the `w` picker lists.
+	Whoami(ctx context.Context) (*client.Whoami, error)
 	ListTasks(ctx context.Context) ([]*client.Task, error)
 	GetTask(ctx context.Context, id string, full bool) (*client.Task, error)
 	SearchTasks(ctx context.Context, query string) ([]*client.Task, error)

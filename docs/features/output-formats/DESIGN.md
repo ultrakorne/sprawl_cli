@@ -39,7 +39,7 @@ When the server responds with the shared changeset fallback shape `{"errors": {.
 
 ### `hint` on auth / scope failures
 
-The auth and scope error codes (`unauthenticated`, `second_factor_required`, `invalid_project_key`, `invalid_agent_secret`, `forbidden`) carry an extra `hint` string — a plain-language reading of the code plus the fix:
+The auth and scope error codes (`unauthenticated`, `second_factor_required`, `invalid_project_key`, `invalid_agent_secret`, `forbidden`, `workspace_mismatch`, `workspace_required`, and `not_found` when a workspace is selected — see [workspaces](../workspaces/DESIGN.md)) carry an extra `hint` string — a plain-language reading of the code plus the fix:
 
 ```json
 {"status": "error", "http_status": 403, "error": "invalid_project_key",

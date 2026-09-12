@@ -250,7 +250,7 @@ func runTaskDelete(ctx context.Context, stdout, stderr io.Writer, id string, opt
 		existed = false
 	}
 	payload := map[string]any{"id": id, "deleted": true, "existed": existed}
-	return renderPayload(stdout, payload, deletedText("task", id, existed, resolveProjectKey(opts)), opts)
+	return renderPayload(stdout, payload, deletedText("task", id, existed, resolveProjectKey(opts), c.Workspace()), opts)
 }
 
 // deletedText is the shared text-fallback line for `task delete` and
@@ -262,7 +262,10 @@ func runTaskDelete(ctx context.Context, stdout, stderr io.Writer, id string, opt
 // server answers 404 for anything outside the confined project, so "already
 // gone" would claim a delete that never happened to a task living in another
 // project. projectKey (empty when unconfined) switches the wording to say so.
-func deletedText(kind, id string, existed bool, projectKey string) string {
+// A workspace selector is ambiguous the same way — ids are per workspace and
+// the server never says whether the id or the workspace was the miss — so
+// workspace (empty for the default) gets the same treatment.
+func deletedText(kind, id string, existed bool, projectKey, workspace string) string {
 	if existed {
 		return sty.render(sty.ok, fmt.Sprintf("Deleted %s #%s", kind, id))
 	}
@@ -270,6 +273,11 @@ func deletedText(kind, id string, existed bool, projectKey string) string {
 		return sty.render(sty.faint, fmt.Sprintf(
 			"No %s #%s in project %q (nothing deleted — it may exist outside this project key)",
 			kind, id, projectKey))
+	}
+	if workspace != "" {
+		return sty.render(sty.faint, fmt.Sprintf(
+			"No %s #%s in workspace %s (nothing deleted — it may exist in another workspace, or the workspace isn't one you can reach)",
+			kind, id, workspace))
 	}
 	// Capitalize the first byte of `kind` for sentence start. All current
 	// callers pass ASCII ("task", "checklist item") so byte-level upper is

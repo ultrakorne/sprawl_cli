@@ -95,6 +95,16 @@ Set neither and the CLI stops before the request with a message naming both.
 - **Agent secret** — the 8-character value from `/auth-settings`. Use it when the client needs its **own identity**: MCP clients, or anything whose edits should carry a distinct attribution emoji. A project-key call with an owner token is attributed to *you*, exactly like a browser edit.
 - **Both** — the server intersects them (effective permission is the minimum). A read-only agent key plus a project key gets read on that one project and nothing else.
 
+### Workspaces
+
+A workspace is an independent canvas of tasks and projects — your own, or one shared with you. Every task, item, queue and activity call runs in exactly one workspace. By default that is the one your factors resolve to: the confined project's workspace under a project key, else the agent key's own. To work in another one, pass `-w <id>` / `--workspace <id>` or export `SPRAWL_WORKSPACE`; ids come from `sprawl workspace list`, which marks the current workspace with `›`.
+
+- **A selector, not a factor.** `--workspace` never stands in for a project key or an agent secret — the "bearer plus one narrowing factor" rule is unchanged. It must be a positive integer id; anything else is refused before any request goes out.
+- **Never persisted.** Like the project key there is no `workspace use`: which workspace a shell works in is the shell's job (`.envrc`, a wrapper script).
+- **Ids are per workspace.** A task or item id read under `-w 3` must be addressed under `-w 3` again — the same id under any other workspace answers 404. A 404 under a selector can also mean the workspace itself is out of reach; `workspace list` settles it.
+
+Under a project key the selection is redundant: the key already pins its project's workspace, and naming a different one is refused with `403 workspace_mismatch`. An agent key whose own workspace was deleted gets `403 workspace_required` until you pass `--workspace` or a project key. `whoami` prints the workspace this session's calls run in (`workspace (selected):` when a selector is set); the TUI header reads `sprawl · <workspace> · tasks`, and `w` on the task list switches workspace for the rest of the session.
+
 Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 
 ## Commands
@@ -103,7 +113,8 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 |---|---|
 | `sprawl version` | Prints the version and the API URL in effect. |
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
-| `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent, name the project you're confined to (when a project key is set) and the level you resolve to there, and list any project-scoped permissions that elevate the default. Doubles as an auth-pipeline check. |
+| `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent, name the project you're confined to (when a project key is set) and the level you resolve to there, and list any project-scoped permissions that elevate the default. Also names the workspace this session's calls run in (`workspace:`, or `workspace (selected):` under `-w`) with your role and access there, plus every workspace you can reach; warns when a project key's workspace disagrees with a `-w` selection. Doubles as an auth-pipeline check. |
+| `sprawl workspace list` | Lists every workspace you can reach, with `›` on the one this session works in. Columns `ID NAME ROLE LEVEL` — `role` is your standing there (`owner` / `read` / `write` / `write_create`), `level` what the presented agent key actually resolves to (a workspace-bound key reads `none` everywhere but its own: lists there come back empty, writes 403). `LEVEL` is dropped under a project key. JSON: `{"status":"ok","current":{…},"workspaces":[{id,name,role,level}…]}`. See [Workspaces](#workspaces). |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
 | `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only, and the one command a project key can't authorize — a theme is user-level, so this always needs an agent secret. |
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
@@ -264,6 +275,7 @@ Persistent flags (work on every command):
 | `-h`, `--human` | Shorthand for `--format=text` (an explicit `--format` wins). `--help` still shows help. |
 | `-s`, `--agent-secret <value>` | Agent secret for `/api/v1/*` calls. Overrides `$SPRAWL_AGENT_SECRET`. |
 | `-p`, `--project-key <key>` | Confine the call to one project by its key. Overrides `$SPRAWL_PROJECT_KEY`. |
+| `-w`, `--workspace <id>` | Run the call in this workspace instead of the default one. A selector, not a narrowing factor. Overrides `$SPRAWL_WORKSPACE`. |
 
 Environment variables:
 
@@ -271,6 +283,7 @@ Environment variables:
 |---|---|
 | `SPRAWL_AGENT_SECRET` | Agent secret used if `-s` is not passed. |
 | `SPRAWL_PROJECT_KEY` | Project key used if `-p` is not passed. Confines every call to that project. At least one of this and `SPRAWL_AGENT_SECRET` must be set. |
+| `SPRAWL_WORKSPACE` | Workspace id used if `-w` is not passed. Positive integer from `sprawl workspace list`; does not count as a narrowing factor. Refused alongside a project key that lives elsewhere (`workspace_mismatch`). |
 | `SPRAWL_TOKEN` | Bearer token override. If unset, the token comes from `config.toml`. |
 | `SPRAWL_OUTPUT` | Session-wide default for `--format` (`text` or `json`). |
 | `SPRAWL_API_URL` | One-off API URL override. Use sparingly — the binary is the environment switch. |
@@ -286,7 +299,7 @@ Per binary, an XDG-aware TOML file:
 - `sprawl`:     `~/.config/sprawl/config.toml`
 - `sprawl_dev`: `~/.config/sprawl_dev/config.toml`
 
-The only field currently stored is `token`. Neither the agent secret nor the project key is ever written here — both come from the environment (or a flag) at invocation time. File mode is `0600`; directory mode `0700`. Atomic writes mean an interrupted `login` won't truncate an existing file.
+The only field currently stored is `token`. The agent secret, the project key and the workspace selection are never written here — all three come from the environment (or a flag) at invocation time. File mode is `0600`; directory mode `0700`. Atomic writes mean an interrupted `login` won't truncate an existing file.
 
 ## Testing
 

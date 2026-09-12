@@ -109,7 +109,8 @@ sprawl whoami --format=json
 ```
 
 `project` names the project you're confined to and the level you resolve to
-there. `"level":"none"` means the key is valid but this agent has no access to
+there (a current server also sends `workspace` — the canvas the key pins — and
+`workspaces`; older servers send `project_permissions` instead). `"level":"none"` means the key is valid but this agent has no access to
 that project — the user needs to grant it on the settings page. A `null`
 `project` means no key reached the server: re-check step 4.
 
@@ -122,6 +123,7 @@ A non-ok response here tells you what's still missing:
 | `http_status: 401` | Token is wrong / expired — re-run `sprawl login`. |
 | `http_status: 403`, `invalid_project_key` | The project key is a typo — no project of theirs has it. Re-check the Project key field on the project's side panel. |
 | `http_status: 403`, `forbidden` | The key is valid but the target is outside that project, or the agent has no access to it. Not a typo — don't retry. |
+| `http_status: 403`, `workspace_mismatch` | A `SPRAWL_WORKSPACE` exported in this shell names a workspace other than the key's. `unset SPRAWL_WORKSPACE` — the key pins the workspace. |
 | Pre-flight "no project key or agent secret set" | Step 4: `SPRAWL_PROJECT_KEY` isn't exported in this shell. |
 
 Once `whoami` returns ok, return to `SKILL.md` and proceed with the task the
@@ -140,5 +142,5 @@ user actually asked about.
 ```bash
 rm -f /usr/local/bin/sprawl ~/.local/bin/sprawl
 rm -rf ~/.config/sprawl
-unset SPRAWL_PROJECT_KEY                     # in any shell where it's exported
+unset SPRAWL_PROJECT_KEY SPRAWL_WORKSPACE    # in any shell where they're exported
 ```

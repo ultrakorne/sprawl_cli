@@ -37,6 +37,8 @@ type fakeClient struct {
 	notesErr   error
 	stateResp  *client.ChecklistItem
 	stateErr   error
+	whoamiResp *client.Whoami
+	whoamiErr  error
 
 	createAttrs     map[string]any
 	updateTaskAttrs map[string]any
@@ -55,6 +57,10 @@ func (f *fakeClient) SetChecklistItemState(_ context.Context, id string, attrs m
 	return f.stateResp, f.stateErr
 }
 
+func (f *fakeClient) Whoami(context.Context) (*client.Whoami, error) {
+	f.calls = append(f.calls, "Whoami")
+	return f.whoamiResp, f.whoamiErr
+}
 func (f *fakeClient) ListTasks(context.Context) ([]*client.Task, error) {
 	f.calls = append(f.calls, "ListTasks")
 	return f.listResp, f.listErr
@@ -219,7 +225,7 @@ func clipboardPayload(t *testing.T, cmd tea.Cmd) string {
 func newListModel(fc *fakeClient, tasks []*client.Task) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, Secret: "sek", SecretProvided: true,
-		NewClient: func(string, string) Client { return fc },
+		NewClient: func(string, string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	m.Update(tasksLoadedMsg{tasks: tasks, validated: true})
@@ -287,7 +293,7 @@ func TestCredsPrompt_StateMachine(t *testing.T) {
 	fc := &fakeClient{}
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, SecretProvided: false,
-		NewClient: func(string, string) Client { return fc },
+		NewClient: func(string, string, string) Client { return fc },
 	})
 	m.width, m.height = 80, 24
 	if m.current() != screenCreds {
@@ -870,7 +876,7 @@ func TestFrame_ClampsToTinyWindow(t *testing.T) {
 }
 
 func TestNotLoggedIn_QuitKey(t *testing.T) {
-	m := newModel(context.Background(), Deps{LoggedIn: false, NewClient: func(string, string) Client { return &fakeClient{} }})
+	m := newModel(context.Background(), Deps{LoggedIn: false, NewClient: func(string, string, string) Client { return &fakeClient{} }})
 	if m.current() != screenNotLoggedIn {
 		t.Fatalf("no token should land on not-logged-in, got %d", m.current())
 	}

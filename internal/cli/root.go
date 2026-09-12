@@ -19,6 +19,7 @@ type runtimeOpts struct {
 	human       bool   // -h / --human: shorthand for --format=text
 	agentSecret string // --agent-secret / -s, fallback $SPRAWL_AGENT_SECRET
 	projectKey  string // --project-key / -p, fallback $SPRAWL_PROJECT_KEY
+	workspace   string // --workspace / -w, fallback $SPRAWL_WORKSPACE
 }
 
 func NewRootCmd() *cobra.Command {
@@ -31,7 +32,9 @@ func NewRootCmd() *cobra.Command {
 			"Output: --format=text|json (default json; override session-wide with $SPRAWL_OUTPUT).\n\n" +
 			"Scope: every call needs the bearer from `login` plus at least one narrowing factor —\n" +
 			"a project key (--project-key / $SPRAWL_PROJECT_KEY) to work inside a single project,\n" +
-			"an agent secret (--agent-secret / $SPRAWL_AGENT_SECRET) to act as an agent key, or both.",
+			"an agent secret (--agent-secret / $SPRAWL_AGENT_SECRET) to act as an agent key, or both.\n\n" +
+			"Workspace: task, item, queue and activity calls run in the workspace those factors resolve to\n" +
+			"by default; pick another with --workspace <id> / $SPRAWL_WORKSPACE (ids from `workspace list`).",
 		SilenceUsage: true,
 		// PersistentPreRunE validates the output format and runs the daily
 		// version check on the prod binary (no-op everywhere else). Version
@@ -52,6 +55,12 @@ func NewRootCmd() *cobra.Command {
 				// double-print; that also swallows the error returned from
 				// here, which would leave the user with a silent exit 1. Print
 				// it ourselves, like textArgs does for arg-count failures.
+				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
+				return err
+			}
+			// Same reasoning for the workspace selector: a malformed id would
+			// only ever become a server 404 after the request went out.
+			if _, err := resolveWorkspace(opts); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
 				return err
 			}
@@ -87,6 +96,8 @@ func NewRootCmd() *cobra.Command {
 		"agent secret value (overrides $SPRAWL_AGENT_SECRET)")
 	root.PersistentFlags().StringVarP(&opts.projectKey, "project-key", "p", "",
 		"confine this request to one project by its key (overrides $SPRAWL_PROJECT_KEY)")
+	root.PersistentFlags().StringVarP(&opts.workspace, "workspace", "w", "",
+		"run this request in the workspace with this id instead of the default one (overrides $SPRAWL_WORKSPACE)")
 
 	// Reclaim -h for --human. cobra normally auto-registers --help with a -h
 	// shorthand; defining our own --help flag (long form only) makes cobra skip
@@ -97,6 +108,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoamiCmd(opts))
+	root.AddCommand(newWorkspaceCmd(opts))
 	root.AddCommand(newActivityCmd(opts))
 	root.AddCommand(newThemeCmd(opts))
 	root.AddCommand(newTaskCmd(opts))

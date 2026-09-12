@@ -10,8 +10,8 @@ description: >
   task space.
 license: 'MIT'
 metadata:
-  version: 0.5.0
-allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(test:*)
+  version: 0.6.0
+allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(printenv SPRAWL_WORKSPACE), Bash(test:*)
 ---
 
 # sprawl
@@ -64,6 +64,10 @@ then act:
   lives outside your project. Don't retry; tell the user which action you lack
   permission for. See
   [Permission model](#permission-model-how-to-read-errors).
+- **HTTP 403 `workspace_mismatch`** — a `SPRAWL_WORKSPACE` (or `-w`) in this
+  shell names a different workspace than the project key's. The key pins the
+  workspace; ask the user to unset the variable. See
+  [Workspace](#workspace--the-key-already-picks-it).
 - **Anything ambiguous** — *then* run `sprawl whoami --format=json` to
   separate "CLI/network broken" from "auth broken". A 200 also tells you
   which agent and scope the server thinks you are.
@@ -85,6 +89,7 @@ partial state.
 sprawl whoami
 # agent:
 #   ...
+# workspace: Hobby #1                      # ← the canvas the project lives on (the key picks it)
 # project:                                 # ← the project your key confines you to
 #   key: hobby
 #   name: Hobby
@@ -159,6 +164,37 @@ What the key does, server-side, on every call:
 Run `sprawl whoami` to see which project you're in — it prints the name, the
 key, and the level you resolve to there.
 
+## Workspace — the key already picks it
+
+A workspace is the canvas a project lives on; every call runs in exactly one.
+Your project key pins its project's workspace, so the workspace selector
+(`-w <id>` / `--workspace <id>` / `SPRAWL_WORKSPACE`) stays unset — naming a
+different one is refused with `403 workspace_mismatch`, and that error means
+a stray `SPRAWL_WORKSPACE` is exported in this shell: ask the user to unset it.
+
+`sprawl workspace list` answers "which workspace am I in, and which exist?" —
+every workspace the user can reach, `›` on the current one. `whoami`'s
+`workspace:` line says the same.
+
+Only when the user explicitly asks to work in **another** workspace: the
+simplest path is that workspace's project key (it pins it, nothing to select).
+If instead they've set this shell up with an agent secret and no project key,
+pass `-w <id>` on every call — ids are per workspace, so an id read under
+`-w 3` answers `404` anywhere else, and a `404` under `-w` can also mean the
+workspace itself is out of reach (check `workspace list`).
+
+```bash
+# Right — the key pins the workspace; nothing to select:
+sprawl task list
+
+# Right — user asked for workspace 3, shell has an agent secret and no key:
+sprawl -w 3 task list
+sprawl -w 3 item check 203                    # same -w on every follow-up
+
+# Wrong — key and selector disagree → 403 workspace_mismatch:
+SPRAWL_PROJECT_KEY=hobby sprawl -w 3 task list
+```
+
 ## Permission model (how to read errors)
 
 Your key resolves one of four scopes on the project:
@@ -170,6 +206,7 @@ answer — one level, for everything you can reach this session.
 | `200` | Success | Carry on. |
 | `401` | Token bad / missing | Ask user to re-run `sprawl login`. |
 | `403` | Your key is scoped out of this action — including any id outside your project | Don't retry. Tell the user you lack permission and which action. |
+| `403 workspace_mismatch` | A `-w` / `SPRAWL_WORKSPACE` names a workspace other than the project key's | Not a permission problem. Ask the user to unset the selector — the key pins the workspace. |
 | `404` | Genuinely gone or never existed | Treat as "not there". Don't assume it exists and retry. |
 | `422` | Validation (e.g. empty search query) | Fix the input. |
 
@@ -255,6 +292,7 @@ sprawl queue --full                            # …with each note expanded
 sprawl activity                                # completed tasks + items for today
 sprawl activity --days-ago 1                   # yesterday
 sprawl activity --date 2026-04-29              # specific day
+sprawl workspace list                          # workspaces you can reach, › on the current one
 ```
 
 **Two nouns: `task` and `item`.** A task is the container; an item is the unit
@@ -538,6 +576,9 @@ Finishing your slice and passing to another agent or the human:
   (and it isn't a secret).
 - **Never** pass `--project-id`. Your project key already decides where a
   task lands; naming a project id is at best redundant and at worst rejected.
+- **Leave `-w` / `SPRAWL_WORKSPACE` unset** unless the user explicitly named
+  another workspace. The project key pins the workspace; a selector that
+  disagrees is a `403 workspace_mismatch`, never a workaround.
 - **Never** attempt `sprawl login` — it's interactive; ask the user instead.
 - **Never** retry `403` responses. Permission won't flip mid-session.
 - **Don't** use `task update` as a status channel. Use notes / items.

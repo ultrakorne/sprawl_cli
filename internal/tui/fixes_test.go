@@ -14,7 +14,7 @@ import (
 func credsModel(fc *fakeClient) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn:  true,
-		NewClient: func(string, string) Client { return fc },
+		NewClient: func(string, string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	return m // starts on screenCreds (neither narrowing factor provided)

@@ -38,18 +38,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tasksLoadedMsg:
+		if m.stale(msg.from) {
+			return m, nil
+		}
 		m.loading = false
+		var cmd tea.Cmd
 		if msg.validated {
 			m.validated = true
 			m.credBusy = false
 			m.stack = []screen{screenList}
+			// Credentials are good: learn which workspace this is, silently,
+			// so the header can name it. Errors here are dropped.
+			cmd = whoamiCmd(m.ctx, m.client, false)
 		}
 		m.tasks = msg.tasks
 		m.searchLabel = ""
 		m.clampListSel()
+		return m, cmd
+
+	case whoamiLoadedMsg:
+		if m.stale(msg.from) {
+			return m, nil
+		}
+		m.applyWhoami(msg.who)
+		// The picker was asked for on the list; if the user has since drilled
+		// into a task, don't drop an overlay on the wrong screen (and leave
+		// `loading` to the fetch that owns it now).
+		if msg.openPicker && m.current() == screenList {
+			m.loading = false
+			return m.openWorkspacePicker()
+		}
 		return m, nil
 
 	case searchResultMsg:
+		if m.stale(msg.from) {
+			return m, nil
+		}
 		m.loading = false
 		m.tasks = msg.tasks
 		m.searchLabel = msg.query
@@ -363,7 +387,7 @@ func (m *Model) handleCredsKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.secret = secret
 		m.projectKey = projectKey
-		m.client = m.newClient(secret, projectKey)
+		m.client = m.newClient(secret, projectKey, m.workspace)
 		m.credBusy = true
 		m.credErr = ""
 		return m, validateAndListCmd(m.ctx, m.client)
@@ -474,8 +498,76 @@ func (m *Model) handleBaseKey(key string) (tea.Model, tea.Cmd) {
 		return m.openPRInput()
 	case actOpenPR:
 		return m.openPRLink()
+	case actWorkspace:
+		return m.pickWorkspace()
 	}
 	return m, nil
+}
+
+// pickWorkspace is the `w` key: refetch the workspace picture (it's one cheap
+// call and the list may have changed since startup), then open the picker on
+// the fresh data. Under a project key the workspace is pinned by the key —
+// the server refuses any other with workspace_mismatch — so say that instead
+// of offering a choice that can only fail.
+func (m *Model) pickWorkspace() (tea.Model, tea.Cmd) {
+	if m.projectKey != "" {
+		return m, m.setTransient("project key " + m.projectKey + " pins the workspace — unset it to switch")
+	}
+	m.loading = true
+	return m, whoamiCmd(m.ctx, m.client, true)
+}
+
+// openWorkspacePicker shows the reachable workspaces, cursor on the current
+// one. A server that reports none (pre-workspaces) gets a footer line.
+func (m *Model) openWorkspacePicker() (tea.Model, tea.Cmd) {
+	if len(m.wsList) == 0 {
+		return m, m.setTransient("this server doesn't report workspaces")
+	}
+	m.overlay = ovPicker
+	m.pickerKind = pickWorkspace
+	m.pickerTitle = "Switch workspace"
+	m.pickerItems = workspacePickerItems(m.wsList, m.wsCurrent)
+	m.pickerSel = 0
+	for i := range m.wsList {
+		if m.wsCurrent != nil && m.wsList[i].ID == m.wsCurrent.ID {
+			m.pickerSel = i
+		}
+	}
+	return m, nil
+}
+
+// switchWorkspace re-pins the session on workspace `id`: a new client with
+// the same factors and the new selector, then a clean list — every loaded
+// task and item belongs to the old workspace and its ids mean nothing in the
+// new one, so nothing carries over. The choice lives in memory only.
+func (m *Model) switchWorkspace(id string) (tea.Model, tea.Cmd) {
+	var target *client.Workspace
+	for i := range m.wsList {
+		if itoa(m.wsList[i].ID) == id {
+			target = &m.wsList[i]
+		}
+	}
+	if target == nil || (m.wsCurrent != nil && target.ID == m.wsCurrent.ID) {
+		return m, nil
+	}
+	m.workspace = id
+	m.wsCurrent = target
+	m.client = m.newClient(m.secret, m.projectKey, id)
+	m.tasks = nil
+	m.detail = nil
+	m.pendingTaskID = 0
+	m.listSel = 0
+	m.searching = false
+	m.searchLabel = ""
+	m.stack = []screen{screenList}
+	m.loading = true
+	status := "✓ switched to " + wsName(target)
+	if target.Level == "" || target.Level == "none" {
+		// The switch itself succeeds server-side; the policy just caps this
+		// key at none there, so the list will be empty. Say why up front.
+		status = "switched to " + wsName(target) + " — this agent key has no access there, lists will be empty"
+	}
+	return m, tea.Batch(listTasksCmd(m.ctx, m.client), m.setTransient(status))
 }
 
 // -- navigation -------------------------------------------------------------
@@ -918,6 +1010,8 @@ func (m *Model) submitPicker() (tea.Model, tea.Cmd) {
 			due = &v
 		}
 		return m, setDueCmd(m.ctx, m.client, m.inputTargetID, due)
+	case pickWorkspace:
+		return m.switchWorkspace(sel.value)
 	case pickProject:
 		attrs := map[string]any{"title": m.pendingTaskTitle}
 		m.pendingTaskTitle = ""

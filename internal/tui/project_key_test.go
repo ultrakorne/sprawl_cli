@@ -16,7 +16,7 @@ func projectKeyModel(fc *fakeClient, key string) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn:   true,
 		ProjectKey: key,
-		NewClient:  func(string, string) Client { return fc },
+		NewClient:  func(string, string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	return m
@@ -121,7 +121,7 @@ func TestProjectKey_WithSecretStillBouncesToPrompt(t *testing.T) {
 		Secret:         "K7X2M9QA",
 		SecretProvided: true,
 		ProjectKey:     "acme",
-		NewClient:      func(string, string) Client { return fc },
+		NewClient:      func(string, string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	for _, msg := range runCmd(m.initCmd) {
@@ -145,7 +145,7 @@ func TestProjectKey_ShownInListHeader(t *testing.T) {
 func TestNoProjectKey_HeaderUnchanged(t *testing.T) {
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, Secret: "sek", SecretProvided: true,
-		NewClient: func(string, string) Client { return &fakeClient{} },
+		NewClient: func(string, string, string) Client { return &fakeClient{} },
 	})
 	m.width, m.height = 100, 30
 	got := ansi.Strip(m.viewList())

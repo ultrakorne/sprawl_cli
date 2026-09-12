@@ -2,7 +2,7 @@
 
 ## Architecture
 
-`internal/build` holds ldflag-injected vars (`APIURL`, `AppName`, `Version`, `Commit`, `Date`). `internal/client` reads them at BaseURL time (with `SPRAWL_API_URL` env override taking precedence). `internal/config` handles XDG-aware load/save of the token. `internal/cli/auth.go` resolves the token (env → config), the agent secret (flag → env), and the project key (flag → env) per request and builds an authed `*client.Client`; having neither narrowing factor fails before any HTTP call.
+`internal/build` holds ldflag-injected vars (`APIURL`, `AppName`, `Version`, `Commit`, `Date`). `internal/client` reads them at BaseURL time (with `SPRAWL_API_URL` env override taking precedence). `internal/config` handles XDG-aware load/save of the token. `internal/cli/auth.go` resolves the token (env → config), the agent secret (flag → env), the project key (flag → env) and the workspace selector (flag → env, positive-integer check) per request and builds an authed `*client.Client`; having neither narrowing factor fails before any HTTP call, and the selector is attached only after that check so it can never stand in for a factor.
 
 ## Source Files
 
@@ -11,12 +11,13 @@
 | `cmd/sprawl/main.go` | Thin entry point; wires `signal.NotifyContext` for ctrl+C. |
 | `internal/build/build.go` | Vars set by `-ldflags` at build time. |
 | `internal/config/config.go` | XDG-aware `Load` / `Save` for `config.toml`; atomic write, mode 0600 / 0700. |
-| `internal/client/client.go` | `BaseURL`, `CreateDeviceGrant`, `PollDeviceToken` (typed `DevicePollError`), authed client constructor + `WithProjectKey` option. |
+| `internal/client/client.go` | `BaseURL`, `CreateDeviceGrant`, `PollDeviceToken` (typed `DevicePollError`), authed client constructor + `WithProjectKey` / `WithWorkspace` options, `scoped` path helper. |
 | `internal/cli/login.go` | Device-flow command: grant → print URLs → poll → persist token. |
-| `internal/cli/auth.go` | `resolveToken`, `resolveAgentSecret`, `resolveProjectKey`, `newAuthedClient` (bearer + ≥1 narrowing factor), `newUserScopedClient` (agent-secret-only path for user-level writes). |
+| `internal/cli/auth.go` | `resolveToken`, `resolveAgentSecret`, `resolveProjectKey`, `resolveWorkspace`, `newAuthedClient` (bearer + ≥1 narrowing factor, then the selector), `newUserScopedClient` (agent-secret-only path for user-level writes). |
+| `internal/cli/root.go` | Persistent flags (`-s`, `-p`, `-w`, `--format`); `PersistentPreRunE` validates the format and the workspace id before any subcommand runs. |
 | `internal/cli/output.go` | `explainAPIError` — maps the auth / scope error codes to a plain-language headline + remedy (text) and a `hint` key (json). |
 | `Makefile` | Encodes the ldflags for `build` / `build-dev` / `build-all`. |
-| `.goreleaser.yaml` | Mirrors the Makefile ldflags for release builds (stub — `release:` / `brews:` stanzas still commented out). |
+| `.goreleaser.yaml` | Mirrors the Makefile ldflags for the `sprawl` release build; `.github/workflows/release.yml` runs it on a `v*` tag push (only the `brews:` stanza is still commented out). |
 
 ## Resolution Order
 
@@ -26,8 +27,9 @@ Per-request credential resolution:
 2. Agent secret: `--agent-secret` / `-s` flag → `SPRAWL_AGENT_SECRET` env.
 3. Project key: `--project-key` / `-p` flag → `SPRAWL_PROJECT_KEY` env. Trimmed locally (whitespace-only counts as unset and falls through to the env); length / charset rules stay server-side so the CLI never disagrees with the source of truth.
 4. Neither 2 nor 3 present → fail before the HTTP call, naming both env vars.
+5. Workspace selector: `--workspace` / `-w` flag → `SPRAWL_WORKSPACE` env, trimmed. Empty is the default. Non-empty must be a positive integer (no sign, spaces or leading zeros) or the root `PersistentPreRunE` fails before the subcommand runs. Never a substitute for step 4.
 
-Every `/api/v1/*` request sends `Authorization: Bearer <token>` plus whichever narrowing headers are configured — `X-Agent-Secret: <secret>` and/or `X-Project-Key: <key>`. Device-flow endpoints (`/api/auth/device`, `/api/auth/device/token`) send none of them; those are unauthenticated.
+Every `/api/v1/*` request sends `Authorization: Bearer <token>` plus whichever narrowing headers are configured — `X-Agent-Secret: <secret>` and/or `X-Project-Key: <key>`. Device-flow endpoints (`/api/auth/device`, `/api/auth/device/token`) send none of them; those are unauthenticated. A workspace selection is not a header: it prefixes the workspace-bound paths (`/api/v1/workspaces/<id>/tasks` …) and leaves `whoami`, `settings/theme` and the device-flow routes flat — see [workspaces](../workspaces/TECHNICAL.md).
 
 `PATCH /api/v1/settings/theme` is the one exception: it goes through `newUserScopedClient`, which requires the agent secret and never sends the project key.
 
@@ -36,13 +38,15 @@ Every `/api/v1/*` request sends `Authorization: Bearer <token>` plus whichever n
 | Endpoint | Effect |
 |---|---|
 | `GET /tasks`, `/tasks/search`, `/activity_log` | Pre-filtered to that project — no client-side filtering anywhere in the CLI. |
-| `GET /tasks/:id` | 200 inside the project. Outside, **403 `forbidden`** (verified against a live backend, 2026-08-04; an earlier build answered 404 here, which was the drift the server has since pinned with a test). |
+| `GET /tasks/:id` | 200 inside the project. Outside, **403 `forbidden`** — the record exists and is out of reach, which the server pins with a test of its own. |
 | `GET /checklist_items/:id` | Same rule, inherited from the parent task: 403 outside the project, 404 only when the item genuinely doesn't exist. |
 | `POST /tasks` | Lands in the project. `project_id` may be omitted entirely; naming a *different* project is 403. |
 | Writes | Unchanged inside the project, 403 outside. `PATCH /tasks/:id` has never been able to move a task between projects, so a confined client can't escape. |
 | `PATCH /settings/theme` | 403 — user-level, not project-level. `GET` still works. |
 
 Projectless tasks are invisible under confinement: they belong to no project, so they're outside every project.
+
+A project key also pins its project's **workspace**: any workspace-bound route under a `--workspace` prefix naming a different one answers `403 workspace_mismatch`.
 
 `task delete` / `item delete` treat a 404 `not_found` as idempotent success. A **403 is not** covered by that shortcut — the record exists and is out of reach, so `isNotFoundAPIError` deliberately doesn't match it and the command errors with the project-key-aware guidance below. That is the honest answer for anything outside the confined project.
 
@@ -59,6 +63,9 @@ A 404 under a project key is still possible (the record is genuinely gone), and 
 | 403 | `invalid_project_key` | project key `"x"` doesn't match any of your projects (a typo) |
 | 403 | `invalid_agent_secret` | agent secret rejected → check `/auth-settings` |
 | 403 | `forbidden` | not allowed on this resource (a permissions boundary, not a typo) — the remedy names the project key when one is set |
+| 403 | `workspace_mismatch` | project key `"x"` lives in another workspace than `--workspace N` → drop the selector (the key already selects it) or drop the key |
+| 403 | `workspace_required` | the agent key's own workspace was deleted → pass `--workspace <id>` (see `workspace list`) or a project key |
+| 404 | `not_found`, only when a workspace is selected | either the id isn't in workspace N, or workspace N isn't one you can reach. Without a selection a 404 stays unexplained. `task delete` / `item delete` never reach this: they treat the 404 as idempotent success. |
 
 ## Noteworthy Behavior
 

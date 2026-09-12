@@ -86,7 +86,7 @@ const (
 func hintsFor(s screen) string {
 	switch s {
 	case screenList:
-		return "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · r refresh · ? help · q quit"
+		return "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · w workspace · r refresh · ? help · q quit"
 	case screenChecklist:
 		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · n add · e title · d delete · esc back · ? help"
 	case screenNote:
@@ -276,12 +276,18 @@ func wrapAndWindow(groups [][]string, sel, bodyH int) []string {
 // -- list screen ------------------------------------------------------------
 
 func (m *Model) viewList() string {
-	title := "sprawl · tasks"
+	title := "sprawl"
+	// The workspace is the outermost container, so it sits right after the app
+	// name, breadcrumb-style — once whoami has told us which one this is.
+	if m.wsCurrent != nil {
+		title += " · " + wsName(m.wsCurrent)
+	}
+	title += " · tasks"
 	// Under a project key the list is server-filtered to one project, which is
 	// invisible otherwise — name it so an empty list reads as "this project has
 	// no tasks" rather than "sprawl is broken".
 	if m.projectKey != "" {
-		title = "sprawl · tasks · " + m.projectKey
+		title += " · " + m.projectKey
 	}
 	if m.searching {
 		title = "search: " + m.searchInput.render()
@@ -726,6 +732,7 @@ func helpLines(s styles) []string {
 		{"Global", "? help · r refresh · esc back · ctrl+c quit"},
 		{"List", "↑↓/jk move · g/G top/bottom · enter open · / search · q quit"},
 		{"", "c copy task · n new · e title · E description · t due · d delete"},
+		{"", "w switch workspace (ids are per workspace; a project key pins it)"},
 		{"Checklist", "↑↓/jk move · g/G top/bottom · space/x toggle · enter note"},
 		{"", "c copy item · n add · e title · d delete · esc back"},
 		{"", "s cycle state (ready → progress → review → none) · p set PR number"},

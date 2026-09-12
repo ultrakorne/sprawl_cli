@@ -35,11 +35,17 @@ type Deps struct {
 	// optional, so the credentials prompt is skipped. Shown in the header so
 	// it's obvious which project the UI is looking at.
 	ProjectKey string
-	// NewClient builds an authed client for a candidate secret and project key.
-	// Only the bearer token is captured by the closure; both narrowing factors
-	// are supplied per call so the credentials prompt can retry with either one
-	// without leaking it anywhere.
-	NewClient func(secret, projectKey string) Client
+	// Workspace is the workspace id resolved from --workspace / $SPRAWL_WORKSPACE,
+	// empty for the factors' default. It is a selector, not a factor: it never
+	// stands in for a secret or a key. The `w` key on the list re-selects it
+	// for the rest of the session (in memory only — nothing is persisted).
+	Workspace string
+	// NewClient builds an authed client for a candidate secret, project key and
+	// workspace. Only the bearer token is captured by the closure; the factors
+	// and the selector are supplied per call so the credentials prompt can
+	// retry with either factor, and the workspace picker can re-pin the
+	// session, without leaking anything anywhere.
+	NewClient func(secret, projectKey, workspace string) Client
 }
 
 // ErrNotATTY is returned when the TUI is asked to run without a terminal.
