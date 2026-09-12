@@ -233,19 +233,24 @@ func TestRunQueue_JSONPayloadAndPRURL(t *testing.T) {
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
 		gotState = r.URL.Query().Get("state")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"checklist_items": []any{
+		_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []any{
 			map[string]any{
-				"id": 7, "title": "add the migration", "completed": false, "position": 1,
-				"state": "in_review", "pr_number": 412, "has_notes": true, "last_actor": nil,
-				"task": map[string]any{"id": 3, "title": "Ship the API", "project": map[string]any{
+				"id": 3, "title": "Ship the API", "description": "the whole thing", "due_date": "2026-09-20",
+				"project": map[string]any{
 					"id": 1, "name": "Sprawl", "key": "sprawl", "color": "",
 					"github_url": "https://github.com/ultrakorne/sprawl",
+				},
+				"checklist_items": []any{map[string]any{
+					"id": 7, "title": "add the migration", "completed": false, "position": 1,
+					"state": "in_review", "pr_number": 412, "has_notes": true, "last_actor": nil,
 				}},
 			},
 			map[string]any{
-				"id": 9, "title": "unlinked", "completed": false, "position": 2,
-				"state": "in_review", "pr_number": 77, "has_notes": false, "last_actor": nil,
-				"task": map[string]any{"id": 4, "title": "Loose", "project": nil},
+				"id": 4, "title": "Loose", "description": "", "due_date": nil, "project": nil,
+				"checklist_items": []any{map[string]any{
+					"id": 9, "title": "unlinked", "completed": false, "position": 2,
+					"state": "in_review", "pr_number": 77, "has_notes": false, "last_actor": nil,
+				}},
 			},
 		}})
 	})
@@ -258,45 +263,74 @@ func TestRunQueue_JSONPayloadAndPRURL(t *testing.T) {
 		t.Fatalf("state query = %q", gotState)
 	}
 
+	type item struct {
+		ID       int64   `json:"id"`
+		State    string  `json:"state"`
+		PRNumber int64   `json:"pr_number"`
+		PRURL    *string `json:"pr_url"`
+	}
 	var payload struct {
-		Items []struct {
-			ID       int64   `json:"id"`
-			State    string  `json:"state"`
-			PRNumber int64   `json:"pr_number"`
-			PRURL    *string `json:"pr_url"`
-			Task     struct {
-				ID      int64 `json:"id"`
-				Project *struct {
-					Key       string  `json:"key"`
-					GithubURL *string `json:"github_url"`
-				} `json:"project"`
-			} `json:"task"`
-		} `json:"checklist_items"`
+		Tasks []struct {
+			ID          int64   `json:"id"`
+			Title       string  `json:"title"`
+			Description string  `json:"description"`
+			DueDate     *string `json:"due_date"`
+			Project     *struct {
+				Key       string  `json:"key"`
+				GithubURL *string `json:"github_url"`
+			} `json:"project"`
+			Items []item `json:"checklist_items"`
+		} `json:"tasks"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("decode: %v — %s", err, out.String())
 	}
-	if len(payload.Items) != 2 {
-		t.Fatalf("items = %d", len(payload.Items))
+	// The top-level key is `tasks`, never `checklist_items` — items live only
+	// inside their group, so a consumer on the old flat shape fails loudly
+	// instead of reading an empty queue.
+	var top map[string]any
+	if err := json.Unmarshal(out.Bytes(), &top); err != nil {
+		t.Fatalf("decode top: %v", err)
 	}
-	first := payload.Items[0]
-	if first.State != "review" {
-		t.Fatalf("queue state = %q, want the short form", first.State)
+	if _, ok := top["tasks"]; !ok {
+		t.Fatalf("payload has no tasks key: %s", out.String())
 	}
-	if first.PRURL == nil || *first.PRURL != "https://github.com/ultrakorne/sprawl/pull/412" {
-		t.Fatalf("pr_url = %v", first.PRURL)
+	if _, ok := top["checklist_items"]; ok {
+		t.Fatalf("payload still carries a top-level checklist_items: %s", out.String())
 	}
-	if first.Task.Project == nil || first.Task.Project.Key != "sprawl" {
-		t.Fatalf("task project = %+v", first.Task.Project)
+	if len(payload.Tasks) != 2 {
+		t.Fatalf("tasks = %d", len(payload.Tasks))
+	}
+	first := payload.Tasks[0]
+	if first.ID != 3 || first.Title != "Ship the API" || first.Description != "the whole thing" {
+		t.Fatalf("first group = %+v", first)
+	}
+	if first.DueDate == nil || *first.DueDate != "2026-09-20" {
+		t.Fatalf("due_date = %v", first.DueDate)
+	}
+	if first.Project == nil || first.Project.Key != "sprawl" {
+		t.Fatalf("task project = %+v", first.Project)
+	}
+	if len(first.Items) != 1 {
+		t.Fatalf("first items = %d", len(first.Items))
+	}
+	if first.Items[0].State != "review" {
+		t.Fatalf("queue state = %q, want the short form", first.Items[0].State)
+	}
+	if first.Items[0].PRURL == nil || *first.Items[0].PRURL != "https://github.com/ultrakorne/sprawl/pull/412" {
+		t.Fatalf("pr_url = %v", first.Items[0].PRURL)
 	}
 	// A task with no project can't resolve a link — the number stays, the URL
-	// is null. Neither is an error.
-	second := payload.Items[1]
-	if second.PRURL != nil {
-		t.Fatalf("unresolvable pr_url = %v", *second.PRURL)
+	// is null. Neither is an error. A null due_date stays null.
+	second := payload.Tasks[1]
+	if second.Project != nil || second.DueDate != nil {
+		t.Fatalf("second group = %+v", second)
 	}
-	if second.PRNumber != 77 {
-		t.Fatalf("pr number dropped: %+v", second)
+	if len(second.Items) != 1 || second.Items[0].PRURL != nil {
+		t.Fatalf("unresolvable pr_url = %+v", second.Items)
+	}
+	if second.Items[0].PRNumber != 77 {
+		t.Fatalf("pr number dropped: %+v", second.Items[0])
 	}
 }
 
@@ -319,13 +353,15 @@ func TestRunQueue_FullSendsParamAndEmitsNotes(t *testing.T) {
 				item := map[string]any{
 					"id": 7, "title": "add the migration", "completed": false, "position": 1,
 					"state": "in_review", "pr_number": 412, "has_notes": true,
-					"task": map[string]any{"id": 3, "title": "Ship the API", "project": nil},
 				}
 				// Mirror the server: notes ride only on the full read.
 				if tc.full {
 					item["notes"] = "blocked on the backfill"
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{"checklist_items": []any{item}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []any{map[string]any{
+					"id": 3, "title": "Ship the API", "description": "", "due_date": nil, "project": nil,
+					"checklist_items": []any{item},
+				}}})
 			})
 
 			var out, errOut bytes.Buffer
@@ -337,22 +373,28 @@ func TestRunQueue_FullSendsParamAndEmitsNotes(t *testing.T) {
 			}
 
 			var payload struct {
-				Items []map[string]any `json:"checklist_items"`
+				Tasks []struct {
+					Items []map[string]any `json:"checklist_items"`
+				} `json:"tasks"`
 			}
 			if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 				t.Fatalf("decode: %v — %s", err, out.String())
 			}
-			notes, present := payload.Items[0]["notes"]
+			if len(payload.Tasks) != 1 || len(payload.Tasks[0].Items) != 1 {
+				t.Fatalf("payload = %s", out.String())
+			}
+			got := payload.Tasks[0].Items[0]
+			notes, present := got["notes"]
 			if tc.full {
 				if !present || notes != "blocked on the backfill" {
 					t.Fatalf("notes = %v (present=%v), want the body", notes, present)
 				}
 			} else if present {
-				t.Fatalf("notes must be absent when they weren't fetched: %+v", payload.Items[0])
+				t.Fatalf("notes must be absent when they weren't fetched: %+v", got)
 			}
 			// has_notes rides either way — it's what drives the NOTES column.
-			if payload.Items[0]["has_notes"] != true {
-				t.Fatalf("has_notes = %v", payload.Items[0]["has_notes"])
+			if got["has_notes"] != true {
+				t.Fatalf("has_notes = %v", got["has_notes"])
 			}
 		})
 	}
@@ -363,7 +405,7 @@ func TestQueueCmd_DefaultsToReadyToPickup(t *testing.T) {
 	fx := newAuthedFixture(t, "json", func(w http.ResponseWriter, r *http.Request) {
 		gotState = r.URL.Query().Get("state")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"checklist_items": []any{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []any{}})
 	})
 
 	cmd := newQueueCmd(fx.Opts)
@@ -401,24 +443,47 @@ func TestQueueText_EmptyAndRows(t *testing.T) {
 	if got := queueText(nil, client.StateReadyToPickup, false); !strings.Contains(got, "no items in ready") {
 		t.Fatalf("empty = %q", got)
 	}
-	items := []*client.ItemDetail{{
-		ChecklistItem: client.ChecklistItem{ID: 7, Title: "add the migration", State: client.StateInReview, PRNumber: 412, HasNotes: true, Notes: ptr("the note")},
-		Task:          client.ItemTask{ID: 3, Title: "Ship the API", Project: &client.Project{ID: 1, Name: "Sprawl"}},
+	// A group whose task has no items in the state contributes nothing, and
+	// counts for nothing — the server never sends one, but an empty queue must
+	// not depend on that.
+	if got := queueText([]*client.QueueTask{{ID: 1, Title: "hollow"}}, client.StateReadyToPickup, false); !strings.Contains(got, "no items in ready") {
+		t.Fatalf("hollow group = %q", got)
+	}
+	items := []*client.QueueTask{{
+		ID: 3, Title: "Ship the API", Description: "the whole thing\nover two lines", DueDate: "2026-09-20",
+		Project: &client.Project{ID: 1, Name: "Sprawl"},
+		ChecklistItems: []*client.ChecklistItem{
+			{ID: 7, Title: "add the migration", State: client.StateInReview, PRNumber: 412, HasNotes: true, Notes: ptr("the note")},
+		},
+	}, {
+		ID: 4, Title: "Loose",
+		ChecklistItems: []*client.ChecklistItem{
+			{ID: 9, Title: "unlinked", State: client.StateInReview},
+		},
 	}}
 	got := queueText(items, client.StateInReview, false)
-	// The task id is bare here too — the `#` belongs to PR numbers only.
-	for _, want := range []string{"review", "#412", "add the migration", "3 Ship the API", "Sprawl", "PROJECT"} {
+	// The task id is bare here too — the `#` belongs to PR numbers only. The
+	// group header carries the task's title, description, project and due
+	// date, so none of them needs a column.
+	for _, want := range []string{"review", "(2)", "#412", "add the migration", "3 Ship the API", "Sprawl", "due 2026-09-20",
+		"the whole thing\nover two lines", "4 Loose", "unlinked"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
 	// The checkbox and STATE columns are dropped: every queued item is
 	// incomplete by construction and the state is the query, so both would be
-	// constant down the column.
-	for _, unwanted := range []string{"[x]", "STATE"} {
+	// constant down the column. TASK and PROJECT are gone too — the group
+	// header names both.
+	for _, unwanted := range []string{"[x]", "STATE", "TASK", "PROJECT"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("queue should not render %q:\n%s", unwanted, got)
 		}
+	}
+	// Each group is its own header + table; the second group's header comes
+	// after the first group's rows.
+	if strings.Index(got, "4 Loose") < strings.Index(got, "add the migration") {
+		t.Errorf("groups out of order:\n%s", got)
 	}
 	// --full expands the note under the row; without it the NOTES column alone
 	// says there is one.

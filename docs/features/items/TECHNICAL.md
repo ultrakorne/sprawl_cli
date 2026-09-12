@@ -12,7 +12,7 @@
 |------|------|
 | `internal/cli/item_render.go` | The shared renderer: `itemCols` / `itemView`, `itemTableHeader`, `itemRow`, `itemTable`, `itemNoteLines`, `taskHeader`, `itemMap`, `wrapLines`, plus the `stateLabel` / `stateStyle` / `checkbox` / `notesFlag` primitives. |
 | `internal/cli/item.go` | Parent `item` command + `add` / `update` / `check` / `uncheck` / `state` / `pr` / `delete`; `runItemShow`, `itemDetailMap`, the `✓ …` write summaries, `parseState` / `parsePRNumber`. |
-| `internal/cli/queue.go` | The cross-task read; adapts `ItemDetail`s to `itemView`s and feeds the same table. |
+| `internal/cli/queue.go` | The cross-task read; one `QueueTask` group per task, each adapted to `itemView`s and fed to the same table under its own header. |
 | `internal/cli/task.go` | `taskShowText` — the title/description header plus the same table. |
 | `internal/client/client.go` | HTTP methods for `/api/v1/checklist_items/*` and `POST /api/v1/tasks/:id/checklist`. `DeleteChecklistItem` is the no-body 204 sibling of the other writers. |
 | `internal/icons/icons.go` | The state-glyph vocabulary, shared with the TUI so both surfaces render a state identically. `SPRAWL_ICONS=plain` opts out of the Nerd Font set. |
@@ -28,8 +28,8 @@
   - `pr_url` is **added**, resolved via `client.PRURL` from whichever project the view has in hand. `null` when the chain breaks.
   - `position` is **dropped**. Array order carries ordering; the server returns items in position order.
   - `notes` rides only when `withNotes` is set. `has_notes` always rides.
-- `GET /api/v1/checklist_items/:id` returns `{"checklist_item": {…, "task": {"id", "title", "project"}}}`, decoded into `client.ItemDetail` (a `ChecklistItem` plus an `ItemTask`). The same struct backs the by-state queue, whose elements have the identical shape. The task stub is **required**: it carries the project, and the project's `github_url` is what turns `pr_number` into a link.
-- `queue --full` sends `?full=true` on `GET /api/v1/checklist_items`. **The server does not implement that parameter yet** — it ignores it and returns items without `notes`, so `--full` currently renders identically to a plain `queue`. The CLI side is complete and the flag needs no change once the server adds the key, exactly as it did for the task read.
+- `GET /api/v1/checklist_items/:id` returns `{"checklist_item": {…, "task": {"id", "title", "project"}}}`, decoded into `client.ItemDetail` (a `ChecklistItem` plus an `ItemTask`). The task stub is **required**: it carries the project, and the project's `github_url` is what turns `pr_number` into a link. The by-state queue is shaped the other way round — `{"tasks": [{id, title, description, due_date, project, checklist_items: [...]}]}`, decoded into `client.QueueTask` — so its items carry no stub; the group's project resolves their links.
+- `queue --full` sends `?full=true` on `GET /api/v1/checklist_items`; the server inlines each item's `notes` (null when empty), exactly as on the task read.
 - `GET /api/v1/tasks/:id` embeds `checklist_items` **with** `has_notes` and **without** `notes`; `?full=true` adds `notes` (null when empty). An empty checklist is `[]`, not a missing key — so `Task.ChecklistItems == nil` means "this response doesn't carry items at all" (list / search / create / update) and `[]` means "this task has none", and `taskMap` suppresses the key only in the first case.
 - `item delete` is `DELETE /api/v1/checklist_items/:id` with no request body and a 204 No Content response. The CLI relies on `do()` being 204-safe — it skips the JSON decode when `out` is nil or the body is empty (see `client.go` `doWithStatus`) — so passing `nil` for `out` is the correct shape. `runItemDelete` swallows `*client.APIError` with Status 404 + Code `not_found` via `isNotFoundAPIError` (shared with `task delete`) and renders a synthetic `{id, deleted, existed}` payload.
 

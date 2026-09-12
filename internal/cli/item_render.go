@@ -23,22 +23,21 @@ import (
 //
 //	task <id>  → {checkbox: true, state: true}
 //	item <id>  → {checkbox: true, state: true}
-//	queue      → {task: true, project: true}
+//	queue      → {}
 //
 // queue drops the checkbox and the state because both are constant within one
 // queue — every queued item is incomplete by construction, and the state is the
 // query, so it lives in the heading rather than repeating identically down a
-// column.
-type itemCols struct{ checkbox, state, task, project bool }
+// column. It has no TASK or PROJECT column either: its rows are grouped under
+// their task, whose header names both.
+type itemCols struct{ checkbox, state bool }
 
 // itemView pairs an item with the context a row needs beyond the item itself:
-// the project whose repo URL turns a PR number into a link, and the parent task
-// stub for the queue's TASK column. Either may be nil — a task with no project,
-// or a view with no TASK column — and neither is an error.
+// the project whose repo URL turns a PR number into a link. It may be nil — a
+// task with no project — and that is not an error.
 type itemView struct {
 	item    *client.ChecklistItem
 	project *client.Project
-	task    *client.ItemTask
 }
 
 // noteLabel prefixes an expanded note under its row. Singular: an item has at
@@ -67,12 +66,6 @@ func itemTableHeader(c itemCols) []string {
 		h = append(h, "STATE")
 	}
 	h = append(h, "PR", "NOTES", "TITLE")
-	if c.task {
-		h = append(h, "TASK")
-	}
-	if c.project {
-		h = append(h, "PROJECT")
-	}
 	return h
 }
 
@@ -92,12 +85,6 @@ func itemRow(v itemView, c itemCols) []col {
 	row = append(row, prCol(it.PRNumber, v.project))
 	row = append(row, plainCol(notesFlag(it.HasNotes)))
 	row = append(row, plainCol(it.Title))
-	if c.task {
-		row = append(row, plainCol(itemTaskLabel(v.task)))
-	}
-	if c.project {
-		row = append(row, plainCol(projectLabel(v.project)))
-	}
 	return row
 }
 
@@ -115,15 +102,6 @@ func prCol(prNumber int64, project *client.Project) col {
 		return plainCol(text)
 	}
 	return linkedCol(text, sty.link, url)
-}
-
-// itemTaskLabel is the queue's TASK cell: the parent task's id and title. No `#`
-// on the id, matching the ID column.
-func itemTaskLabel(t *client.ItemTask) string {
-	if t == nil {
-		return "-"
-	}
-	return fmt.Sprintf("%d %s", t.ID, t.Title)
 }
 
 // itemTable renders the header, the rule and one row per item. When withNotes is
@@ -277,7 +255,7 @@ func itemMap(it *client.ChecklistItem, project *client.Project, withNotes bool) 
 	return m
 }
 
-// itemTaskMap is the parent-task stub carried in `item <id>` and `queue`
+// itemTaskMap is the parent-task stub carried in `item <id>`
 // payloads: id, title, project. It is the only thing tying an item id back to
 // its task, and the project inside it is what resolved pr_url.
 func itemTaskMap(t *client.ItemTask) map[string]any {

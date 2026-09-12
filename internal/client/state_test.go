@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -94,15 +95,18 @@ func TestListChecklistItemsByState(t *testing.T) {
 	var gotQuery string
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query().Get("state")
-		writeJSON(w, 200, map[string]any{"checklist_items": []any{
+		writeJSON(w, 200, map[string]any{"tasks": []any{
 			map[string]any{
-				"id": 7, "title": "add the migration", "completed": false, "position": 1,
-				"state": "ready_to_pickup", "pr_number": nil, "has_notes": true,
-				"task": map[string]any{
-					"id": 3, "title": "Ship the API",
-					"project": map[string]any{
-						"id": 1, "name": "Sprawl", "key": "sprawl", "color": "#3B82F6",
-						"github_url": "https://github.com/ultrakorne/sprawl",
+				"id": 3, "title": "Ship the API", "description": "the whole thing",
+				"due_date": "2026-09-20",
+				"project": map[string]any{
+					"id": 1, "name": "Sprawl", "key": "sprawl", "color": "#3B82F6",
+					"github_url": "https://github.com/ultrakorne/sprawl",
+				},
+				"checklist_items": []any{
+					map[string]any{
+						"id": 7, "title": "add the migration", "completed": false, "position": 1,
+						"state": "ready_to_pickup", "pr_number": nil, "has_notes": true,
 					},
 				},
 			},
@@ -110,24 +114,30 @@ func TestListChecklistItemsByState(t *testing.T) {
 	})
 	c := NewAuthed("tok", "sec")
 
-	items, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false)
+	groups, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false)
 	if err != nil {
 		t.Fatalf("ListChecklistItemsByState: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("len = %d", len(items))
+	if len(groups) != 1 {
+		t.Fatalf("len = %d", len(groups))
 	}
-	it := items[0]
-	// Embedded item fields are promoted, and the task stub carries the project
-	// that resolves PR links.
-	if it.ID != 7 || it.State != StateReadyToPickup || it.PRNumber != 0 {
-		t.Fatalf("item = %+v", it.ChecklistItem)
+	g := groups[0]
+	// The group is the task: its context rides with its items, and its project
+	// is what resolves PR links.
+	if g.ID != 3 || g.Title != "Ship the API" || g.Description != "the whole thing" || g.DueDate != "2026-09-20" {
+		t.Fatalf("group = %+v", g)
 	}
-	if it.Task.ID != 3 || it.Task.Project == nil || it.Task.Project.Key != "sprawl" {
-		t.Fatalf("task stub = %+v", it.Task)
+	if g.Project == nil || g.Project.Key != "sprawl" {
+		t.Fatalf("project = %+v", g.Project)
 	}
-	if it.Task.Project.GithubURL != "https://github.com/ultrakorne/sprawl" {
-		t.Fatalf("github_url = %q", it.Task.Project.GithubURL)
+	if g.Project.GithubURL != "https://github.com/ultrakorne/sprawl" {
+		t.Fatalf("github_url = %q", g.Project.GithubURL)
+	}
+	if len(g.ChecklistItems) != 1 {
+		t.Fatalf("items = %d", len(g.ChecklistItems))
+	}
+	if it := g.ChecklistItems[0]; it.ID != 7 || it.State != StateReadyToPickup || it.PRNumber != 0 {
+		t.Fatalf("item = %+v", it)
 	}
 
 	req := ts.Requests()[0]
@@ -149,26 +159,27 @@ func TestListChecklistItemsByState_Full(t *testing.T) {
 	var gotFull string
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotFull = r.URL.Query().Get("full")
-		writeJSON(w, 200, map[string]any{"checklist_items": []any{
+		writeJSON(w, 200, map[string]any{"tasks": []any{
 			map[string]any{
-				"id": 7, "title": "add the migration", "completed": false, "position": 1,
-				"state": "in_review", "pr_number": 412, "has_notes": true,
-				"notes": "blocked on the backfill",
-				"task": map[string]any{
-					"id": 3, "title": "Ship the API", "project": nil,
+				"id": 3, "title": "Ship the API", "description": "", "due_date": nil, "project": nil,
+				"checklist_items": []any{
+					map[string]any{
+						"id": 7, "title": "add the migration", "completed": false, "position": 1,
+						"state": "in_review", "pr_number": 412, "has_notes": true,
+						"notes": "blocked on the backfill",
+					},
+					map[string]any{
+						"id": 8, "title": "no note here", "completed": false, "position": 2,
+						"state": "in_review", "pr_number": nil, "has_notes": false,
+						"notes": nil,
+					},
 				},
-			},
-			map[string]any{
-				"id": 8, "title": "no note here", "completed": false, "position": 2,
-				"state": "in_review", "pr_number": nil, "has_notes": false,
-				"notes": nil,
-				"task":  map[string]any{"id": 3, "title": "Ship the API", "project": nil},
 			},
 		}})
 	})
 	c := NewAuthed("tok", "sec")
 
-	items, err := c.ListChecklistItemsByState(context.Background(), StateInReview, true)
+	groups, err := c.ListChecklistItemsByState(context.Background(), StateInReview, true)
 	if err != nil {
 		t.Fatalf("ListChecklistItemsByState: %v", err)
 	}
@@ -178,9 +189,10 @@ func TestListChecklistItemsByState_Full(t *testing.T) {
 	if req := ts.Requests()[0]; req.Path != "/api/v1/checklist_items" {
 		t.Fatalf("path = %q", req.Path)
 	}
-	if len(items) != 2 {
-		t.Fatalf("len = %d", len(items))
+	if len(groups) != 1 || len(groups[0].ChecklistItems) != 2 {
+		t.Fatalf("groups = %+v", groups)
 	}
+	items := groups[0].ChecklistItems
 	if items[0].Notes == nil || *items[0].Notes != "blocked on the backfill" {
 		t.Fatalf("notes = %v", items[0].Notes)
 	}
@@ -199,7 +211,7 @@ func TestListChecklistItemsByState_NonFullOmitsParam(t *testing.T) {
 	var raw string
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		raw = r.URL.RawQuery
-		writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+		writeJSON(w, 200, map[string]any{"tasks": []any{}})
 	})
 	c := NewAuthed("tok", "sec")
 	if _, err := c.ListChecklistItemsByState(context.Background(), StateInReview, false); err != nil {
@@ -207,6 +219,31 @@ func TestListChecklistItemsByState_NonFullOmitsParam(t *testing.T) {
 	}
 	if strings.Contains(raw, "full") {
 		t.Fatalf("query = %q, want no `full` key at all", raw)
+	}
+}
+
+// A server that predates the task-grouped queue answers with the flat
+// `{"checklist_items": [...]}` envelope. That must surface as an error, not
+// decode to an empty queue — "nothing to pick up" is the wrong answer to
+// "wrong server".
+func TestListChecklistItemsByState_UngroupedShapeIsAnError(t *testing.T) {
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"checklist_items": []any{
+			map[string]any{"id": 7, "title": "x", "state": "ready_to_pickup",
+				"task": map[string]any{"id": 3, "title": "t", "project": nil}},
+		}})
+	})
+	c := NewAuthed("tok", "sec")
+	if _, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false); !errors.Is(err, ErrUngroupedQueue) {
+		t.Fatalf("err = %v, want ErrUngroupedQueue", err)
+	}
+	// An empty flat envelope is the same wrong server, not an empty queue.
+	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+	})
+	c = NewAuthed("tok", "sec")
+	if _, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false); !errors.Is(err, ErrUngroupedQueue) {
+		t.Fatalf("empty flat: err = %v, want ErrUngroupedQueue", err)
 	}
 }
 

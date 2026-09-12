@@ -309,6 +309,11 @@ func TestRunTaskShow_JSONEnvelope(t *testing.T) {
 	if !ok || task["id"] == nil || task["title"] != "hello" {
 		t.Fatalf("task = %+v", out["task"])
 	}
+	// An unset due date is a literal null, never "" — the same empty ⇒ null
+	// contract `queue` follows for its task groups, so the two payloads agree.
+	if v, present := task["due_date"]; !present || v != nil {
+		t.Fatalf("due_date = %v (present=%v), want null", v, present)
+	}
 }
 
 func TestRunTaskShow_FullEmbedsChecklistAndNotes(t *testing.T) {

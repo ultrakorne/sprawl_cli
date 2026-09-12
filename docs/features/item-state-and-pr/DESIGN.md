@@ -65,13 +65,13 @@ Attaches or clears the PR number. Non-positive or non-numeric input fails locall
 
 Defaults to `ready`. Also takes `progress` (what's being worked) and `review` (what's waiting on a human). `none` is rejected — the endpoint requires one of the three, and "items with no state" is just the ordinary checklist. Results honour project confinement like every other read. `--full` expands each item's note under its row.
 
-Each returned item carries its parent task and that task's project, so the human table can show *what work this is*, and the structured payload can carry a resolved `pr_url` without a second call.
+Results are **grouped by task**: each group is a trimmed task — id, title, description, due date, project — with the matching items nested under it, oldest task first. The human view prints one block per task: a header of `<id> <title>` with the project and due date beside it, the description beneath, then the same item table every other view renders. The structured payload is `{"tasks": [{…, "checklist_items": [...]}]}`. The task's context arrives with its items, so picking one up does not need a `task <id>` per group, and the project carried on the group resolves each item's `pr_url` without a second call.
 
 ### Existing reads
 
 The fields are additive everywhere else, and render as nothing when unset:
 
-- Every item table carries a `STATE` column rendering the state **icon** — the same glyph the TUI shows, from the shared `internal/icons` — and a `PR` column rendering `#412`. `queue` drops `STATE`, because the state is its query and lives in the heading instead.
+- Every item table carries a `STATE` column rendering the state **icon** — the same glyph the TUI shows, from the shared `internal/icons` — and a `PR` column rendering `#412`. `queue` drops `STATE`, because the state is its query and lives in the heading instead — and has no task or project column, because its rows sit under the task's own header.
 - The `PR` cell is an OSC 8 hyperlink wherever the chain resolves, so a ctrl/cmd-click opens the pull request. Where it doesn't (no project, or no repo URL on it) the number is still shown, just inert.
 - json payloads always carry `state` and `pr_number` keys, `null` when unset — so a consumer never has to distinguish "absent" from "cleared".
 

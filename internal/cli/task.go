@@ -404,7 +404,7 @@ func taskMap(t *client.Task, withNotes bool) map[string]any {
 		"title":       t.Title,
 		"description": t.Description,
 		"status":      t.Status,
-		"due_date":    t.DueDate,
+		"due_date":    nilIfEmpty(t.DueDate),
 		"checklist_progress": map[string]any{
 			"done":  t.ChecklistProgress.Done,
 			"total": t.ChecklistProgress.Total,

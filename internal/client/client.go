@@ -483,7 +483,8 @@ type ActivityChecklistItem struct {
 
 // ItemTask is the trimmed parent-task view nested under an item — id, title,
 // and project only, never a full TaskJSON. Shared by the activity log and the
-// by-state queue, which return the identical stub.
+// item detail read, which return the identical stub. The by-state queue nests
+// items under a richer QueueTask instead.
 type ItemTask struct {
 	ID      int64    `json:"id"`
 	Title   string   `json:"title"`
@@ -623,21 +624,49 @@ func (c *Client) SetChecklistItemState(ctx context.Context, itemID string, attrs
 }
 
 // ItemDetail is a checklist item plus the trimmed parent task (with its
-// project). It is the shape of BOTH single-item reads that carry context: the
-// by-state queue's elements and GET /checklist_items/:id. The task stub is what
+// project). It is the shape of GET /checklist_items/:id. The task stub is what
 // carries the project, and the project's github_url is what turns pr_number into
 // a link — drop it and PR links silently stop resolving.
 //
-// Notes ride on the detail read (always, it has no ?full variant) and not on the
-// queue, which is exactly the ChecklistItem.Notes contract.
+// Notes ride on the detail read always (it has no ?full variant), which is
+// exactly the ChecklistItem.Notes contract.
 type ItemDetail struct {
 	ChecklistItem
 	Task ItemTask `json:"task"`
 }
 
-type queueEnvelope struct {
-	Items []*ItemDetail `json:"checklist_items"`
+// QueueTask is one group of the by-state queue: a trimmed parent task — id,
+// title, description, due date, project — with the checklist items of the
+// queried state nested under it. The server groups so a caller picking up work
+// gets the task's title and description alongside its items in one call, with
+// no task_show per task. The project is what resolves each item's pr_number to
+// a link.
+//
+// Description and DueDate are here and not on ItemTask because only the queue
+// carries them; ItemTask stays the minimal stub the activity log and the item
+// detail share.
+type QueueTask struct {
+	ID             int64            `json:"id"`
+	Title          string           `json:"title"`
+	Description    string           `json:"description"`
+	DueDate        string           `json:"due_date"`
+	Project        *Project         `json:"project"`
+	ChecklistItems []*ChecklistItem `json:"checklist_items"`
 }
+
+// queueEnvelope also decodes the pre-grouping envelope's top-level
+// `checklist_items` key, only so ListChecklistItemsByState can tell "no groups"
+// from "a server that still sends the flat shape". Without it the flat shape
+// decodes cleanly to an empty queue, and an agent asking "what can I pick up?"
+// is told "nothing" instead of "wrong server".
+type queueEnvelope struct {
+	Tasks  []*QueueTask      `json:"tasks"`
+	Legacy []json.RawMessage `json:"checklist_items"`
+}
+
+// ErrUngroupedQueue is returned when the server answers the queue read with the
+// flat pre-grouping shape: the API is older than this CLI.
+var ErrUngroupedQueue = errors.New("the server returned the ungrouped queue shape; it is older than this sprawl — upgrade the API or downgrade sprawl")
 
 type itemDetailEnvelope struct {
 	Item *ItemDetail `json:"checklist_item"`
@@ -662,10 +691,12 @@ func (c *Client) GetChecklistItem(ctx context.Context, itemID string) (*ItemDeta
 }
 
 // ListChecklistItemsByState issues GET /api/v1/checklist_items?state=<state>,
-// returning matching items across every task the scope can read. state is
+// returning matching items across every task the scope can read, grouped by
+// task (oldest task first, items in position order within each). state is
 // required and must be one of the three server states — anything else is a 422
 // invalid_state. Results honour project confinement and the same readability
-// cascade as every other list endpoint.
+// cascade as every other list endpoint. A task with no item in the state is
+// not in the list, so every group has at least one item.
 //
 // No `completed` filter is needed: completing an item clears its state, so any
 // item carrying a state is by construction incomplete.
@@ -674,7 +705,7 @@ func (c *Client) GetChecklistItem(ctx context.Context, itemID string) (*ItemDeta
 // this CLI sends on the task read. A server that doesn't implement it simply
 // ignores the param and returns items without notes, which renders as "no note
 // to show" rather than as an error.
-func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, full bool) ([]*ItemDetail, error) {
+func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, full bool) ([]*QueueTask, error) {
 	params := url.Values{"state": []string{state}}
 	if full {
 		params.Set("full", "true")
@@ -684,7 +715,10 @@ func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, fu
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
 	}
-	return env.Items, nil
+	if env.Tasks == nil && env.Legacy != nil {
+		return nil, ErrUngroupedQueue
+	}
+	return env.Tasks, nil
 }
 
 // UpdateChecklistItem PATCHes item fields. The server accepts `title` and

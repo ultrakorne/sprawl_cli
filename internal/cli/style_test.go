@@ -52,11 +52,11 @@ func TestStyling_PreservesPlainLayout(t *testing.T) {
 			{ID: 6, Title: "todo step", Completed: false},
 		}}
 
-	queue := []*client.ItemDetail{{
-		ChecklistItem: client.ChecklistItem{ID: 7, Title: "add the migration",
-			State: client.StateInReview, PRNumber: 412, HasNotes: true, Notes: &doneNotes},
-		Task: client.ItemTask{ID: 3, Title: "Ship the API",
-			Project: &client.Project{ID: 1, Name: "Sprawl", GithubURL: "https://github.com/ultrakorne/sprawl"}},
+	queue := []*client.QueueTask{{
+		ID: 3, Title: "Ship the API", Description: "a description\nover two lines", DueDate: "2026-09-20",
+		Project: &client.Project{ID: 1, Name: "Sprawl", GithubURL: "https://github.com/ultrakorne/sprawl"},
+		ChecklistItems: []*client.ChecklistItem{{ID: 7, Title: "add the migration",
+			State: client.StateInReview, PRNumber: 412, HasNotes: true, Notes: &doneNotes}},
 	}}
 
 	for _, tc := range []struct {

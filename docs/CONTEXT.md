@@ -94,4 +94,4 @@ _Avoid_: theme (alone), UI theme (in code)
 - A **workspace** contains projects and **tasks**; a **project key** pins its project's workspace.
 - A **task** owns ordered **checklist items**; a **checklist item** owns at most one **note**, at most one **item state**, and at most one **PR number**.
 - A **task** belongs to at most one project; that project supplies the **repo URL** that turns an item's **PR number** into a link.
-- A **queue** is every **checklist item** sharing one **item state**, across tasks in one **workspace**.
+- A **queue** is every **checklist item** sharing one **item state**, across tasks in one **workspace**, grouped by task.

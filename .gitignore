@@ -9,3 +9,6 @@
 .mcp.json
 opencode.jsonc
 .claude/settings.local.json
+
+# review-tool transcripts
+*_review_output.txt

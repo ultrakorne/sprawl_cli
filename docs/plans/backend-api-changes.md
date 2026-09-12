@@ -84,7 +84,7 @@ If parity doesn't hold and closing the gap is more work than it's worth, **keep 
 Listed so nothing gets swept up by accident:
 
 - `GET /api/v1/tasks/:id` and `?full=true` — now the backbone of `sprawl task <id>`. **More load-bearing than before.**
-- `GET /api/v1/checklist_items?state=` — backs `queue`. Unchanged **except**: the CLI's `queue --full` now sends `?full=true` on this route, expecting each item to gain `notes` (null when empty), symmetrically with `GET /tasks/:id?full=true`. The server currently ignores the parameter, so the flag is inert until it lands. **Outstanding.**
+- `GET /api/v1/checklist_items?state=` — backs `queue`. The CLI's `queue --full` sends `?full=true` on this route and each item gains `notes` (null when empty), symmetrically with `GET /tasks/:id?full=true`. Landed server-side with the task-grouped response (server PR #39); the grouped shape itself is documented in [items/TECHNICAL.md](../features/items/TECHNICAL.md).
 - `PATCH /api/v1/checklist_items/:id/completed` and `/state` — unchanged.
 - `POST /api/v1/tasks/:task_id/checklist` — backs `item add`. Unchanged. (Note it's the one surviving route under the `/tasks/:id/checklist` prefix that 2.1 otherwise retires — **don't delete the POST with the GET.**)
 - `DELETE /api/v1/checklist_items/:id`, all `/tasks` routes, `/whoami`, `/settings/theme`, `/activity_log` — untouched.
@@ -114,7 +114,7 @@ Net: **+1 endpoint, −3 endpoints.**
 | 2.2 — `GET /checklist_items/:id/notes` | ✅ retired. |
 | 2.3 — `PUT /checklist_items/:id/notes` | ✅ retired; PATCH parity confirmed (envelope required, `""` clears, response echoes `notes`). |
 | Part 3 — surviving routes | ✅ all present. `GET /tasks/:id` additionally gained a bodyless `checklist_items` array — beyond this spec, and what `sprawl task <id>` is now built on. |
-| `queue --full` | ⏳ in flight — `?full=true` on `GET /checklist_items` is still ignored. |
+| `queue --full` | ✅ landed with the task-grouped queue (server PR #39, 2026-09-12); the CLI reads `{tasks: [{…, checklist_items}]}` and `?full=true` inlines `notes`. |
 | `/api/v1` catch-all | ⚠️ **regressed.** Retired paths answered `{"error":"not_found"}` earlier today; they now fall through to `Phoenix.Router.NoRouteError` (HTML, or the dev error view under `Accept: application/json`). See [output-formats/TECHNICAL.md](../features/output-formats/TECHNICAL.md) for why the CLI needs the envelope. |
 
-**This doc is disposable.** Once the two rows above are closed it can be deleted: every durable contract in it now lives in the feature docs — the 403-vs-404 rule in [auth-and-config](../features/auth-and-config/TECHNICAL.md), the required `task` stub and the `notes` contract in [items](../features/items/TECHNICAL.md), and the 404-envelope requirement in [output-formats](../features/output-formats/TECHNICAL.md). The retired-route list is only of historical interest, and git has it.
+**This doc is disposable.** Once the catch-all row above is closed it can be deleted: every durable contract in it now lives in the feature docs — the 403-vs-404 rule in [auth-and-config](../features/auth-and-config/TECHNICAL.md), the required `task` stub and the `notes` contract in [items](../features/items/TECHNICAL.md), and the 404-envelope requirement in [output-formats](../features/output-formats/TECHNICAL.md). The retired-route list is only of historical interest, and git has it.

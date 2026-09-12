@@ -286,7 +286,7 @@ sprawl task <id>                               # task + its items (no `show` sub
 sprawl task <id> --full                        # …and every item's note body, one call
 sprawl task search "<query>"                   # task + item titles; returns ids to fetch
 sprawl item <id>                               # one item + its note (no --full; always included)
-sprawl queue                                   # items ready to pick up, across every task
+sprawl queue                                   # items ready to pick up, grouped by task
 sprawl queue --state progress|review           # what's being worked / awaiting review
 sprawl queue --full                            # …with each note expanded
 sprawl activity                                # completed tasks + items for today
@@ -467,12 +467,15 @@ These are the common shapes of work the skill exists for.
 ### 1. Pick up assigned work
 
 ```bash
-sprawl queue                   # items flagged ready to pick up, across every task
+sprawl queue                   # items flagged ready to pick up, grouped by task
 sprawl task <id> --full        # the task plus every item and its notes, one call
 ```
 
 `sprawl queue` is the entry point when the user says "pick something up" or
-"what's ready?". Fall back to `sprawl task list` when nothing is queued or you
+"what's ready?". Its payload is `{"tasks": [{id, title, description, due_date,
+project, checklist_items: [...]}]}` — each task's title and description come
+with its items, so you can choose what to pick up without a `task <id>` per
+group. Fall back to `sprawl task list` when nothing is queued or you
 need the wider picture — your key already scopes both server-side.
 
 **Claim it, then work it.** The states are how the human and other agents see

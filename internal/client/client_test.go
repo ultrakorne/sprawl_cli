@@ -1182,9 +1182,8 @@ func TestHeaderInvariants(t *testing.T) {
 				"created_by":         nil, "last_actor": nil,
 			}})
 		case p == "/api/v1/checklist_items":
-			// The by-state queue: a list envelope, each element an item plus its
-			// parent-task stub.
-			writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
+			// The by-state queue: task groups, each with its items.
+			writeJSON(w, 200, map[string]any{"tasks": []any{}})
 		case strings.HasPrefix(p, "/api/v1/checklist_items/"):
 			// DELETE returns 204; set-completed / plain update return the
 			// item envelope.

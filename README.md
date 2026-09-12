@@ -131,7 +131,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl item state <id> <ready\|progress\|review\|none>` | Sets the item's hand-set state, or clears it with `none`. These short names are the vocabulary — they're what reads emit too. States are mutually exclusive, and setting one **un-completes** the item. Separate route from `item update`, which ignores the field. |
 | `sprawl item pr <id> <number\|none>` | Attaches a GitHub PR number to the item, or clears it. Independent of state and completion — only an explicit `none` removes it. The link is built client-side from the project's repo URL; without one the number renders bare. |
 | `sprawl item delete <id>` | Hard-deletes an item. May flip the parent task's `completed_at`. A 404 is idempotent success like `task delete`; a **403** (the item exists but is outside your project key) is a real error. |
-| `sprawl queue` | Lists items in a given state across every visible task — the "what can I pick up?" query, and the only item view that crosses tasks. Defaults to `--state ready`; also accepts `progress` / `review`. Every result is incomplete by construction (completing an item clears its state). `--full` expands each note. |
+| `sprawl queue` | Lists items in a given state across every visible task, **grouped by task** — the "what can I pick up?" query, and the only item view that crosses tasks. Each group carries the task's id, title, description, due date and project; the human view prints a header per task above its item table. Defaults to `--state ready`; also accepts `progress` / `review`. Every result is incomplete by construction (completing an item clears its state). `--full` expands each note. |
 | `sprawl update` | Downloads the latest GitHub release, verifies SHA256, and atomically replaces the running binary. Refuses on `sprawl_dev` and on local builds. Pass `--yes` to skip the confirmation prompt. See [features/auto-update](docs/features/auto-update/INDEX.md). |
 
 ## AI-tool integration
@@ -156,7 +156,7 @@ curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/agents
   -o ~/.claude/agents/sprawl-bookkeeper.md
 ```
 
-All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, read commands render aligned tables and write commands render a one-line `✓ …` summary; in `json` mode they return the server envelope (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`) with the item shape **normalized** — the CLI does not pass items through untouched:
+All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, read commands render aligned tables and write commands render a one-line `✓ …` summary; in `json` mode they return the server envelope (`{tasks:[…]}`, `{task:{…}}`, `{checklist_item:{…}}`; `queue` is `{tasks:[{…, checklist_items:[…]}]}`) with the item shape **normalized** — the CLI does not pass items through untouched:
 
 - **`state` is short-form on output** — `ready` / `progress` / `review` / `null`, never the server's `ready_to_pickup` / `in_progress` / `in_review`. Input still accepts both. This is what keeps an item's state from colliding with a task's `status`, which really is `in_progress`.
 - **`pr_url` is added** — the assembled GitHub link, or `null` when the chain can't resolve (no PR number, no project, or no repo URL on it). None of those is an error.

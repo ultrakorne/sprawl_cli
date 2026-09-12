@@ -47,11 +47,10 @@ func demoProject() *client.Project {
 func TestItemRow_IdenticalCellsAcrossViews(t *testing.T) {
 	it := demoItem()
 	proj := demoProject()
-	stub := &client.ItemTask{ID: 119, Title: "Ship it", Project: proj}
 
 	taskRow := itemRow(itemView{item: it, project: proj}, itemCols{checkbox: true, state: true})
 	itemRowCells := itemRow(itemView{item: it, project: proj}, itemCols{checkbox: true, state: true})
-	queueRow := itemRow(itemView{item: it, project: proj, task: stub}, itemCols{task: true, project: true})
+	queueRow := itemRow(itemView{item: it, project: proj}, itemCols{})
 
 	// task <id> and item <id> use the same column set, so their rows are equal
 	// cell for cell.
@@ -65,8 +64,8 @@ func TestItemRow_IdenticalCellsAcrossViews(t *testing.T) {
 		}
 	}
 
-	// queue drops the checkbox and STATE and appends TASK/PROJECT, but the cells
-	// it DOES share must be identical — same id text, same PR cell, same link,
+	// queue drops the checkbox and STATE, but the cells it DOES share must be
+	// identical — same id text, same PR cell, same link,
 	// same notes flag, same title.
 	shared := func(header []string, row []col, name string) map[string]col {
 		out := map[string]col{}
@@ -82,7 +81,7 @@ func TestItemRow_IdenticalCellsAcrossViews(t *testing.T) {
 		return out
 	}
 	a := shared(itemTableHeader(itemCols{checkbox: true, state: true}), taskRow, "task")
-	b := shared(itemTableHeader(itemCols{task: true, project: true}), queueRow, "queue")
+	b := shared(itemTableHeader(itemCols{}), queueRow, "queue")
 	for k, av := range a {
 		if colKey(av) != colKey(b[k]) {
 			t.Errorf("column %s differs between task <id> and queue: %q vs %q", k, colKey(av), colKey(b[k]))
@@ -98,8 +97,8 @@ func TestItemTableHeader_ColumnSets(t *testing.T) {
 	}{
 		{"task <id> / item <id>", itemCols{checkbox: true, state: true},
 			[]string{"[x]", "ID", "STATE", "PR", "NOTES", "TITLE"}},
-		{"queue", itemCols{task: true, project: true},
-			[]string{"ID", "PR", "NOTES", "TITLE", "TASK", "PROJECT"}},
+		{"queue", itemCols{},
+			[]string{"ID", "PR", "NOTES", "TITLE"}},
 	} {
 		got := itemTableHeader(tc.cols)
 		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
@@ -107,7 +106,7 @@ func TestItemTableHeader_ColumnSets(t *testing.T) {
 		}
 	}
 	// POS is gone from every view.
-	for _, cols := range []itemCols{{checkbox: true, state: true}, {task: true, project: true}} {
+	for _, cols := range []itemCols{{checkbox: true, state: true}, {}} {
 		for _, h := range itemTableHeader(cols) {
 			if h == "POS" {
 				t.Errorf("POS column resurfaced in %+v", cols)
@@ -395,9 +394,8 @@ func TestItemTable_NotesAlignUnderID(t *testing.T) {
 func TestItemTable_NotesNeverFlushLeft(t *testing.T) {
 	views := []itemView{{
 		item: &client.ChecklistItem{ID: 7, Title: "add the migration", HasNotes: true, Notes: ptr("the note")},
-		task: &client.ItemTask{ID: 3, Title: "Ship the API"},
 	}}
-	out := itemTable(views, itemCols{task: true, project: true}, true)
+	out := itemTable(views, itemCols{}, true)
 	for _, ln := range strings.Split(out, "\n") {
 		if strings.Contains(ln, "note: the note") {
 			if !strings.HasPrefix(ln, strings.Repeat(" ", noteMinIndent)) {
