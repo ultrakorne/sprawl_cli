@@ -13,12 +13,20 @@ import (
 
 // -- pure text-format helpers ----------------------------------------------
 
+// whoamiTextDefault / whoamiPayloadDefault render without a --workspace
+// selection: the effective workspace is whatever the server reported.
+func whoamiTextDefault(w *client.Whoami) string { return whoamiText(w, w.Workspace, false) }
+func whoamiPayloadDefault(w *client.Whoami) map[string]any {
+	return whoamiPayload(w, w.Workspace)
+}
+
 func TestWhoamiText_OwnerNoProjects(t *testing.T) {
-	got := whoamiText(&client.Whoami{
+	got := whoamiTextDefault(&client.Whoami{
 		Agent: client.Agent{
 			ID: 1, Name: "owner", Emoji: "👑",
 			IsOwner: true, DefaultPermission: "write_create",
 		},
+		ProjectPermissions: []client.ProjectPermission{}, // a pre-workspaces server sends []
 	})
 	for _, want := range []string{"agent: 👑 owner #1", "role:    owner", "(none)"} {
 		if !strings.Contains(got, want) {
@@ -28,7 +36,7 @@ func TestWhoamiText_OwnerNoProjects(t *testing.T) {
 }
 
 func TestWhoamiText_GroupsByLevel(t *testing.T) {
-	got := whoamiText(&client.Whoami{
+	got := whoamiTextDefault(&client.Whoami{
 		Agent: client.Agent{
 			ID: 9, Name: "scout", DefaultPermission: "read",
 		},
@@ -53,7 +61,7 @@ func TestWhoamiText_GroupsByLevel(t *testing.T) {
 }
 
 func TestWhoamiText_UnnamedEmoji(t *testing.T) {
-	got := whoamiText(&client.Whoami{
+	got := whoamiTextDefault(&client.Whoami{
 		Agent: client.Agent{ID: 4, DefaultPermission: "none"},
 	})
 	if !strings.Contains(got, "agent: (unnamed) #4") {

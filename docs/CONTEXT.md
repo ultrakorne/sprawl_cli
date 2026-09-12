@@ -1,70 +1,97 @@
-# Project Context — Glossary
+# sprawl CLI — Context
 
-Shared vocabulary for the sprawl CLI. These terms were resolved during design and had previously been used ambiguously; this file pins down what each one means so docs, code, and conversations stay consistent. Definitions only — implementation lives in the feature docs.
+The ubiquitous language used across the sprawl CLI. Definitions are one sentence — what a term *is*, not what it does. The canonical name is bolded; rejected synonyms sit under `_Avoid_`. Implementation lives in the feature docs.
 
-## Terminal palette
+## Access and scope
 
-The terminal emulator's 16 ANSI colors (indices 0-15). sprawl's human-readable output and the interactive TUI color themselves **exclusively** from these indices, so they adopt whatever theme the user's terminal is running. This is a client-side, presentation-only concern.
+**Token**:
+The bearer credential obtained by `login` through the device flow and stored in `config.toml`; the only thing sprawl ever writes to disk.
+_Avoid_: bearer token (as a distinct thing), API key
 
-## App theme
+**Agent secret**:
+A narrowing factor that makes a request act as a specific agent key, with that key's permissions and attribution; never persisted by sprawl.
+_Avoid_: secret key, agent token
 
-The server-side sprawl web-app theme — a single named theme id (e.g. `tokyo-night`) read and written via `theme get` / `theme set`. It affects the web UI, not the terminal. It has nothing to do with the terminal palette.
+**Project key**:
+A narrowing factor that confines a request to one project; not a secret, so it may be shown; never persisted by sprawl.
+_Avoid_: project token, project id (a different thing — the numeric id)
 
-> **terminal palette vs app theme** — these two were previously conflated as "theme". They are unrelated: the terminal palette is how the CLI/TUI render locally; the app theme is a server setting for the web app.
+**Narrowing factor**:
+Either of the two values (agent secret, project key) the server requires alongside the token; both together are intersected, so a factor can only narrow permission, never widen it.
+_Avoid_: second factor, credential (for the project key)
 
-## Task
+**Workspace**:
+An independent canvas of tasks and projects — the user's own or one shared with them — in which every task, item, queue and activity call runs.
+_Avoid_: tenant, account, board
 
-A unit of work in sprawl, identified by a numeric id, with attributes such as title, description, due date, project, and status. A task owns a set of checklist items. A task has **no** "mark whole task done" operation — its done-ness is derived server-side from the completion state of its checklist items.
+**Workspace selector**:
+The `--workspace` / `SPRAWL_WORKSPACE` id that picks which workspace a call runs in; it changes the canvas, never the permission, and is not a narrowing factor.
+_Avoid_: workspace key, workspace factor
 
-## Checklist item
+> **selector vs factor** — a narrowing factor decides what a request may do; the workspace selector only decides which canvas it does it in. A selector alone never satisfies the "token plus one factor" rule, and like the project key it is never persisted.
 
-A single entry under a task's checklist, identified by its own numeric id, with a title and a completion flag. The **checklist item — not the task — is the unit the checkbox toggles**, and it is the thing a note attaches to. Completing all of a task's items is what makes the task complete.
+**Default workspace**:
+The workspace a call runs in when no selector is set — the confined project's under a project key, else the agent key's own.
+_Avoid_: home workspace, primary workspace
 
-**Item** is the short form and the canonical name in user-facing surfaces; "checklist item" is the long form used when the containing checklist needs naming. They are the same thing — never treat them as distinct concepts.
+**Role**:
+The logged-in user's own standing in a workspace (`owner`, or the membership level of a shared one).
+_Avoid_: level (that is the key's)
+
+**Level**:
+The permission the presented credentials actually resolve to on a workspace or project — `none`, `read`, `write` or `write_create`.
+_Avoid_: role, scope, access (as a noun for the value)
+
+> **role vs level** — role is the user's membership; level is the presented key's reach. A user can be `owner` of a workspace whose level reads `none` for a workspace-bound key (lists empty, writes forbidden); under a project key every workspace's level is `none` by construction — confinement, not "no access".
+
+## Work
+
+**Task**:
+A unit of work identified by a numeric id, with a title, description, due date, project and derived status, that owns an ordered set of checklist items.
+_Avoid_: card, ticket
+
+**Checklist item**:
+A single entry under a task with its own numeric id, a title and a completion flag — the unit the checkbox toggles and the thing a note attaches to; **item** is the short form and the canonical user-facing name.
 _Avoid_: subtask, todo, step, entry
 
-> **task vs checklist item** — the task is the container; the checklist item is the togglable, note-bearing unit. There is no API to mark a whole task done directly.
+**Note**:
+Free-form text attached to one checklist item as a field of it; each item has at most one, and it is never a standalone object.
+_Avoid_: comment, description, notes (plural, as a name for one note)
 
-## Note
+**Item state**:
+The hand-set marker on a checklist item — **`ready`**, **`progress`**, **`review`**, or none — one vocabulary for reading and writing; an item carrying a state is incomplete by construction.
+_Avoid_: item status, stage, phase, column, `ready_to_pickup` / `in_progress` / `in_review` (server-internal spellings)
 
-Free-form text attached to a **checklist item** (not to a task). Each checklist item has at most one note. A note is a property of its item, never a standalone object — it is read and written as part of that item.
-_Avoid_: comment, description, notes (plural, as a name for a single note)
+**Task status**:
+The task-level `status` string the server derives from how many checklist items are checked; nothing sets it by hand, and it is not the item state even where the wire spelling `in_progress` coincides.
+_Avoid_: task state, progress (as a name for the string)
 
-## Item state
-
-The hand-set marker on a **checklist item** saying where its work stands. Its canonical names are **`ready`**, **`progress`**, **`review`**, and **none** — one vocabulary for both reading and setting, so a value that was read back can be written again unchanged. It is mutually exclusive with completion — an item carrying a state is incomplete by construction.
-_Avoid_: item status, stage, phase, column, `ready_to_pickup` / `in_progress` / `in_review` (server-internal spellings, not the shared vocabulary)
-
-## Task status
-
-The task-level `status` string, **derived** server-side from how many of the task's checklist items are checked. Nothing sets it by hand.
-
-> **item state vs task status** — different concepts that once shared the string `in_progress`. The item state is hand-set on a single checklist item and is named `progress`; the task status is computed from checked counts across the whole task and is named `in_progress`. The distinct names are deliberate — they are what keeps the two apart on sight. Never call an item's state its "status".
-
-## PR number
-
-The GitHub pull-request number attached to a **checklist item** — a bare positive integer, stored without a URL. Independent of state and completion; only an explicit clear removes it.
+**PR number**:
+The GitHub pull-request number attached to a checklist item — a bare positive integer, stored without a URL, independent of state and completion.
 _Avoid_: PR link, PR url, pull request id
 
-## Repo URL
-
-A **project's** GitHub repository address (`github_url`), the thing a **PR number** is resolved against to produce a link. A project without one is normal, not an error — its items render PR numbers bare.
+**Repo URL**:
+A project's GitHub repository address (`github_url`), against which a PR number is resolved into a link; a project without one is normal.
 _Avoid_: github link, repo link, remote
 
-## Queue
-
-The set of **checklist items** in one **item state** across every task the caller can read — an agent's "what can I pick up?" view. It is a query, not a stored list, and it is the only item view that crosses tasks.
+**Queue**:
+The set of checklist items in one item state across every task the caller can read — a query, not a stored list, and the only item view that crosses tasks.
 _Avoid_: backlog, inbox, board
+
+## Presentation
+
+**Terminal palette**:
+The terminal emulator's sixteen ANSI colors (indices 0–15), the only colors the human output and the TUI use, so both adopt whatever theme the terminal runs.
+_Avoid_: theme (alone), color scheme
+
+**App theme**:
+The server-side web-app theme id (e.g. `tokyo-night`) read and written by `theme get` / `theme set`; unrelated to the terminal palette.
+_Avoid_: theme (alone), UI theme (in code)
 
 ## Relationships
 
+- A request carries the **token** plus at least one **narrowing factor**; the **workspace selector** rides on top and picks the canvas.
+- A **workspace** contains projects and **tasks**; a **project key** pins its project's workspace.
 - A **task** owns ordered **checklist items**; a **checklist item** owns at most one **note**, at most one **item state**, and at most one **PR number**.
-- A **task** belongs to at most one project; that project supplies the **repo URL** that turns the item's **PR number** into a link.
-- A **queue** is every **checklist item** sharing one **item state**, across tasks.
-
-## Flagged ambiguities
-
-- "status" was used for both an item's hand-set **item state** and a task's derived **task status** — resolved: these are distinct, and only the task has a status. Reinforced by naming them `progress` and `in_progress` respectively.
-- "PR" was used for both the **PR number** and the assembled link — resolved: the number is what's stored; the link is built on the fly from the project's **repo URL**.
-- An **item state** had two spellings — a short one for setting it and a long one for reading it back — resolved: the short names are the vocabulary; the long ones are a server-internal encoding no user-facing surface should show.
-- "checklist" was used both for a task's collection of items and as the name of the operations on a single item — resolved: a checklist is the collection; **item** is the unit, and it is the noun every single-item operation is named after.
+- A **task** belongs to at most one project; that project supplies the **repo URL** that turns an item's **PR number** into a link.
+- A **queue** is every **checklist item** sharing one **item state**, across tasks in one **workspace**.

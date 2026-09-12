@@ -1,126 +1,68 @@
 # Interactive TUI — Technical
 
-## Package layout
+## Architecture
 
-The TUI lives in its own package, `internal/tui/`, keeping cobra concerns in `internal/cli`. Cobra wires the launcher; the TUI owns the model and screens.
+The TUI is its own package, `internal/tui`, so cobra stays in `internal/cli`. `launchTUI` resolves the token, the narrowing factors and the workspace selector with the CLI's own resolvers and hands them to the TUI as `Deps`, including a `NewClient(secret, projectKey, workspace)` closure that captures only the bearer — the factors and the selector are supplied per call so the credentials prompt and the workspace picker can rebuild the client without anything leaking into a shared field.
+
+The model is Elm-style bubbletea v2: `Init` returns the validating list fetch (or nothing when starting on the credentials / not-logged-in screen); `Update` folds key presses, window size and the package's typed result messages; `View` returns a `tea.View` with `AltScreen` set (a view field in v2, not a program option). All network access is a `tea.Cmd` built in `msgs.go` against the `Client` interface — the subset of `*client.Client` the model uses, so tests inject a fake or an `httptest`-backed real client. Screens are a back stack (`creds`, `not logged in`, `list`, `checklist`, `note`); overlays (confirm, input, picker, help) are a separate field rendered over the current screen.
+
+## Where things live
 
 | File | Role |
 |------|------|
-| `internal/tui/tui.go` | Package doc, `Deps`, `IsTTY()`, `Run(ctx, deps)` — builds the model and runs the bubbletea program. |
-| `internal/tui/model.go` | `Model` struct, `newModel`, back-stack helpers, selection helpers, footer status, data reconciliation, pure search filter. |
-| `internal/tui/update.go` | `Update` — key dispatch, overlay handling, message handling, side-effect commands. |
-| `internal/tui/view.go` | `View` (returns `tea.View`), the per-screen and overlay renderers, framing/clipping/scrolling helpers. |
-| `internal/tui/msgs.go` | Message types, error classification (`isAuthErr`/`isUnauthorized`/`isNotFound`), and the `tea.Cmd` command builders that call the client. |
-| `internal/tui/client.go` | `Client` interface — the subset of `*client.Client` the model depends on (for test injection); includes `SetChecklistItemState`. |
-| `internal/tui/style.go` | `styles` (terminal-palette lipgloss styles), traffic-light `progress`, `checkbox`, `state`; the `iconSet` for item states and `resolveIcons` (`SPRAWL_ICONS=plain` opt-out). |
-| `internal/tui/input.go` | `textInput` — hand-rolled single-line editor (values always echoed in the clear). |
-| `internal/tui/keymap.go` | `action` enum + pure `dispatch(screen, key)` key→action mapping. |
-| `internal/tui/markdown.go` | Pure Markdown formatters `taskMarkdown` / `itemMarkdown` for clipboard payloads. |
-| `internal/tui/editor.go` | `editInEditorCmd` — `$EDITOR` suspend/resume via `tea.ExecProcess`. |
-| `internal/tui/open.go` | `openURLCmd` — the `o` key's browser launch. Deliberately **not** `tea.ExecProcess`: there is nothing to suspend for, so the handler is started detached (stdio nulled so `xdg-open`'s chatter can't corrupt the alt-screen) and reaped in a goroutine. Refuses anything that isn't `https://`. |
-| `internal/cli/root.go` | Root `RunE`: bare `sprawl` on a TTY → `launchTUI`, else help. Registers `newTUICmd`. |
-| `internal/cli/interactive.go` | `newTUICmd` (`sprawl tui`) and `launchTUI` — resolves credentials and starts the TUI. |
-| `internal/cli/auth.go` | `resolveToken` / `resolveAgentSecret` — reused by `launchTUI`. |
+| `internal/tui/tui.go` | `Deps`, `IsTTY`, `Run` (a ctrl+c / kill exit is clean). |
+| `internal/tui/model.go` | `Model`, `newModel`, the back stack, selection helpers, footer status, `replaceItem`, `nextState`, workspace state and picker items. |
+| `internal/tui/update.go` | Key dispatch, overlay handling, message reducers, the `s` / `p` / `o` / `w` handlers. |
+| `internal/tui/view.go` | Per-screen renderers, `frame`, hint packing, the fixed state / PR columns, OSC 8 link helpers. |
+| `internal/tui/msgs.go` | Message types, error classification, and every command that calls the client. |
+| `internal/tui/client.go` | The `Client` interface, including `Whoami` — the one user-level call the TUI makes. |
+| `internal/tui/keymap.go` | `action` enum and the pure `dispatch(screen, key)` map. |
+| `internal/tui/style.go` | Terminal-palette styles; the state glyphs come from `internal/icons`. |
+| `internal/tui/input.go` | Hand-rolled single-line `textInput`. |
+| `internal/tui/markdown.go` | Pure `taskMarkdown` / `itemMarkdown` clipboard formatters. |
+| `internal/tui/editor.go` | `$EDITOR` round trip via `tea.ExecProcess`. |
+| `internal/tui/open.go` | Detached browser launch for `o`, https-only. |
+| `internal/cli/interactive.go` | `sprawl tui` and `launchTUI`. |
+| `internal/cli/root.go` | Bare `sprawl` on a TTY → `launchTUI`, else help. |
 
-## Dependency
+## Noteworthy
 
-- `charm.land/bubbletea/v2` (v2.0.8) — added for the TUI. `charm.land/lipgloss/v2` was already vendored and is reused. `github.com/charmbracelet/x/term` (TTY detection) and `github.com/charmbracelet/x/ansi` (ANSI-aware truncate/wrap) are used for framing.
-- No `bubbles`, no external clipboard tool, no cgo — the single-static-binary, works-over-SSH promise is preserved.
+### Validation routes errors differently before and after
 
-## Bubbletea v2 model
+The validating list fetch treats any `401`/`403` as a credentials failure and returns to the prompt, clearing the secret but re-seeding the project key. After validation only a secret-coded failure (`401`, or a `403` naming the agent secret) goes back to the prompt; a plain `403 forbidden` is a permission boundary and stays on the footer. The prompt rebuilds the client with the workspace the session already had, so a re-auth never silently drops the selector.
 
-The TUI is an Elm-architecture `*Model`:
+### The header learns the workspace from a silent `whoami`
 
-- **`Init() tea.Cmd`** returns `m.initCmd`, set by `newModel` from the resolved deps (either the validating list fetch, or nothing when starting on the secret / not-logged-in screen).
-- **`Update(msg) (tea.Model, tea.Cmd)`** in `update.go` handles `tea.KeyPressMsg` (switched on `msg.String()`), `tea.WindowSizeMsg` (responsive layout), and the package's own result/error messages.
-- **`View() tea.View`** in `view.go` builds a string and wraps it: `v := tea.NewView(s); v.AltScreen = true; return v`. AltScreen is a **View field** in v2, not a program option.
+`Deps.Workspace` carries the selector from `launchTUI`. After credentials validate, the model issues one `whoamiCmd` and folds its `whoamiLoadedMsg` into the header, resolving the selected id against the reachable list itself — `whoami` ignores the selector. A failure on that silent fetch is dropped and the header simply stays unnamed; the same message with `openPicker` set (the `w` path) opens the picker and does report errors. `w` refetches before opening the picker, and switching builds a new client and clears every loaded task, item, pending fetch and search: ids are per workspace, so nothing carries over. See [workspaces](../workspaces/TECHNICAL.md).
 
-`Run` treats `tea.ErrInterrupted` / `tea.ErrProgramKilled` (ctrl+c / kill) as a clean exit and returns nil.
+### Optimistic toggle; state cycle resyncs on failure
 
-### Back stack
+Toggling flips the item and recomputes the task's progress locally before the request; the failure message carries both the previous completion flag and the previous state, because completing an item clears its state and the revert must restore both. The `s` cycle is also optimistic (so repeated presses advance rather than resend a stale next-state) but its failure path re-fetches the task — state and completion interact server-side, so a remembered value is not trustworthy. The PR write is not optimistic; nothing needs to stay in sync between keypresses.
 
-`Model.stack []screen` with `push` / `pop` / `popTo`. `esc` pops one screen (ignored at the root). Screens: `screenCreds`, `screenNotLoggedIn`, `screenList`, `screenChecklist`, `screenNote`. Overlays (`ovConfirm`, `ovInput`, `ovPicker`, `ovHelp`) are a separate `Model.overlay` field rendered instead of the base screen, not stack entries.
+### `replaceItem` is the single "server copy wins" path
 
-## Screens and overlays
+Every single-item write response (title, state, PR) is applied through it. It preserves the loaded note body — those responses never carry `notes` — and re-syncs the parent task's progress on the list behind. The note write goes through the generic item PATCH (`UpdateChecklistItem` with `notes`), whose response does echo the note; an echoed `""` is collapsed to nil so the model sees one empty-means-nil contract.
 
-- **Credentials prompt** (`viewCreds` / `credRow`) — two unmasked `textInput`s (agent secret, project key) with `credFocus` selecting the active one; `tab`/↑↓ switch, Enter sets `credBusy` and fires `validateAndListCmd`.
-- **Not logged in** (`viewNotLoggedIn`) — static; quit only.
-- **List** (`viewList` / `listRows`) — column-aligned task rows with a centered scroll window (`windowStart`); traffic-light progress; search title/annotations.
-- **Checklist** (`viewChecklist` / `checklistRows`) — header from the cached full task; item rows with checkbox, id, a collapsible state badge, title, PR number, `🗒` note flag.
-- **Note** (`viewNote` / `wrapLines`) — soft-wrapped, scrollable note body with a `noteOff` line offset.
-- **Overlays** (`viewOverlay`) — confirm, single-line input, picker, help.
+### Stale responses are dropped by id
 
-`frame(title, body, hints...)` assembles every screen to exactly the window height: header + rule, a body region clipped to available height, a transient status line, and `hintRows` (2) rows of key hints. `clip` uses `ansi.Truncate` so styled lines never overflow horizontally.
+`taskLoadedMsg` carries the requested id; a response for a task the user has already backed out of is discarded rather than overwriting the open one.
 
-The hint block is **as tall as it needs to be, capped at `maxHintRows` (2)**. `hintLines(hints, width)` returns one row whenever the whole string fits, and only spills onto a second when it doesn't — a screen with few bindings doesn't spend a row it isn't using. Breaks land on the ` · ` separators so a binding is never cut in half.
+### Hyperlinks wrap styled text, never the reverse
 
-Packing runs **backwards from the last binding**, so the row against the bottom edge is the full one and the overflow rises above it, rather than a full top line with a stub dangling under it. Segment order is untouched, so it still reads left to right, top to bottom. A string too long for two rows keeps its tail on the top row for `clip` to truncate — losing the middle of the list beats losing its end, where `? help` lives.
+lipgloss renders an OSC 8 escape in its input as literal text, so links are applied after styling and before padding, so only the number is clickable. `ansi.Truncate` keeps the escapes balanced when a line is clipped; an unbalanced one would hyperlink the rest of the screen. A test asserts no rendered screen ever shows `]8;;` or a bare `https://`.
 
-Because the footer's height varies, so does the body's. `m.bodyHeight(hints)` is the single source of truth (`fixedChrome` = title + rule + status, plus however many hint rows that string needs) and the windowing renderers take the result as an argument. Each screen's hints live in `hintsFor(screen)` so the renderer and the scroll clamp (`noteMaxOff`) can't disagree about the height — previously each site open-coded `effHeight() - 4`, which is exactly what drifts when the footer changes.
+### Columns are reserved and measured by display width
 
-## Data flow
+The state column is `icons.Width` cells and the PR column has a floor that only grows for every row at once, so pressing `s` never shifts the list sideways. Padding uses display width, not rune count: the glyphs are four-byte, one-cell runes.
 
-All network access is non-blocking `tea.Cmd`s built in `msgs.go`; each returns a typed result or error message that `Update` folds into the model.
+### Footer height drives body height
 
-| Trigger | Command | Result message |
-|---|---|---|
-| Startup / validate | `validateAndListCmd` (`ListTasks`) | `tasksLoadedMsg{validated:true}` or `authFailedMsg` |
-| Refresh list | `listTasksCmd` | `tasksLoadedMsg` |
-| Open task / copy task | `getTaskCmd` (`GetTask` full=true) | `taskLoadedMsg{forCopy}` |
-| Toggle item | `toggleItemCmd` (`SetChecklistItemCompleted`) | `itemToggledMsg` / `toggleFailedMsg` |
-| Task CRUD | `createTaskCmd` / `updateTaskCmd` / `setDueCmd` / `deleteTaskCmd` | `taskMutatedMsg` / `taskDeletedMsg` |
-| Item CRUD | `addItemCmd` / `updateItemCmd` / `setNotesCmd` / `deleteItemCmd` | `itemMutatedMsg` / `notesSetMsg` / `itemDeletedMsg` |
-| Item state / PR (`s`, `p`) | `setItemStateCmd` (`SetChecklistItemState`) | `itemStateSetMsg` / `itemStateFailedMsg` |
-| Search (server) | `searchTasksCmd` | `searchResultMsg` |
+Hints pack backwards from the last binding into at most two rows, breaking on separators; `bodyHeight(hints)` is the one source of truth for how many body lines fit, shared by the renderers and the scroll clamp so they cannot disagree.
 
-Key details:
+### Clipboard Markdown matches the server's export
 
-- **Optimistic toggle**: the model flips the item and updates the parent task's derived progress locally (`recomputeProgress`, `syncListProgress`) before the request. `toggleFailedMsg` reverts and sets a footer error.
-- **Optimistic state cycle, resync on failure**: `s` advances the local copy first (so repeated presses cycle rather than re-sending the same next-state from a stale value) and mirrors the server's un-complete side effect. `itemStateFailedMsg` re-fetches the task instead of reverting — state and completion interact server-side, so no remembered previous value is trustworthy. The PR write is *not* optimistic; there's nothing to keep in sync between keypresses. Details in [item-state-and-pr](../item-state-and-pr/TECHNICAL.md).
-- **`replaceItem` is the shared "server copy wins" path** for every single-item write response (title, state, PR). It preserves the loaded `notes` body, since those responses never carry it, then recomputes task progress and syncs it to the list screen behind.
-- **The note write goes through the generic item PATCH.** `setNotesCmd` calls `UpdateChecklistItem(id, {"notes": …})` — the same route `item update --notes` uses on the CLI side. There is no notes-specific endpoint any more: a note is a field of an item, so one route writes it, and `SetNotes` / `GetNotes` are gone from `internal/client` and from the `tui.Client` interface. The PATCH response serialises the item in full, so it echoes the saved note back; `setNotesCmd` collapses an echoed `""` to `nil` so the model sees one "empty ⇒ nil" contract.
-- **State glyphs come from `internal/icons`**, shared with the CLI's item table, so a state renders identically in both surfaces and `SPRAWL_ICONS=plain` switches both at once. `stateColW` must equal `icons.Width` — a two-cell glyph would shear every row carrying it, which `TestStateIconsAreOneCell` guards.
-- **Full-task caching**: opening a task caches the full task (items + notes) on the checklist screen (`Model.detail`); copy reuses the cache when available.
-- **Search**: live client-side filtering (`filterTasksByTitle`, pure) while typing; `enter` runs `SearchTasks` server-side and surfaces `MatchedChecklistItems`.
-- **Idempotent delete**: `isNotFound` treats a `404 not_found` on delete as a successful no-op, mirroring the CLI.
-- **Footer status**: `setTransient` shows a message that auto-clears after ~2.5s via a token-guarded `clearStatusAfter` tick (a stale timer can't wipe a newer status); `setError` shows a persistent error until the next status.
+State and PR ride on the checklist line as a trailing `<!-- state: … pr: … -->` comment, byte-identical to the server's Markdown export so a pasted file round-trips through import. The whole-task copy names the repo once in its header; the single-item copy carries the resolved PR URL, since a bare number would have nothing to resolve against.
 
-## Credential handling
+### `$EDITOR` runs blocking, GUI editors included
 
-`launchTUI` (in `internal/cli/interactive.go`) resolves credentials with the existing CLI resolvers and passes them to the TUI via `tui.Deps`:
-
-- A missing token is **not** fatal: `Deps.LoggedIn=false` → the model starts on `screenNotLoggedIn`.
-- A missing agent secret is **not** fatal: the model starts on `screenCreds`, which asks for a secret **or** a project key — unless either factor is already resolved (`Deps.Secret` / `Deps.ProjectKey`), in which case it starts on `screenList` and validates immediately. An empty submit is refused inline (`credErr`) instead of being sent.
-- `Deps.NewClient(secret, projectKey string) Client` is a closure that captures **only** the bearer token (`client.NewAuthed(token, secret, client.WithProjectKey(key))`); both narrowing factors are supplied per call, so the prompt can retry with either one without them leaking into a shared field.
-- Validation happens on the first `ListTasks`. `validationErrMsg` routes a `401`/`403` to `authFailedMsg` (→ credentials prompt); post-validation, `opErrMsg` routes only a secret-auth failure (`401`, or a secret-coded `403`) back to the prompt and keeps other errors (incl. a plain `403 forbidden`) on the footer. `authFailedMsg` clears `m.secret` but re-seeds `keyInput` from `m.projectKey` and calls `focusCreds()`, which focuses the key field when that was the only factor in play.
-- `Model.projectKey` is set from `Deps` or from the prompt and feeds the client built by `NewClient`; it is also rendered in the list header title.
-- The secret lives only in `Model.secret` / `secretInput` — never persisted or logged. It *is* echoed on the prompt (deliberately: an invisible value can't be proofread), which does not weaken AGENTS.md invariants #2/#3 — those are about not writing it to disk or into flag defaults.
-
-## OSC 52 copy
-
-Copy actions build a Markdown string with the pure formatters in `markdown.go`, then hand it to bubbletea's `tea.SetClipboard(md)` (an OSC 52 escape — no external clipboard binary, works over SSH):
-
-- **Whole task** (`taskMarkdown`): `# Sprawl Task #<id> — <title>`, a status/due/project/progress line, an optional `repo:` line when the project has a GitHub URL, the description (if any), and a `## Checklist` section with `- [x] #<id> <title>` rows and indented note lines. Emitted on `c` from the list; if the full task isn't loaded it is fetched first (`getTaskCmd(forCopy)`).
-- **Single item** (`itemMarkdown`): a `sprawl task: #<id> <title>` parent-context line, an optional `pr:` line carrying the resolved GitHub URL (this is the one copy path where a bare `pr:` number would have nothing to resolve against), then the item as a `- [ ]`/`- [x] #<id> <title>` task-list line with its note indented underneath. The item line + note are rendered by the shared `writeItemMarkdown` helper, so single-item and whole-task copies stay identical. Emitted on `c` from the checklist / note screens.
-- **State / PR ride as an HTML comment** (`mdStateComment`): a trailing `<!-- state: in_review pr: 412 -->` on the checklist line, matching the server's own Markdown export byte for byte so a pasted file round-trips both fields through import. It renders as nothing, and items with neither field carry no comment — copied output is unchanged for everything that never enters review.
-
-Both are followed by a transient footer confirmation (`✓ copied task #123` / `✓ copied item #45`), batched with the clipboard command.
-
-## `$EDITOR` flow
-
-Multi-line fields (a task **description**, a checklist item's **note**) are edited via `editInEditorCmd` (`editor.go`):
-
-1. Seed a temp file (`sprawl-*.md`) with the current value; a failed seed/close returns an `editorDoneMsg` carrying the error rather than opening a truncated buffer.
-2. Resolve `$EDITOR` (falling back to `vi`), split on spaces so an editor with flags (e.g. `code --wait`) works, and run it via `tea.ExecProcess` — bubbletea suspends the program, hands the terminal to the child, and restores on return.
-3. On exit, read the buffer back into `editorDoneMsg{kind,id,body}` and remove the temp file. `Update` dispatches by `editKind` (`editTaskDesc` → `updateTaskCmd`, `editItemNote` → `setNotesCmd`).
-
-## Testing
-
-Pure functions and the model are unit-tested without a running program:
-
-- `markdown_test.go`, `input_test.go`, `keymap_test.go` cover the formatters, the single-line input, and key→action dispatch.
-- `model_test.go` drives `Update` with synthetic messages (`KeyPressMsg`, result/error messages) and asserts state transitions — secret-prompt state machine, optimistic toggle + revert, back-stack, search filter.
-- `state_test.go` covers the `s` / `p` / `o` handlers: the pure cycle, the explicit-null clear, the un-complete mirror, the failure resync, local PR rejection, the https-only guard and clipboard fallback, the two-row footer, and the Markdown comment / `repo:` line. The column tests assert **display** columns via `lipgloss.Width`, not byte offsets — the `›` cursor is three bytes and the state glyphs four, so a byte index reports shifts the terminal doesn't show.
-- `httptest_test.go` wires a real `*client.Client` to an `httptest` server (the same pattern as `internal/client`), exercising the `Client` interface end to end. No running backend is required.
-
-`make check` (fmt-check + vet + test) must pass; do not commit.
+`$VISUAL` wins over `$EDITOR`, falling back to `vi`; known GUI editors get their wait flag injected when absent, because without it the file is read back the instant the launcher process exits. A failed temp-file seed returns an error message rather than opening a truncated buffer.

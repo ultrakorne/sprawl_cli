@@ -13,6 +13,7 @@ permission:
     "which sprawl": allow
     "command -v sprawl": allow
     "printenv SPRAWL_PROJECT_KEY": allow
+    "printenv SPRAWL_WORKSPACE": allow
     "test *": allow
   read: allow
   edit: deny

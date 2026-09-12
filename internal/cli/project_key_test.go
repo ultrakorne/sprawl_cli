@@ -420,7 +420,7 @@ func TestReportErr_JSONOmitsHintWhenUnexplained(t *testing.T) {
 // -- whoami.project ---------------------------------------------------------
 
 func TestWhoamiPayload_ProjectBlock(t *testing.T) {
-	payload := whoamiPayload(&client.Whoami{
+	payload := whoamiPayloadDefault(&client.Whoami{
 		Agent:   client.Agent{ID: 1, Name: "owner", IsOwner: true},
 		Project: &client.WhoamiProject{ID: 7, Name: "Acme Corp", Key: "acme", Level: "write_create"},
 	})
@@ -434,7 +434,7 @@ func TestWhoamiPayload_ProjectBlock(t *testing.T) {
 }
 
 func TestWhoamiPayload_ProjectNullWhenUnconfined(t *testing.T) {
-	payload := whoamiPayload(&client.Whoami{Agent: client.Agent{ID: 1}})
+	payload := whoamiPayloadDefault(&client.Whoami{Agent: client.Agent{ID: 1}})
 	v, present := payload["project"]
 	if !present {
 		t.Fatal("project key should always be present (null when unconfined)")
@@ -445,7 +445,7 @@ func TestWhoamiPayload_ProjectNullWhenUnconfined(t *testing.T) {
 }
 
 func TestWhoamiText_ShowsConfinedProject(t *testing.T) {
-	got := whoamiText(&client.Whoami{
+	got := whoamiTextDefault(&client.Whoami{
 		Agent:   client.Agent{ID: 1, Name: "owner", Emoji: "🦊", IsOwner: true},
 		Project: &client.WhoamiProject{ID: 7, Name: "Acme Corp", Key: "acme", Level: "write_create"},
 	})
@@ -459,7 +459,7 @@ func TestWhoamiText_ShowsConfinedProject(t *testing.T) {
 // level "none" is a valid key naming a project this agent can't reach — say so
 // rather than leaving the user to wonder why every list is empty.
 func TestWhoamiText_LevelNoneIsExplained(t *testing.T) {
-	got := whoamiText(&client.Whoami{
+	got := whoamiTextDefault(&client.Whoami{
 		Agent:   client.Agent{ID: 2, Name: "scout", DefaultPermission: "read"},
 		Project: &client.WhoamiProject{ID: 7, Name: "Acme Corp", Key: "acme", Level: "none"},
 	})
@@ -470,7 +470,7 @@ func TestWhoamiText_LevelNoneIsExplained(t *testing.T) {
 
 // An unconfined whoami reads exactly as it did before project keys existed.
 func TestWhoamiText_NoProjectLineWhenUnconfined(t *testing.T) {
-	got := whoamiText(&client.Whoami{
+	got := whoamiTextDefault(&client.Whoami{
 		Agent: client.Agent{ID: 1, Name: "owner", IsOwner: true},
 	})
 	if strings.Contains(got, "working in:") {

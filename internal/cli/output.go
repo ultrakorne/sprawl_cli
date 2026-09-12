@@ -115,7 +115,43 @@ func explainAPIError(err error, opts *runtimeOpts) (apiGuidance, bool) {
 		return apiGuidance{}, false
 	}
 	key := resolveProjectKey(opts)
+	workspace, _ := resolveWorkspace(opts)
 	switch apiErr.Code {
+	case "workspace_mismatch":
+		// Documented as project-key-specific, but the wording shouldn't fall
+		// apart if a future server raises it for another binding.
+		headline := "the credentials in use are bound to a different workspace than the one selected"
+		switch {
+		case key != "" && workspace != "":
+			headline = fmt.Sprintf("project key %q lives in another workspace than --workspace %s", key, workspace)
+		case key != "":
+			headline = fmt.Sprintf("project key %q lives in another workspace than the one selected", key)
+		case workspace != "":
+			headline = fmt.Sprintf("the credentials in use are bound to a different workspace than --workspace %s", workspace)
+		}
+		return apiGuidance{
+			headline: headline,
+			remedy: "a project key pins its own workspace, so drop --workspace / $SPRAWL_WORKSPACE " +
+				"(the key already selects it) or drop the key to work workspace-wide",
+		}, true
+	case "workspace_required":
+		return apiGuidance{
+			headline: "this agent key isn't bound to a workspace any more",
+			remedy: fmt.Sprintf("its workspace was deleted — pass --workspace <id> (see `%s workspace list`) "+
+				"or export SPRAWL_PROJECT_KEY to work inside a project", build.AppName),
+		}, true
+	case "not_found":
+		// A bare 404 under a selector can't say whether the id or the workspace
+		// was the miss — the server never leaks which workspaces exist — so
+		// name both possibilities. Without a selector the code speaks for itself.
+		if workspace == "" {
+			return apiGuidance{}, false
+		}
+		return apiGuidance{
+			headline: fmt.Sprintf("not found in workspace %s", workspace),
+			remedy: fmt.Sprintf("either the id isn't in that workspace, or workspace %s isn't one you can reach — "+
+				"check `%s workspace list`", workspace, build.AppName),
+		}, true
 	case "unauthenticated":
 		return apiGuidance{
 			headline: "bearer token rejected",

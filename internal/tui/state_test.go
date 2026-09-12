@@ -17,7 +17,7 @@ import (
 func newChecklistModel(fc *fakeClient, task *client.Task) *Model {
 	m := newModel(context.Background(), Deps{
 		LoggedIn: true, Secret: "sek", SecretProvided: true,
-		NewClient: func(string, string) Client { return fc },
+		NewClient: func(string, string, string) Client { return fc },
 	})
 	m.width, m.height = 100, 30
 	m.Update(tasksLoadedMsg{tasks: []*client.Task{task}, validated: true})

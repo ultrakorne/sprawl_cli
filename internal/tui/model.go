@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ type pickerKind int
 const (
 	pickDue pickerKind = iota
 	pickProject
+	pickWorkspace
 )
 
 type pickerItem struct {
@@ -78,7 +80,7 @@ type Model struct {
 	ctx    context.Context
 	styles styles
 
-	newClient func(secret, projectKey string) Client
+	newClient func(secret, projectKey, workspace string) Client
 	client    Client
 	secret    string
 	loggedIn  bool
@@ -87,6 +89,15 @@ type Model struct {
 	// comes from the flag/env or from the credentials prompt, and the list
 	// header shows it.
 	projectKey string
+	// workspace is the selected workspace id (empty = the factors' default),
+	// from the flag/env or the `w` picker. wsCurrent / wsList are what whoami
+	// last reported: the workspace the session runs in (the selection resolved
+	// against the reachable list, else the server's default) and every
+	// reachable workspace. Both are nil until the first whoami lands, and stay
+	// nil on a pre-workspaces server — the header then simply omits the name.
+	workspace string
+	wsCurrent *client.Workspace
+	wsList    []client.Workspace
 
 	width, height int
 
@@ -153,6 +164,7 @@ func newModel(ctx context.Context, deps Deps) *Model {
 		newClient:  deps.NewClient,
 		loggedIn:   deps.LoggedIn,
 		projectKey: deps.ProjectKey,
+		workspace:  deps.Workspace,
 	}
 	switch {
 	case !deps.LoggedIn:
@@ -163,7 +175,7 @@ func newModel(ctx context.Context, deps Deps) *Model {
 		// 401/403 drops to the credentials prompt, where either factor can be
 		// (re-)entered.
 		m.secret = deps.Secret
-		m.client = m.newClient(deps.Secret, deps.ProjectKey)
+		m.client = m.newClient(deps.Secret, deps.ProjectKey, deps.Workspace)
 		m.stack = []screen{screenList}
 		m.loading = true
 		m.initCmd = validateAndListCmd(ctx, m.client)
@@ -256,13 +268,17 @@ func (m *Model) clampItemSel() {
 
 // -- status -----------------------------------------------------------------
 
-// setTransient sets a footer status that auto-clears after ~2.5s. The token
-// guards against a stale timer wiping a newer status.
+// transientTTL is how long a transient footer status stays up. A variable so
+// tests that drain every command can shorten the timer instead of sleeping.
+var transientTTL = 2500 * time.Millisecond
+
+// setTransient sets a footer status that auto-clears after transientTTL. The
+// token guards against a stale timer wiping a newer status.
 func (m *Model) setTransient(text string) tea.Cmd {
 	m.status = text
 	m.statusErr = false
 	m.statusTok++
-	return clearStatusAfter(m.statusTok, 2500*time.Millisecond)
+	return clearStatusAfter(m.statusTok, transientTTL)
 }
 
 // setError sets a persistent footer error (cleared by the next status). The
@@ -377,6 +393,73 @@ func (m *Model) distinctProjects() []pickerItem {
 		}
 		seen[t.Project.ID] = true
 		out = append(out, pickerItem{label: t.Project.Name, value: strconv.FormatInt(t.Project.ID, 10)})
+	}
+	return out
+}
+
+// -- workspaces -------------------------------------------------------------
+
+// stale reports whether a response came from a client this session no longer
+// uses — the workspace switch and the credentials prompt both replace
+// m.client, and a list or whoami answer issued before that would otherwise
+// land under the new workspace's header. Messages from before the client
+// existed (from == nil) are never stale.
+func (m *Model) stale(from Client) bool {
+	return from != nil && from != m.client
+}
+
+// wsName is the workspace's display name, with the same fallback the CLI's
+// tables use so a nameless workspace never renders as an empty gap.
+func wsName(ws *client.Workspace) string {
+	if ws == nil || strings.TrimSpace(ws.Name) == "" {
+		return "(unnamed)"
+	}
+	return ws.Name
+}
+
+// applyWhoami records what the server said about workspaces. The current one
+// is the selection resolved against the reachable list — whoami is user-level
+// and doesn't take the selector, so its `workspace` is only the default. A
+// selection that isn't in the list leaves wsCurrent nil: the header shows
+// nothing rather than the wrong name, and the list fetch's 404 says the rest.
+func (m *Model) applyWhoami(w *client.Whoami) {
+	if w == nil {
+		return
+	}
+	m.wsList = w.Workspaces
+	m.wsCurrent = resolveWorkspace(w, m.workspace)
+}
+
+// resolveWorkspace is applyWhoami's pure core: the reachable workspace whose
+// id matches `selected`, or the server's default when nothing is selected.
+func resolveWorkspace(w *client.Whoami, selected string) *client.Workspace {
+	if selected == "" {
+		return w.Workspace
+	}
+	for i := range w.Workspaces {
+		if itoa(w.Workspaces[i].ID) == selected {
+			return &w.Workspaces[i]
+		}
+	}
+	return nil
+}
+
+// workspacePickerItems lists the reachable workspaces for the `w` picker:
+// name, then the user's role and the key's level there, so a workspace the
+// key can't reach (level none — every list there would be empty) is visible
+// before it's chosen. The current one is marked; selecting it is a no-op.
+func workspacePickerItems(list []client.Workspace, current *client.Workspace) []pickerItem {
+	out := make([]pickerItem, 0, len(list))
+	for i := range list {
+		ws := &list[i]
+		label := fmt.Sprintf("%s  #%d · %s", wsName(ws), ws.ID, ws.Role)
+		if ws.Level != "" && ws.Level != ws.Role {
+			label += " · " + ws.Level
+		}
+		if current != nil && ws.ID == current.ID {
+			label += "  (current)"
+		}
+		out = append(out, pickerItem{label: label, value: itoa(ws.ID)})
 	}
 	return out
 }

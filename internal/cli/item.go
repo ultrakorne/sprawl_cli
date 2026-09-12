@@ -442,7 +442,7 @@ func runItemDelete(ctx context.Context, stdout, stderr io.Writer, itemID string,
 		existed = false
 	}
 	payload := map[string]any{"id": itemID, "deleted": true, "existed": existed}
-	return renderPayload(stdout, payload, deletedText("item", itemID, existed, resolveProjectKey(opts)), opts)
+	return renderPayload(stdout, payload, deletedText("item", itemID, existed, resolveProjectKey(opts), c.Workspace()), opts)
 }
 
 // -- write rendering --------------------------------------------------------

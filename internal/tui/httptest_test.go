@@ -29,8 +29,8 @@ func TestModel_WithRealClientOverHTTPTest(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("SPRAWL_API_URL", srv.URL)
 
-	newClient := func(secret, key string) Client {
-		return client.NewAuthed("tok", secret, client.WithProjectKey(key))
+	newClient := func(secret, key, workspace string) Client {
+		return client.NewAuthed("tok", secret, client.WithProjectKey(key), client.WithWorkspace(workspace))
 	}
 
 	// Wrong secret from env → validation fetch → 401 → credentials prompt.

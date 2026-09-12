@@ -36,6 +36,7 @@ type Client struct {
 	token      string // empty for device-flow calls
 	secret     string // empty for device-flow calls
 	projectKey string // empty ⇒ no project confinement
+	workspace  string // empty ⇒ the server's default workspace for these factors
 	http       *http.Client
 }
 
@@ -50,6 +51,17 @@ type Option func(*Client)
 // so callers can pass a resolved-but-possibly-empty value unconditionally.
 func WithProjectKey(key string) Option {
 	return func(c *Client) { c.projectKey = key }
+}
+
+// WithWorkspace selects the workspace every workspace-bound request operates
+// in, by id. On the wire it is a path prefix — `/api/v1/workspaces/<id>/tasks`
+// instead of `/api/v1/tasks` — because the server models a workspace as a
+// resource, not a credential: selection changes which canvas the scope runs
+// in and nothing about permission. User-level routes (whoami, workspaces,
+// settings) are never prefixed. The empty string is a no-op, so callers can
+// pass a resolved-but-possibly-empty value unconditionally.
+func WithWorkspace(id string) Option {
+	return func(c *Client) { c.workspace = id }
 }
 
 // BaseURL returns the effective API URL: SPRAWL_API_URL env override, then
@@ -82,6 +94,23 @@ func NewAuthed(token, agentSecret string, opts ...Option) *Client {
 // ProjectKey returns the project key this client confines requests to, or ""
 // when it sends none.
 func (c *Client) ProjectKey() string { return c.projectKey }
+
+// Workspace returns the workspace id this client operates in, or "" when it
+// leaves the choice to the server (the factors' default workspace).
+func (c *Client) Workspace() string { return c.workspace }
+
+// scoped returns the path for a workspace-bound endpoint: `rest` (which starts
+// with "/", e.g. "/tasks") under `/api/v1`, or under
+// `/api/v1/workspaces/<id>` when a workspace is selected. Every task, checklist
+// item and activity route is mounted at both; the prefix only decides which
+// workspace the scope operates in. Ids are per-workspace, so an id obtained
+// under a selector must be addressed under the same selector.
+func (c *Client) scoped(rest string) string {
+	if c.workspace == "" {
+		return "/api/v1" + rest
+	}
+	return "/api/v1/workspaces/" + url.PathEscape(c.workspace) + rest
+}
 
 // DeviceGrant is the response from POST /api/auth/device.
 type DeviceGrant struct {
@@ -177,12 +206,34 @@ type WhoamiProject struct {
 	GithubURL string `json:"github_url"`
 }
 
+// Workspace is the one-line summary the server uses for a workspace in both
+// `whoami` and `GET /api/v1/workspaces`. Role is the calling *user's* standing
+// there (`owner`, or the membership level of a shared workspace); Level is what
+// the presented credentials actually resolve to once the agent key's binding
+// and any project confinement are applied — a workspace-bound key reads
+// "none" on every workspace but its own, and under a project key every
+// workspace reads "none" because confinement rules out workspace-wide work.
+type Workspace struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+	Level string `json:"level"`
+}
+
 // Whoami mirrors GET /api/v1/whoami. The wire payload also carries
 // `"status":"ok"`; we drop it on decode since it adds no information beyond
 // the 200. Project is nil when the request carried no project key (and on a
-// pre-project-keys server, which omits the field entirely).
+// pre-project-keys server, which omits the field entirely). Workspace is the
+// workspace these factors resolve to by default — the confined project's,
+// else the agent key's own — and Workspaces is every workspace the user can
+// reach; both are nil on a pre-workspaces server. whoami is a user-level
+// route, so neither reflects a `WithWorkspace` selection: the CLI resolves a
+// selected id against Workspaces itself. ProjectPermissions is what older
+// servers report instead; nil when the server omits it.
 type Whoami struct {
 	Agent              Agent               `json:"agent"`
+	Workspace          *Workspace          `json:"workspace"`
+	Workspaces         []Workspace         `json:"workspaces"`
 	Project            *WhoamiProject      `json:"project"`
 	ProjectPermissions []ProjectPermission `json:"project_permissions"`
 }
@@ -368,7 +419,7 @@ type checklistItemEnvelope struct {
 
 func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
 	var env tasksEnvelope
-	if err := c.do(ctx, http.MethodGet, "/api/v1/tasks", nil, &env); err != nil {
+	if err := c.do(ctx, http.MethodGet, c.scoped("/tasks"), nil, &env); err != nil {
 		return nil, err
 	}
 	return env.Tasks, nil
@@ -379,7 +430,7 @@ func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
 // the server — the CLI doesn't pre-validate so the server stays the single
 // source of truth for input rules.
 func (c *Client) SearchTasks(ctx context.Context, query string) ([]*Task, error) {
-	path := "/api/v1/tasks/search?" + url.Values{"q": []string{query}}.Encode()
+	path := c.scoped("/tasks/search") + "?" + url.Values{"q": []string{query}}.Encode()
 	var env tasksEnvelope
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
@@ -396,7 +447,7 @@ func (c *Client) SearchTasks(ctx context.Context, query string) ([]*Task, error)
 // Without it the response shape is unchanged (checklist_progress counts only).
 func (c *Client) GetTask(ctx context.Context, id string, full bool) (*Task, error) {
 	var env taskEnvelope
-	path := "/api/v1/tasks/" + url.PathEscape(id)
+	path := c.scoped("/tasks/" + url.PathEscape(id))
 	if full {
 		path += "?full=true"
 	}
@@ -445,7 +496,7 @@ type ItemTask struct {
 // invalid_date_params, but the CLI catches it earlier so the message is
 // crisper. Empty strings for both ⇒ today in the user's timezone.
 func (c *Client) GetActivityLog(ctx context.Context, date, daysAgo string) (*ActivityLog, error) {
-	path := "/api/v1/activity_log"
+	path := c.scoped("/activity_log")
 	params := url.Values{}
 	if date != "" {
 		params.Set("date", date)
@@ -485,7 +536,7 @@ func (c *Client) GetActivityLog(ctx context.Context, date, daysAgo string) (*Act
 func (c *Client) CreateTask(ctx context.Context, attrs map[string]any) (*Task, error) {
 	body := map[string]any{"task": attrs}
 	var env taskEnvelope
-	if err := c.do(ctx, http.MethodPost, "/api/v1/tasks", body, &env); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.scoped("/tasks"), body, &env); err != nil {
 		return nil, err
 	}
 	return env.Task, nil
@@ -497,7 +548,7 @@ func (c *Client) CreateTask(ctx context.Context, attrs map[string]any) (*Task, e
 func (c *Client) UpdateTask(ctx context.Context, id string, attrs map[string]any) (*Task, error) {
 	body := map[string]any{"task": attrs}
 	var env taskEnvelope
-	path := "/api/v1/tasks/" + url.PathEscape(id)
+	path := c.scoped("/tasks/" + url.PathEscape(id))
 	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
 		return nil, err
 	}
@@ -514,7 +565,7 @@ func (c *Client) SetTaskDueDate(ctx context.Context, id string, due *string) (*T
 	// nil pointer marshals as JSON null, which is the wire signal to clear.
 	body := map[string]any{"due": due}
 	var env taskEnvelope
-	path := "/api/v1/tasks/" + url.PathEscape(id) + "/due_date"
+	path := c.scoped("/tasks/" + url.PathEscape(id) + "/due_date")
 	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
 		return nil, err
 	}
@@ -526,7 +577,7 @@ func (c *Client) SetTaskDueDate(ctx context.Context, id string, due *string) (*T
 func (c *Client) CreateChecklistItem(ctx context.Context, taskID string, attrs map[string]any) (*ChecklistItem, error) {
 	body := map[string]any{"checklist_item": attrs}
 	var env checklistItemEnvelope
-	path := "/api/v1/tasks/" + url.PathEscape(taskID) + "/checklist"
+	path := c.scoped("/tasks/" + url.PathEscape(taskID) + "/checklist")
 	if err := c.do(ctx, http.MethodPost, path, body, &env); err != nil {
 		return nil, err
 	}
@@ -539,7 +590,7 @@ func (c *Client) CreateChecklistItem(ctx context.Context, taskID string, attrs m
 func (c *Client) SetChecklistItemCompleted(ctx context.Context, itemID string, completed bool) (*ChecklistItem, error) {
 	body := map[string]bool{"completed": completed}
 	var env checklistItemEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/completed"
+	path := c.scoped("/checklist_items/" + url.PathEscape(itemID) + "/completed")
 	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
 		return nil, err
 	}
@@ -564,7 +615,7 @@ func (c *Client) SetChecklistItemCompleted(ctx context.Context, itemID string, c
 // (`invalid_state`, `invalid_pr_number`, or neither key present) / 404 / 403.
 func (c *Client) SetChecklistItemState(ctx context.Context, itemID string, attrs map[string]any) (*ChecklistItem, error) {
 	var env checklistItemEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID) + "/state"
+	path := c.scoped("/checklist_items/" + url.PathEscape(itemID) + "/state")
 	if err := c.do(ctx, http.MethodPatch, path, attrs, &env); err != nil {
 		return nil, err
 	}
@@ -603,7 +654,7 @@ type itemDetailEnvelope struct {
 // exist. Both surface as APIError.
 func (c *Client) GetChecklistItem(ctx context.Context, itemID string) (*ItemDetail, error) {
 	var env itemDetailEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID)
+	path := c.scoped("/checklist_items/" + url.PathEscape(itemID))
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
 	}
@@ -628,7 +679,7 @@ func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, fu
 	if full {
 		params.Set("full", "true")
 	}
-	path := "/api/v1/checklist_items?" + params.Encode()
+	path := c.scoped("/checklist_items") + "?" + params.Encode()
 	var env queueEnvelope
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err
@@ -643,7 +694,7 @@ func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, fu
 func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs map[string]any) (*ChecklistItem, error) {
 	body := map[string]any{"checklist_item": attrs}
 	var env checklistItemEnvelope
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID)
+	path := c.scoped("/checklist_items/" + url.PathEscape(itemID))
 	if err := c.do(ctx, http.MethodPatch, path, body, &env); err != nil {
 		return nil, err
 	}
@@ -656,7 +707,7 @@ func (c *Client) UpdateChecklistItem(ctx context.Context, itemID string, attrs m
 // APIError; the CLI layer is responsible for translating 404 "not_found"
 // into idempotent success when desired.
 func (c *Client) DeleteTask(ctx context.Context, id string) error {
-	path := "/api/v1/tasks/" + url.PathEscape(id)
+	path := c.scoped("/tasks/" + url.PathEscape(id))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
@@ -664,7 +715,7 @@ func (c *Client) DeleteTask(ctx context.Context, id string) error {
 // No Content on success and recomputes the parent task's completed_at.
 // Same 204/404 contract as DeleteTask.
 func (c *Client) DeleteChecklistItem(ctx context.Context, itemID string) error {
-	path := "/api/v1/checklist_items/" + url.PathEscape(itemID)
+	path := c.scoped("/checklist_items/" + url.PathEscape(itemID))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
