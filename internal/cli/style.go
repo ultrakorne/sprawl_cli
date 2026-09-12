@@ -19,7 +19,7 @@ import (
 // running — `lipgloss.Color("2")` is "the terminal's green", not a specific
 // shade we picked.
 //
-// Styling is ONLY ever emitted on the text path. JSON and TOON are machine
+// Styling is ONLY ever emitted on the text path. JSON is a machine
 // formats and never touch these styles (see output.go: renderPayload/reportErr
 // only style the FormatText branch). On a non-terminal — a pipe, a file, a
 // test buffer, or when $NO_COLOR is set — the colorprofile.Writer in output.go
@@ -46,7 +46,7 @@ var sty = newStyler()
 // a process-level switch (terminal color is a property of the process's stdout,
 // not of an individual command) set once per Execute by enableStylingFor. It
 // stays false unless we're writing text-format output to an actual terminal, so:
-//   - json/toon output is never styled (resolveFormat won't be text),
+//   - json output is never styled (resolveFormat won't be text),
 //   - piped / redirected / file output stays plain,
 //   - unit tests that call the text builders directly (no Execute) see plain
 //     strings and their substring assertions keep matching.

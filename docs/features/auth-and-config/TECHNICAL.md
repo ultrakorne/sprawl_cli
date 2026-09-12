@@ -14,7 +14,7 @@
 | `internal/client/client.go` | `BaseURL`, `CreateDeviceGrant`, `PollDeviceToken` (typed `DevicePollError`), authed client constructor + `WithProjectKey` option. |
 | `internal/cli/login.go` | Device-flow command: grant → print URLs → poll → persist token. |
 | `internal/cli/auth.go` | `resolveToken`, `resolveAgentSecret`, `resolveProjectKey`, `newAuthedClient` (bearer + ≥1 narrowing factor), `newUserScopedClient` (agent-secret-only path for user-level writes). |
-| `internal/cli/output.go` | `explainAPIError` — maps the auth / scope error codes to a plain-language headline + remedy (text) and a `hint` key (json / toon). |
+| `internal/cli/output.go` | `explainAPIError` — maps the auth / scope error codes to a plain-language headline + remedy (text) and a `hint` key (json). |
 | `Makefile` | Encodes the ldflags for `build` / `build-dev` / `build-all`. |
 | `.goreleaser.yaml` | Mirrors the Makefile ldflags for release builds (stub — `release:` / `brews:` stanzas still commented out). |
 
@@ -50,7 +50,7 @@ A 404 under a project key is still possible (the record is genuinely gone), and 
 
 ## Error-code guidance
 
-`explainAPIError` (in `internal/cli/output.go`) covers the failures a user can fix from the shell. Text output replaces the raw `http 403: <code>` line with the headline and prints the remedy indented beneath it; json / toon keep `status` / `error` / `http_status` unchanged and add a `hint` string (`headline — remedy`). Codes without guidance (404s, changeset failures, transport errors) render exactly as before, with no `hint` key.
+`explainAPIError` (in `internal/cli/output.go`) covers the failures a user can fix from the shell. Text output replaces the raw `http 403: <code>` line with the headline and prints the remedy indented beneath it; json keeps `status` / `error` / `http_status` unchanged and adds a `hint` string (`headline — remedy`). Codes without guidance (404s, changeset failures, transport errors) render exactly as before, with no `hint` key.
 
 | Status | `error` | Headline |
 |---|---|---|

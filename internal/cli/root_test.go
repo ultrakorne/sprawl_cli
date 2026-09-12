@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -59,5 +61,47 @@ func TestTextArgs_PassesThroughWhenValid(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr should be empty when Args passes, got %q", stderr.String())
+	}
+}
+
+// TestRootCmd_InvalidFormatIsLoudAndPreHTTP locks in two things that were
+// previously broken together: an unusable --format / $SPRAWL_OUTPUT must (a)
+// tell the user, and (b) fail before the request goes out.
+//
+// (a) Every subcommand sets SilenceErrors=true, so an error returned out of
+// PersistentPreRunE is swallowed by cobra — the user got an empty exit 1.
+// (b) The format used to be resolved at render time, i.e. *after* the HTTP
+// call, so a bad value on a mutating command let the write land server-side
+// and still exited non-zero — indistinguishable, to a caller that retries on
+// failure, from a write that never happened.
+func TestRootCmd_InvalidFormatIsLoudAndPreHTTP(t *testing.T) {
+	for _, tc := range []struct{ name, format, wantMsg string }{
+		// toon was the default until it was removed; it gets a migration hint.
+		{"removed toon", "toon", "was removed"},
+		{"never valid", "yaml", "invalid format"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatalf("request escaped before format validation: %s %s", r.Method, r.URL.Path)
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("SPRAWL_API_URL", srv.URL)
+			t.Setenv("SPRAWL_TOKEN", "the-token")
+			t.Setenv("SPRAWL_AGENT_SECRET", "the-secret")
+			t.Setenv("SPRAWL_NO_UPDATE_CHECK", "1")
+
+			root := NewRootCmd()
+			var stdout, stderr bytes.Buffer
+			root.SetOut(&stdout)
+			root.SetErr(&stderr)
+			root.SetArgs([]string{"whoami", "--format=" + tc.format})
+
+			if err := root.Execute(); err == nil {
+				t.Fatal("expected a non-zero exit for an invalid format")
+			}
+			if !strings.Contains(stderr.String(), tc.wantMsg) {
+				t.Fatalf("stderr should explain the bad format, got %q", stderr.String())
+			}
+		})
 	}
 }

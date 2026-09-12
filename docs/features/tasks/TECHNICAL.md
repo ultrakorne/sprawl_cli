@@ -15,7 +15,7 @@
 
 ## Wire Shapes
 
-Envelopes: `{"task": {…}}` for single-task responses, `{"tasks": [...]}` for lists. The CLI preserves the envelopes in JSON / TOON output. Key fields on a task: `id`, `title`, `description`, `status`, `due_date`, `project`, `checklist_progress`, `created_by`, `last_actor`.
+Envelopes: `{"task": {…}}` for single-task responses, `{"tasks": [...]}` for lists. The CLI preserves the envelopes in JSON output. Key fields on a task: `id`, `title`, `description`, `status`, `due_date`, `project`, `checklist_progress`, `created_by`, `last_actor`.
 
 The nested `project` object carries `id`, `name`, `key`, `color`, and `github_url`. `key` and `github_url` are additive; `projectMap` emits both unconditionally, with `github_url` as a literal `null` when the project has no repo — which is also what a pre-rollout server's absent field decodes to, so consumers branch on one condition rather than two. `github_url` is validated server-side to be exactly `https://github.com/<owner>/<repo>`, and is what turns an item's `pr_number` into a link (see [item-state-and-pr](../item-state-and-pr/TECHNICAL.md)). Task `status` is derived from checked counts and is **not** the same thing as an item's hand-set `state`. On the wire both could read `in_progress`; in CLI output they can't, because item states are emitted short-form (`progress`) — see [CONTEXT.md](../../CONTEXT.md).
 

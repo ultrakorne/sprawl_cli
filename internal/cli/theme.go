@@ -80,7 +80,7 @@ func runThemeSet(ctx context.Context, stdout, stderr io.Writer, id string, opts 
 
 // renderThemePayload mirrors the server envelope on the wire: flat
 // `{"theme": "<id>"}`. The text fallback is passed in by the caller so `get`
-// and `set` can give distinct human-friendly lines while json/toon output
+// and `set` can give distinct human-friendly lines while json output
 // stays identical.
 func renderThemePayload(out io.Writer, id, textFallback string, opts *runtimeOpts) error {
 	payload := map[string]any{"theme": id}

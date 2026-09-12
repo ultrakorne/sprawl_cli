@@ -73,7 +73,7 @@ The fields are additive everywhere else, and render as nothing when unset:
 
 - Every item table carries a `STATE` column rendering the state **icon** — the same glyph the TUI shows, from the shared `internal/icons` — and a `PR` column rendering `#412`. `queue` drops `STATE`, because the state is its query and lives in the heading instead.
 - The `PR` cell is an OSC 8 hyperlink wherever the chain resolves, so a ctrl/cmd-click opens the pull request. Where it doesn't (no project, or no repo URL on it) the number is still shown, just inert.
-- json / toon payloads always carry `state` and `pr_number` keys, `null` when unset — so a consumer never has to distinguish "absent" from "cleared".
+- json payloads always carry `state` and `pr_number` keys, `null` when unset — so a consumer never has to distinguish "absent" from "cleared".
 
 ### Interactive TUI
 

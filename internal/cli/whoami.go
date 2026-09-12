@@ -44,8 +44,8 @@ func runWhoami(ctx context.Context, stdout, stderr io.Writer, opts *runtimeOpts)
 }
 
 // whoamiPayload preserves the wire shape (`status: ok`, `agent`, `project`,
-// `project_permissions`) for json / toon. We re-encode `agent` as a map so
-// gotoon and json see the same structure other commands hand them.
+// `project_permissions`) for json. We re-encode `agent` as a map so
+// json sees the same structure other commands hand them.
 func whoamiPayload(w *client.Whoami) map[string]any {
 	perms := make([]any, 0, len(w.ProjectPermissions))
 	for _, p := range w.ProjectPermissions {

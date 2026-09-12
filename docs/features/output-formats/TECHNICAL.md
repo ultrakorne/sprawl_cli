@@ -8,13 +8,13 @@
 
 | File | Role |
 |------|------|
-| `internal/cli/output.go` | `resolveFormat`, `renderPayload`, `reportErr`, JSON / TOON encoders, and `writeHuman` (the colorprofile write choke point). |
+| `internal/cli/output.go` | `resolveFormat`, `renderPayload`, `reportErr`, the JSON encoder, and `writeHuman` (the colorprofile write choke point). |
 | `internal/cli/root.go` | Registers the persistent `--format` and `-h`/`--human` flags, reads `SPRAWL_OUTPUT`, reclaims `-h` from cobra's help, and calls `enableStylingFor` in `PersistentPreRunE`. |
 | `internal/cli/style.go` | `styler` (lipgloss styles), `stylesEnabled` gate, `statusStyle` / `checkboxStyle`, and `renderTable` (color-aware aligned tables). |
 
 ## Noteworthy Behavior
 
-- **Typed structs never reach the renderer.** Client functions return `*client.Task` / `*client.ChecklistItem` / `*client.ItemDetail`, but the CLI layer converts them via `taskMap` / `itemMap` / `itemTaskMap` / `actorMap` / `projectMap` so the rendered shape is stable across all three formats. Null server fields (`project`, `created_by`, `last_actor`) surface as literal `nil` in TOON and `null` in JSON.
+- **Typed structs never reach the renderer.** Client functions return `*client.Task` / `*client.ChecklistItem` / `*client.ItemDetail`, but the CLI layer converts them via `taskMap` / `itemMap` / `itemTaskMap` / `actorMap` / `projectMap` so the rendered shape is stable across both formats. Null server fields (`project`, `created_by`, `last_actor`) surface as `null` in JSON.
 - **`itemMap` is the only builder of an item payload**, shared by `task <id>`, `item <id>` and `queue`. It deliberately does **not** pass the server's item through unchanged:
   - `state` is emitted **short-form** — `ready` / `progress` / `review` / `null`, never `ready_to_pickup` etc. Input still accepts both spellings (Postel; it costs one map lookup that already exists). This is what keeps an item's state from colliding with a task's `status`, which really is `in_progress`. A consumer diffing CLI json against a PubSub payload or the web app will see `progress` vs `in_progress` — that divergence is deliberate.
   - `pr_url` is **added** — `client.PRURL` applied to whichever project the view has in hand. `null` when the item has no PR number, the task has no project, or the project has no repo URL; none of the three is an error. Building it centrally is the point of the project riding along at all: every consumer would otherwise concatenate it by hand, and the "render it unlinked" rule is easy to get wrong.
@@ -31,7 +31,6 @@
 
 ## Dependencies
 
-- `github.com/alpkeskin/gotoon` — TOON renderer.
 - `charm.land/lipgloss/v2` — text styling (ANSI palette colors, bold/faint).
 - `github.com/charmbracelet/colorprofile` — profile detection + escape stripping at write time (`writeHuman`).
 - `github.com/charmbracelet/x/term` — strict TTY check for the styling gate.

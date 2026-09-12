@@ -38,14 +38,39 @@ func TestResolveFormat_EnvWhenFlagUnset(t *testing.T) {
 	}
 }
 
-func TestResolveFormat_DefaultIsTOON(t *testing.T) {
+func TestResolveFormat_DefaultIsJSON(t *testing.T) {
 	t.Setenv("SPRAWL_OUTPUT", "")
 	f, err := resolveFormat(optsWith(""))
 	if err != nil {
 		t.Fatalf("resolveFormat: %v", err)
 	}
-	if f != FormatTOON {
-		t.Fatalf("format = %q, want toon", f)
+	if f != FormatJSON {
+		t.Fatalf("format = %q, want json", f)
+	}
+}
+
+// TOON was the default format once. It must now be rejected rather than
+// silently remapped to json — a caller asking for toon and getting a
+// different shape back is worse than a clear failure. The env path is the one
+// that actually bites (a pinned SPRAWL_OUTPUT in an .envrc or CI job), so it
+// is covered alongside the flag.
+func TestResolveFormat_TOONRejected(t *testing.T) {
+	for _, tc := range []struct{ name, flag, env string }{
+		{"flag", "toon", ""},
+		{"env", "", "toon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SPRAWL_OUTPUT", tc.env)
+			_, err := resolveFormat(optsWith(tc.flag))
+			if err == nil {
+				t.Fatal("expected error for removed toon format")
+			}
+			// The message must name the replacement: this is the one wrong
+			// value we can tell the user how to fix.
+			if !strings.Contains(err.Error(), "json") {
+				t.Fatalf("error should point at json, got %q", err)
+			}
+		})
 	}
 }
 
@@ -76,22 +101,6 @@ func TestRenderPayload_JSON(t *testing.T) {
 	}
 	if out["status"] != "ok" {
 		t.Fatalf("output = %+v", out)
-	}
-}
-
-func TestRenderPayload_TOON(t *testing.T) {
-	var buf bytes.Buffer
-	if err := renderPayload(&buf, map[string]any{"status": "ok"}, "200 ok", optsWith("toon")); err != nil {
-		t.Fatalf("renderPayload: %v", err)
-	}
-	// TOON is its own format — we don't re-parse it, just assert the
-	// payload substring is present and we didn't emit the text fallback.
-	s := buf.String()
-	if !strings.Contains(s, "status") || !strings.Contains(s, "ok") {
-		t.Fatalf("toon output missing fields: %q", s)
-	}
-	if strings.TrimSpace(s) == "200 ok" {
-		t.Fatalf("toon rendered the text fallback: %q", s)
 	}
 }
 
@@ -190,22 +199,25 @@ func TestReportErr_ChangesetErrorsSurfaceDetails(t *testing.T) {
 	}
 }
 
-// TestReportErr_TOON_APIError covers the previously unasserted FormatTOON
-// branch of reportErr. Shape is loose (TOON is its own syntax) — we just
-// assert the key fields made it into the emitted payload on stdout and that
-// stderr stayed clean.
-func TestReportErr_TOON_APIError(t *testing.T) {
+// TestReportErr_DefaultFormat_APIError covers the structured branch of
+// reportErr when no --format is given: the payload lands on stdout as JSON
+// and stderr stays clean.
+func TestReportErr_DefaultFormat_APIError(t *testing.T) {
+	t.Setenv("SPRAWL_OUTPUT", "")
 	var stdout, stderr bytes.Buffer
 	apiErr := &client.APIError{Status: 404, Code: "not_found", Body: `{"error":"not_found"}`}
-	_ = reportErr(&stdout, &stderr, apiErr, optsWith("toon"))
+	_ = reportErr(&stdout, &stderr, apiErr, optsWith(""))
 	if stderr.Len() != 0 {
-		t.Fatalf("stderr should be empty for TOON, got %q", stderr.String())
+		t.Fatalf("stderr should be empty for json, got %q", stderr.String())
 	}
-	s := stdout.String()
-	if !strings.Contains(s, "error") || !strings.Contains(s, "not_found") {
-		t.Fatalf("toon error payload missing fields: %q", s)
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("not valid JSON: %v (%q)", err, stdout.String())
 	}
-	if !strings.Contains(s, "http_status") || !strings.Contains(s, "404") {
-		t.Fatalf("toon error payload missing http_status: %q", s)
+	if out["error"] != "not_found" {
+		t.Fatalf("error = %v", out["error"])
+	}
+	if out["http_status"] != float64(404) {
+		t.Fatalf("http_status = %v", out["http_status"])
 	}
 }

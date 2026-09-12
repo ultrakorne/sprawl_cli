@@ -28,7 +28,7 @@ func newItemCmd(opts *runtimeOpts) *cobra.Command {
 			"expanded and there is no --full. Use the `add`, `update`, `check`, `uncheck`, " +
 			"`state`, `pr` and `delete` subcommands to mutate items.\n\n" +
 			"The human view shows the item alone, with no parent-task context — an item id " +
-			"is what you asked about, so an item is what you get. --format=json|toon " +
+			"is what you asked about, so an item is what you get. --format=json " +
 			"additionally carries a `task` stub (id, title, project) if you need to get back " +
 			"to the task.\n\n" +
 			"Permission is inherited from the parent task: 403 when the caller can't read it " +
@@ -120,7 +120,7 @@ func runItemShow(ctx context.Context, stdout, stderr io.Writer, itemID string, o
 	return renderPayload(stdout, payload, itemDetailText(it), opts)
 }
 
-// itemDetailMap is `item <id>`'s json/toon shape: the shared item map with notes
+// itemDetailMap is `item <id>`'s json shape: the shared item map with notes
 // always on, plus the parent-task stub. The stub is not rendered in the human
 // view but it rides here because it is the only thing tying an item id back to
 // its task — and its project is what resolved pr_url.
@@ -448,7 +448,7 @@ func runItemDelete(ctx context.Context, stdout, stderr io.Writer, itemID string,
 // -- write rendering --------------------------------------------------------
 
 // renderItemWrite is the shared response rendering for every write verb: the
-// `checklist_item` envelope for json/toon, and a one-line summary for humans.
+// `checklist_item` envelope for json, and a one-line summary for humans.
 // No table and no card — you already know what you changed; what you want back
 // is confirmation that it landed.
 //

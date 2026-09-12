@@ -237,7 +237,7 @@ func wrapLines(s string, width int) []string {
 	return out
 }
 
-// itemMap is the machine (json / toon) shape of one item — the single builder
+// itemMap is the machine (json) shape of one item — the single builder
 // behind `task <id>`, `item <id>` and `queue`.
 //
 // Three things differ from what the server sends, deliberately:

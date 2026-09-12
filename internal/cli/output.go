@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alpkeskin/gotoon"
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/ultrakorne/sprawl_cli/internal/build"
@@ -20,11 +19,10 @@ type Format string
 const (
 	FormatText Format = "text"
 	FormatJSON Format = "json"
-	FormatTOON Format = "toon"
 )
 
 // resolveFormat picks the output format in this order:
-// --format flag → -h/--human → SPRAWL_OUTPUT env → toon.
+// --format flag → -h/--human → SPRAWL_OUTPUT env → json.
 // An explicit --format wins over -h so `--format=json -h` stays json.
 func resolveFormat(opts *runtimeOpts) (Format, error) {
 	v := strings.ToLower(strings.TrimSpace(opts.format))
@@ -35,13 +33,19 @@ func resolveFormat(opts *runtimeOpts) (Format, error) {
 		v = strings.ToLower(strings.TrimSpace(os.Getenv("SPRAWL_OUTPUT")))
 	}
 	if v == "" {
-		return FormatTOON, nil
+		return FormatJSON, nil
 	}
 	switch Format(v) {
-	case FormatText, FormatJSON, FormatTOON:
+	case FormatText, FormatJSON:
 		return Format(v), nil
+	case "toon":
+		// TOON was the default until it was removed. It is NOT accepted as an
+		// alias — a silent remap would hand back a different shape than the
+		// caller asked for — but a pinned `SPRAWL_OUTPUT=toon` in an .envrc or
+		// CI job is the one wrong value we can name a fix for.
+		return "", fmt.Errorf("format %q was removed; use json (the new default) or text", v)
 	default:
-		return "", fmt.Errorf("invalid format %q (want: text|json|toon)", v)
+		return "", fmt.Errorf("invalid format %q (want: text|json)", v)
 	}
 }
 
@@ -50,7 +54,7 @@ func resolveFormat(opts *runtimeOpts) (Format, error) {
 // on a pipe, a file, a test buffer, or under $NO_COLOR it strips every escape
 // sequence so the output is plain text — identical to what it was before
 // styling existed. This is the single choke point that guarantees styling
-// never reaches non-human (json/toon) output or a non-terminal.
+// never reaches non-human (json) output or a non-terminal.
 func writeHuman(w io.Writer, s string) error {
 	_, err := io.WriteString(colorprofile.NewWriter(w, os.Environ()), s)
 	return err
@@ -63,25 +67,18 @@ func renderPayload(out io.Writer, payload map[string]any, textFallback string, o
 	if err != nil {
 		return err
 	}
-	switch f {
-	case FormatText:
+	if f == FormatText {
 		return writeHuman(out, textFallback+"\n")
-	case FormatJSON:
-		return json.NewEncoder(out).Encode(payload)
-	case FormatTOON:
-		s, err := gotoon.Encode(payload)
-		if err != nil {
-			return fmt.Errorf("encode toon: %w", err)
-		}
-		_, err = fmt.Fprintln(out, s)
-		return err
 	}
-	return nil
+	// Not a switch with a bare fall-through: an unhandled format would render
+	// nothing and still exit 0. json is the only other format, and the only
+	// other thing resolveFormat can return.
+	return json.NewEncoder(out).Encode(payload)
 }
 
 // parseErrorsDetails extracts the shared changeset fallback body:
 // `{"errors": {...}}`. Returns the raw errors value (usually a field→messages
-// map) so JSON / TOON can render it directly. Returns false when the body
+// map) so JSON can render it directly. Returns false when the body
 // isn't a JSON object or doesn't carry an `errors` field.
 func parseErrorsDetails(body string) (any, bool) {
 	var parsed struct {
@@ -108,7 +105,7 @@ func isNotFoundAPIError(err error) bool {
 // apiGuidance is the human-facing reading of a documented server error code.
 // `headline` replaces the raw "http 403: invalid_project_key" as the error
 // line in text output; `remedy` is the follow-up telling the user what to do
-// about it. json / toon keep the machine-readable code and get both joined
+// about it. json keeps the machine-readable code and gets both joined
 // into an additive `hint` key.
 type apiGuidance struct{ headline, remedy string }
 
@@ -238,16 +235,6 @@ func reportErr(stdout, stderr io.Writer, err error, opts *runtimeOpts) error {
 		payload["error"] = err.Error()
 	}
 
-	switch f {
-	case FormatJSON:
-		_ = json.NewEncoder(stdout).Encode(payload)
-	case FormatTOON:
-		if s, encErr := gotoon.Encode(payload); encErr == nil {
-			fmt.Fprintln(stdout, s)
-		} else {
-			// Fall back to stderr plain if TOON encoding itself fails.
-			fmt.Fprintf(stderr, "error: %v\n", err)
-		}
-	}
+	_ = json.NewEncoder(stdout).Encode(payload)
 	return err
 }

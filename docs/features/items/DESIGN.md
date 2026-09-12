@@ -33,7 +33,7 @@ The note starts at the **`ID` column**, not under `TITLE`. Aligning it with the 
 ## Components
 
 ### `item <id>` (show)
-`GET /api/v1/checklist_items/:id`. The detail read: the note is **always** included, so there is no `--full`. Human output is one row of the shared table with the note expanded beneath it, and **no task header of any kind** — you asked about an item, you get the item. The `task` stub (id, title, project) rides in the json/toon payload, where it's the only thing tying an item id back to its task and the thing that resolved `pr_url`.
+`GET /api/v1/checklist_items/:id`. The detail read: the note is **always** included, so there is no `--full`. Human output is one row of the shared table with the note expanded beneath it, and **no task header of any kind** — you asked about an item, you get the item. The `task` stub (id, title, project) rides in the json payload, where it's the only thing tying an item id back to its task and the thing that resolved `pr_url`.
 
 ### `item add <task_id>`
 `POST /api/v1/tasks/:task_id/checklist` body `{"checklist_item":{…}}`. Flags: `--title`, `--notes`, `--from-json <path|->`. Server appends and assigns position. This is the one item verb whose argument is a **task** id — the item doesn't exist yet.
@@ -53,7 +53,7 @@ Completion isn't mutable here — use `check` / `uncheck`. Neither are state or 
 Both hit `PATCH /api/v1/checklist_items/:id/completed` with `{"completed": true|false}`. Server is idempotent — no-ops when the state already matches but still echoes the item.
 
 ### `item delete <id>`
-`DELETE /api/v1/checklist_items/:id`. **Hard delete** — the row is removed from the database, not soft-deleted, and there is no undo. As a server-side side effect the parent task's `completed_at` is recomputed in the same transaction: it flips to "done" if this was the last unchecked item, or clears if no items remain. Server broadcasts `checklist_item_deleted` on PubSub and returns 204 No Content; the CLI emits `{id, deleted: true, existed: true}` (json/toon) or `Deleted item #<id>` (text).
+`DELETE /api/v1/checklist_items/:id`. **Hard delete** — the row is removed from the database, not soft-deleted, and there is no undo. As a server-side side effect the parent task's `completed_at` is recomputed in the same transaction: it flips to "done" if this was the last unchecked item, or clears if no items remain. Server broadcasts `checklist_item_deleted` on PubSub and returns 204 No Content; the CLI emits `{id, deleted: true, existed: true}` (json) or `Deleted item #<id>` (text).
 
 A 404 `not_found` is treated as success with `existed: false`, so retries and typo'd ids are safe and still distinguishable from a real delete. A **403 is not**: the item exists and is out of reach (an id outside a project key's project), so reporting "already gone" would claim a delete that never happened.
 
@@ -72,7 +72,7 @@ $ sprawl item pr 203 412            →  ✓ item 203 → PR #412
 Task / item create / update endpoints wrap server-side validation:
 
 - Non-object nested body (e.g. `{"checklist_item": []}`) or a body missing the envelope entirely → 422 `invalid_body`. The CLI always wraps attrs in the envelope, so this guards malformed external payloads rather than anything `sprawl` itself produces.
-- Changeset failures (missing required field, etc.) → shared fallback shape `{"errors": {...}}` with no top-level `error` code; `reportErr` surfaces these as `error: "invalid"` + `details: <errors>` in json / toon output.
+- Changeset failures (missing required field, etc.) → shared fallback shape `{"errors": {...}}` with no top-level `error` code; `reportErr` surfaces these as `error: "invalid"` + `details: <errors>` in json output.
 
 ## Design Decisions
 
@@ -85,4 +85,4 @@ Task / item create / update endpoints wrap server-side validation:
 - **Piping a raw note now needs `jq`.** `note show --format=text` used to emit the body verbatim. `item <id> -h` renders a table instead, so extracting a body is `sprawl item 203 --format=json | jq -r '.checklist_item.notes'`. Accepted: the table is what a human wants, and one `jq` is a small price for one fewer command.
 - **`--full` gates the fetch *and* the render.** The plain read carries every item with `has_notes` but no bodies, which is what keeps `task <id>` cheap; `--full` sends `?full=true` and expands them. Splitting the two would mean either always paying for the bodies or never being able to see them in one call.
 - **Hard delete with no undo (and 404 = success)**: parallels `task delete`'s idempotent contract for the same retry-friendly reason, but the destruction is real — there's no trash-bin equivalent for items. Callers that want the row preserved should `item uncheck` instead. The `completed_at` flip on the parent task is intentional: removing the last unchecked item legitimately means "all remaining items are done."
-- **Synthetic `{id, deleted, existed}` payload on 204**: same reasoning as `task delete` — the server returns no body, but json / toon consumers always need a parseable envelope.
+- **Synthetic `{id, deleted, existed}` payload on 204**: same reasoning as `task delete` — the server returns no body, but json consumers always need a parseable envelope.

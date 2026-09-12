@@ -112,7 +112,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl task create` | Creates a task. Flags: `--title`, `--description`, `--project-id`, `--from-json <path\|->`. Requires `write_create` at the relevant scope — `default_permission` for project-less create, project-scope for project-bound create. Under a project key the task lands in that project and `--project-id` is unnecessary. |
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl task delete <id>` | Soft-deletes a task. Server reflows neighbor cards on the canvas. A 404 (already deleted or never visible) is treated as success — the CLI is idempotent. There is no API to restore a soft-deleted task. |
-| `sprawl item <id>` | Fetches one item with its note — the detail view, so the note is always included and there is no `--full`. Human output is a single table row; `json`/`toon` additionally carry a `task` stub (id, title, project). |
+| `sprawl item <id>` | Fetches one item with its note — the detail view, so the note is always included and there is no `--full`. Human output is a single table row; `json` additionally carries a `task` stub (id, title, project). |
 | `sprawl item add <task_id>` | Adds an item to a task. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). Note the argument is a **task** id — the one item verb that takes one. |
 | `sprawl item update <id>` | Updates an item's `title` and/or its note — the only way to write a note. Flags: `--title`, `--notes`, `--from-json <path\|->`. `--notes -` reads the body from stdin; `--notes ""` clears it. Use `check` / `uncheck` for completion. |
 | `sprawl item check <id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
@@ -145,16 +145,16 @@ curl -fsSL https://raw.githubusercontent.com/ultrakorne/sprawl_cli/master/agents
   -o ~/.claude/agents/sprawl-bookkeeper.md
 ```
 
-All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, read commands render aligned tables and write commands render a one-line `✓ …` summary; in `json` / `toon` mode they return the server envelope (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`) with the item shape **normalized** — the CLI does not pass items through untouched:
+All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `--format=text`). In `text` mode, read commands render aligned tables and write commands render a one-line `✓ …` summary; in `json` mode they return the server envelope (`{tasks:[…]}`, `{task:{…}}`, `{checklist_items:[…]}`, `{checklist_item:{…}}`) with the item shape **normalized** — the CLI does not pass items through untouched:
 
 - **`state` is short-form on output** — `ready` / `progress` / `review` / `null`, never the server's `ready_to_pickup` / `in_progress` / `in_review`. Input still accepts both. This is what keeps an item's state from colliding with a task's `status`, which really is `in_progress`.
 - **`pr_url` is added** — the assembled GitHub link, or `null` when the chain can't resolve (no PR number, no project, or no repo URL on it). None of those is an error.
 - **`position` is dropped.** Array order already carries ordering; the server returns items in position order.
 - **`notes` rides only where the bodies were fetched** — `item <id>` always, `task <id>` / `queue` only under `--full`. `has_notes` is always present.
 
-The two delete commands return `{id:"…", deleted:true, existed:…}` instead — the server replies 204 with no body, but the CLI emits a small payload so json/toon consumers always see structured output.
+The two delete commands return `{id:"…", deleted:true, existed:…}` instead — the server replies 204 with no body, but the CLI emits a small payload so json consumers always see structured output.
 
-Text (`-h`) output is color-styled with [lipgloss](https://charm.land/lipgloss) using your terminal's own ANSI palette — cyan table headers with a `─` rule beneath them, traffic-light checklist progress (`0/x` red, in-progress yellow, `x/x` green), colored checkboxes, and item-state glyphs. PR numbers are OSC 8 hyperlinks where the project has a repo URL, so a ctrl/cmd-click opens the pull request. Styling is **text-only** and applied **only when writing to a terminal**: `json`/`toon`, pipes, files, and `$NO_COLOR` all stay plain — including the hyperlinks.
+Text (`-h`) output is color-styled with [lipgloss](https://charm.land/lipgloss) using your terminal's own ANSI palette — cyan table headers with a `─` rule beneath them, traffic-light checklist progress (`0/x` red, in-progress yellow, `x/x` green), colored checkboxes, and item-state glyphs. PR numbers are OSC 8 hyperlinks where the project has a repo URL, so a ctrl/cmd-click opens the pull request. Styling is **text-only** and applied **only when writing to a terminal**: `json`, pipes, files, and `$NO_COLOR` all stay plain — including the hyperlinks.
 
 The state glyphs are Nerd Font icons by default, matching the TUI and the web app's state pills. Set `SPRAWL_ICONS=plain` if your terminal font renders them as tofu; you get one-cell geometric shapes instead.
 
@@ -260,7 +260,7 @@ Persistent flags (work on every command):
 
 | Flag | Description |
 |---|---|
-| `--format text\|json\|toon` | Output format. Default is `toon`. |
+| `--format text\|json` | Output format. Default is `json`. |
 | `-h`, `--human` | Shorthand for `--format=text` (an explicit `--format` wins). `--help` still shows help. |
 | `-s`, `--agent-secret <value>` | Agent secret for `/api/v1/*` calls. Overrides `$SPRAWL_AGENT_SECRET`. |
 | `-p`, `--project-key <key>` | Confine the call to one project by its key. Overrides `$SPRAWL_PROJECT_KEY`. |
@@ -272,12 +272,12 @@ Environment variables:
 | `SPRAWL_AGENT_SECRET` | Agent secret used if `-s` is not passed. |
 | `SPRAWL_PROJECT_KEY` | Project key used if `-p` is not passed. Confines every call to that project. At least one of this and `SPRAWL_AGENT_SECRET` must be set. |
 | `SPRAWL_TOKEN` | Bearer token override. If unset, the token comes from `config.toml`. |
-| `SPRAWL_OUTPUT` | Session-wide default for `--format` (`text`, `json`, or `toon`). |
+| `SPRAWL_OUTPUT` | Session-wide default for `--format` (`text` or `json`). |
 | `SPRAWL_API_URL` | One-off API URL override. Use sparingly — the binary is the environment switch. |
 | `SPRAWL_ICONS` | Set to `plain` when your terminal font has no [Nerd Font](https://www.nerdfonts.com/) glyphs, so the item-state icons render as geometric shapes (`▸ ◐ ◉`) instead of tofu boxes. Applies to the `STATE` column in `-h` output and to the TUI alike — they share one icon set. Default is the Nerd Font Material icons. |
 | `SPRAWL_NO_UPDATE_CHECK` | Set to `1` to suppress the once-per-day "newer version available" notice on the prod `sprawl` binary. The notice is otherwise on stderr only and never blocks. |
 
-Why TOON by default? The CLI's output is mostly consumed by LLMs, and TOON is 30–60 % cheaper than JSON in tokens while staying lossless. Pass `-h` (or `--format=text`) for human-friendly, color-styled output or `--format=json` if you're piping into `jq`.
+Why JSON by default? The CLI's output is mostly consumed by LLMs and scripts, and JSON is the shape they can parse without a second thought — it pipes straight into `jq`. It is the server's envelope with the small, documented item normalization described above, not a separate format to learn. Pass `-h` (or `--format=text`) for human-friendly, color-styled output.
 
 ## Config file
 

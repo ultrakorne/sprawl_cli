@@ -45,6 +45,6 @@ The server response is unenveloped; the CLI re-injects `"status":"ok"` so struct
 
 - **Local validation runs before the HTTP call.** Mutual exclusion of `--date` / `--days-ago`, integer / non-negative check on `--days-ago`, and `YYYY-MM-DD` parseability on `--date` all fail with a crisp pre-flight error. The 365-day cap remains a server concern.
 - **Missing agent secret fails before the HTTP call** via the shared `newAuthedClient` pre-flight, same as every other authed command.
-- Structured output honours `--format` / `SPRAWL_OUTPUT`. Default is TOON.
+- Structured output honours `--format` / `SPRAWL_OUTPUT`. Default is JSON.
 - `--format=text` renders two tabwriter-aligned tables — completed tasks (reusing the `task list` columns) then completed items (`ID  COMPLETED_AT  PROJECT  TASK  TITLE`) — separated by a blank line, headed by `activity for YYYY-MM-DD`. When both arrays are empty the output collapses to a single `(no activity)` line so emptiness is unambiguous.
 - Errors come through the standard envelope: 401 on bad/missing token, 403 on `agent_secret_required` / `invalid_agent_secret` / `agent_key_revoked`, 422 `invalid_date_params` if the server rejects the date combo (the CLI's pre-flight catches the common cases first).

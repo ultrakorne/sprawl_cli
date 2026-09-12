@@ -28,21 +28,36 @@ func NewRootCmd() *cobra.Command {
 		Use:   build.AppName,
 		Short: "CLI for the sprawl API",
 		Long: "sprawl — HTTP client for the sprawl API.\n\n" +
-			"Output: --format=text|json|toon (default toon; override session-wide with $SPRAWL_OUTPUT).\n\n" +
+			"Output: --format=text|json (default json; override session-wide with $SPRAWL_OUTPUT).\n\n" +
 			"Scope: every call needs the bearer from `login` plus at least one narrowing factor —\n" +
 			"a project key (--project-key / $SPRAWL_PROJECT_KEY) to work inside a single project,\n" +
 			"an agent secret (--agent-secret / $SPRAWL_AGENT_SECRET) to act as an agent key, or both.",
 		SilenceUsage: true,
-		// PersistentPreRunE runs the daily version check on the prod binary
-		// (no-op everywhere else). Errors are swallowed inside MaybeNotify
-		// so a flaky network never blocks a real command. We skip the
-		// `update` subcommand to avoid printing "update available" right
-		// before running the update itself.
+		// PersistentPreRunE validates the output format and runs the daily
+		// version check on the prod binary (no-op everywhere else). Version
+		// check errors are swallowed inside MaybeNotify so a flaky network
+		// never blocks a real command. We skip the `update` subcommand to
+		// avoid printing "update available" right before running the update
+		// itself.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Resolve the format ONCE, here, before any command runs. Doing it
+			// only at render time (renderPayload / reportErr) meant a bad
+			// --format or $SPRAWL_OUTPUT was caught *after* the HTTP call, so a
+			// `task create` would land server-side and still exit non-zero —
+			// indistinguishable, to a retrying caller, from a write that never
+			// happened. Failing here keeps the request from going out at all.
+			f, err := resolveFormat(opts)
+			if err != nil {
+				// Commands set SilenceErrors=true so reportErr doesn't
+				// double-print; that also swallows the error returned from
+				// here, which would leave the user with a silent exit 1. Print
+				// it ourselves, like textArgs does for arg-count failures.
+				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %s\n", err)
+				return err
+			}
 			// Styling lights up only when human (text) output is headed to a
-			// real terminal; everything else (json/toon, pipes, files) stays
-			// plain. Decided once here, before any command renders.
-			if f, err := resolveFormat(opts); err == nil && f == FormatText {
+			// real terminal; everything else (json, pipes, files) stays plain.
+			if f == FormatText {
 				enableStylingFor(cmd.OutOrStdout())
 			}
 			if cmd.Name() == "update" {
@@ -65,7 +80,7 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	root.PersistentFlags().StringVar(&opts.format, "format", "",
-		"output format: text|json|toon (default: toon, or $SPRAWL_OUTPUT)")
+		"output format: text|json (default: json, or $SPRAWL_OUTPUT)")
 	root.PersistentFlags().BoolVarP(&opts.human, "human", "h", false,
 		"shorthand for --format=text: human-readable, color-styled output")
 	root.PersistentFlags().StringVarP(&opts.agentSecret, "agent-secret", "s", "",
@@ -114,7 +129,7 @@ func newVersionCmd() *cobra.Command {
 // so reportErr (from RunE) doesn't double-print; that flag also swallows
 // validator errors by default, which leaves the user with a silent exit 1.
 // This wrapper restores the usage message. Usage errors stay plain text even
-// when --format=json|toon — the format pipeline is for API responses, not
+// when --format=json — the format pipeline is for API responses, not
 // for telling someone they typed the command wrong.
 func textArgs(check cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {

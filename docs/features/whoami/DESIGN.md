@@ -38,7 +38,7 @@
 ## Behaviour
 
 - **No narrowing factor fails before the HTTP call** with a clear pre-flight error, catching misconfiguration without burning a server round-trip.
-- Structured output honours `--format` / `SPRAWL_OUTPUT` like every other command. Default is TOON.
+- Structured output honours `--format` / `SPRAWL_OUTPUT` like every other command. Default is JSON.
 - `--format=text` shows agent identity (`emoji name #id`), the default permission (or `role: owner`), and one line per *level* group of elevated projects (`write_create in: Foo, Bar`). Empty list renders as `(none)`.
 - Under a project key, `--format=text` adds these lines between the agent and the permission list:
 

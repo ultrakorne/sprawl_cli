@@ -2,7 +2,7 @@
 
 ## Overview
 
-Every `/api/v1/*`-wrapping subcommand honours a uniform `--format=text|json|toon` persistent flag. `toon` is the default (compact, LLM-friendly — typically 30–60 % fewer tokens than JSON); `json` is the server's wire shape unchanged; `text` is a human-readable view (aligned tables for lists, multi-line details for single records). `-h` / `--human` is a shorthand for `--format=text` (mnemonic: **h**uman). `SPRAWL_OUTPUT` sets a session default without repeating the flag. Login is interactive and stays plain text regardless — agents can't approve in a browser anyway.
+Every `/api/v1/*`-wrapping subcommand honours a uniform `--format=text|json` persistent flag. `json` is the default — the server's envelope with a small, documented item normalization (see TECHNICAL.md), and what agents and scripts consume; `text` is a human-readable view (aligned tables for lists, multi-line details for single records). `-h` / `--human` is a shorthand for `--format=text` (mnemonic: **h**uman). `SPRAWL_OUTPUT` sets a session default without repeating the flag. Login is interactive and stays plain text regardless — agents can't approve in a browser anyway.
 
 ## Human (text) styling
 
@@ -12,18 +12,18 @@ Every `/api/v1/*`-wrapping subcommand honours a uniform `--format=text|json|toon
 - **Checklist progress** is traffic-light colored (`0/x` red, in-progress yellow, `x/x` green; `0/0` plain), and **checkboxes** green / faint.
 - **Detail / section** views use bold titles & section labels and faint keys / placeholders.
 
-Task status isn't rendered in text at all — wherever progress is shown it conveys the same signal — but it stays in the json/toon payload for agents.
+Task status isn't rendered in text at all — wherever progress is shown it conveys the same signal — but it stays in the json payload for agents.
 
 Layout vs. color: the blank line and the `─` rule are layout, so they're present in plain (non-TTY) output too; only the colors are stripped off a terminal.
 
 Two rules keep this from ever being a problem:
 
-- **Text only.** `json` and `toon` are machine formats and are never styled — the styling lives behind `resolveFormat == text`, so structured output stays byte-for-byte the wire shape. Agents read those formats; styling exists purely for the human owner.
+- **Text only.** `json` is a machine format and is never styled — the styling lives behind `resolveFormat == text`, so no escape sequence can ever reach a structured payload. Agents read that format; styling exists purely for the human owner.
 - **Terminal colors, terminal-gated.** Colors are the terminal's own ANSI palette indices (0–15), not fixed RGB — so output adopts whatever theme the terminal / Omarchy is running rather than clashing with it. Styling is emitted only when stdout is a real TTY; piping, redirecting to a file, or `$NO_COLOR` collapses it to plain text identical, character-for-character, to the unstyled rendering. Colored table cells never break column alignment: widths are measured from the plain text, not the escaped string.
 
 ## Error envelope
 
-When a command fails in `json` or `toon` mode, the error is rendered as a structured envelope rather than free text:
+When a command fails in `json` mode, the error is rendered as a structured envelope rather than free text:
 
 ```json
 {"status": "error", "error": "<message>", "http_status": 403}
@@ -57,11 +57,11 @@ error: project key "acmee" doesn't match any of your projects
 
 ## Precedence
 
-Format resolution: explicit `--format` flag → `-h` / `--human` (→ `text`) → `SPRAWL_OUTPUT` env → `toon` default. An explicit `--format` always wins, so `--format=json -h` stays `json`. Whitespace and case are normalised; invalid values return an error (no silent fallback).
+Format resolution: explicit `--format` flag → `-h` / `--human` (→ `text`) → `SPRAWL_OUTPUT` env → `json` default. An explicit `--format` always wins, so `--format=json -h` stays `json`. Whitespace and case are normalised; invalid values return an error (no silent fallback).
 
 ## Design Decisions
 
-- **TOON is default, not JSON**: agents consume it more compactly while staying lossless. JSON is one flag away when piping into `jq`.
+- **JSON is the default, not text**: the CLI's structured output is read by agents and scripts far more often than by a human at a prompt, so the machine shape is what you get without a flag; `-h` is the one keystroke that switches to the human view.
 - **Error envelope uses `error` (not `code`)**: mirrors the server's error field so agents parse one shape regardless of origin.
 - **Plain-text errors go to stderr only**: avoids corrupting a stdout pipe when `text` mode is used in scripts that check exit status.
-- **Styling is text-only and TTY-gated**: keeps machine output (json/toon) and any non-terminal sink pristine, so adding color never risks an agent or a pipe. `-h` reuses the otherwise-conventional help shorthand on purpose — for the human owner, "human output" is the more useful one-keystroke flag; `--help` still works.
+- **Styling is text-only and TTY-gated**: keeps machine output (json) and any non-terminal sink pristine, so adding color never risks an agent or a pipe. `-h` reuses the otherwise-conventional help shorthand on purpose — for the human owner, "human output" is the more useful one-keystroke flag; `--help` still works.

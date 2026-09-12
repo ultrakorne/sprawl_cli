@@ -73,7 +73,7 @@ func validateActivityParams(date, daysAgo string) error {
 }
 
 // activityPayload preserves the wire shape (`date`, `completed_tasks`,
-// `completed_items`) for json / toon and adds the `status: ok` envelope the
+// `completed_items`) for json and adds the `status: ok` envelope the
 // other read commands carry. Tasks reuse taskMap so the shape stays identical
 // to `task list` / `task <id>` output; items go through activityItemMap.
 func activityPayload(log *client.ActivityLog) map[string]any {

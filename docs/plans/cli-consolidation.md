@@ -1,6 +1,9 @@
 # Plan — CLI consolidation: `task` + `item`
 
-**Status:** ready to execute. Written 2026-08-03 from a design interview; every decision below was made explicitly by the repo owner, not inferred.
+**Status:** executed. Written 2026-08-03 from a design interview; every decision below was made explicitly by the repo owner, not inferred.
+
+> **Partly superseded (2026-09-12):** TOON output was removed and `json` is now the
+> default format. Read every `json / toon` below as `json`. The rest of the plan stands.
 
 **Goal.** The CLI grew five separate renderings of a checklist item (`checklist` table, `checklist --full` blocks, `task --full` card+section, `queue` table, `note show` blob) and two command namespaces (`checklist`, `note`) for one concept. Collapse to **two nouns — `task` and `item`** — plus `queue`, with **one** row renderer behind all of them.
 
@@ -315,7 +318,7 @@ Nothing may ship referring to `checklist` or `note` as commands.
 7. TUI: `SetNotes` → `UpdateChecklistItem`; delete the client methods.
 8. Dead-code sweep (§4.4). `go build ./... && go vet ./... && go test ./...`.
 9. Docs + skill + agent files (§5).
-10. Manual pass against `sprawl_dev`: every command in §1, in `-h`, `json`, and `toon`; piped and on a TTY; with and without `SPRAWL_ICONS=plain`; on a project with and without `github_url`.
+10. Manual pass against `sprawl_dev`: every command in §1, in `-h` and `json`; piped and on a TTY; with and without `SPRAWL_ICONS=plain`; on a project with and without `github_url`.
 
 ---
 

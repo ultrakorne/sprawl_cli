@@ -8,7 +8,7 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 - **Framework**: `github.com/spf13/cobra`
 - **HTTP**: stdlib `net/http` + `encoding/json`
 - **Config**: TOML (`github.com/BurntSushi/toml`)
-- **Output**: TOON (`github.com/alpkeskin/gotoon`), JSON, text
+- **Output**: JSON, text
 - **Releases**: `goreleaser`
 
 ## Features
@@ -16,7 +16,7 @@ HTTP client for the sprawl task-management API. Ships as two binaries from one G
 | Feature | Description |
 |---------|-------------|
 | [auth-and-config](features/auth-and-config/INDEX.md) | Device-flow login, credential resolution (bearer + project key and/or agent secret), two-binary build pattern, config storage. |
-| [output-formats](features/output-formats/INDEX.md) | Uniform text / JSON / TOON rendering contract and error envelope. |
+| [output-formats](features/output-formats/INDEX.md) | Uniform text / JSON rendering contract and error envelope. |
 | [tasks](features/tasks/INDEX.md) | `task list / show / search / create / update`. |
 | [items](features/items/INDEX.md) | `item <id>` (show, note included) plus `item add / update / check / uncheck / delete`, and the shared item table behind every item view. A note is a field of an item — there is no `note` command. |
 | [item-state-and-pr](features/item-state-and-pr/INDEX.md) | Hand-set item state + GitHub PR number on an item: `item state / pr`, the cross-task `queue` read, and the TUI's `s` / `p` keys. |

@@ -7,7 +7,7 @@ The commands wrap the `/api/v1/tasks*` surface. The `task` parent command shows 
 ## Components
 
 ### `task list`
-`GET /api/v1/tasks`. Lists every task the caller can read. Text view is an aligned `ID DUE PROGRESS PROJECT TITLE` table; `(no tasks)` when empty. STATUS has no column — PROGRESS (traffic-light colored: red `0/x`, yellow in-progress, green `x/x`) carries that signal for humans, while `status` stays in the json/toon payload for agents.
+`GET /api/v1/tasks`. Lists every task the caller can read. Text view is an aligned `ID DUE PROGRESS PROJECT TITLE` table; `(no tasks)` when empty. STATUS has no column — PROGRESS (traffic-light colored: red `0/x`, yellow in-progress, green `x/x`) carries that signal for humans, while `status` stays in the json payload for agents.
 
 ### `task <id>` (show)
 `GET /api/v1/tasks/:id`. A bare positional id on the `task` parent command shows one task — there is no `show` subcommand (removed for symmetry with `item <id>`; see Design Decisions). 403 when the task is out of reach (including any id outside a project key's project); 404 when it doesn't exist.
@@ -24,7 +24,7 @@ The response embeds the task's items under `task.checklist_items: [...]` (ordere
   [ ]  204  ◐      -     -      write the docs
 ```
 
-**No bordered card** — no box, no meta grid, no project / due / progress. The header carries title and description only; the id is absent because you typed it to get here, and an empty description leaves the title line alone. status, project, due date, progress, last_actor and created_by are all still in the json/toon payload, and `task list` carries the first four per task.
+**No bordered card** — no box, no meta grid, no project / due / progress. The header carries title and description only; the id is absent because you typed it to get here, and an empty description leaves the title line alone. status, project, due date, progress, last_actor and created_by are all still in the json payload, and `task list` carries the first four per task.
 
 The table itself is defined in [items](../items/INDEX.md) — `task <id>`, `item <id>` and `queue` all render the same row.
 
@@ -66,7 +66,7 @@ Server-side `project_id` validation runs before permission checks:
 `PATCH /api/v1/tasks/:id` body `{"task":{…}}`. `--title` / `--description` / `--from-json` (no `--project-id` — the server's update changeset ignores it). `--description ""` is treated as an explicit clear via `cmd.Flags().Changed("description")`, not as "flag unset".
 
 ### `task delete <id>`
-`DELETE /api/v1/tasks/:id`. Soft-delete: the row stays in the DB with `hidden=true` and `deleted_at` set, neighbor cards on the canvas are reflowed atomically in the same transaction, and the server broadcasts `task_updated` for each moved neighbor plus a final `task_deleted` on PubSub. **There is no API to restore** — the LiveView trash bin is the only undo path. Server returns 204 No Content; the CLI emits `{id: "<id>", deleted: true}` (json/toon) or `Deleted task #<id>` (text) so structured consumers always get a payload. A 404 `not_found` is treated as success — repeated deletes and deletes against an id that never existed render the same payload, matching the idempotent semantics of HTTP DELETE. Other 4xx (401 unauthenticated, 403 forbidden, malformed) surface through `reportErr` like every other command. The 404 idempotency only matches the bare `not_found` code; codes like `theme_not_found` still surface as errors.
+`DELETE /api/v1/tasks/:id`. Soft-delete: the row stays in the DB with `hidden=true` and `deleted_at` set, neighbor cards on the canvas are reflowed atomically in the same transaction, and the server broadcasts `task_updated` for each moved neighbor plus a final `task_deleted` on PubSub. **There is no API to restore** — the LiveView trash bin is the only undo path. Server returns 204 No Content; the CLI emits `{id: "<id>", deleted: true}` (json) or `Deleted task #<id>` (text) so structured consumers always get a payload. A 404 `not_found` is treated as success — repeated deletes and deletes against an id that never existed render the same payload, matching the idempotent semantics of HTTP DELETE. Other 4xx (401 unauthenticated, 403 forbidden, malformed) surface through `reportErr` like every other command. The 404 idempotency only matches the bare `not_found` code; codes like `theme_not_found` still surface as errors.
 
 **Under a project key the 404 is ambiguous**: the server answers 404 for any task outside the confined project, so the plain "already gone (no change)" line would claim a delete that never happened to a task living elsewhere. Confined, the text fallback becomes `No task #<id> in project "<key>" (nothing deleted — it may exist outside this project key)`. The structured payload is unchanged (`deleted: true, existed: false`), and unconfined wording is untouched.
 
@@ -85,4 +85,4 @@ Server-side `project_id` validation runs before permission checks:
 - **Preset validated in the CLI**: bounded enum, matches the `--project-id` precedent — clean local error beats a server 422 round-trip.
 - **`none` instead of `--clear`**: keeps the surface positional-only and parallels the read shape (server returns `null` for cleared dates).
 - **404 on delete is success**: HTTP DELETE is idempotent by spec, and agents reasonably retry. Surfacing the 404 would force every caller to special-case it; swallowing it locally keeps the success payload stable across retries. Scoped to the bare `not_found` code so unrelated 404s aren't masked.
-- **Synthetic `{id, deleted: true}` body on 204**: the server replies with no body, but json / toon consumers expect *something* to parse. The CLI fabricates a minimal envelope so output stays uniform across formats.
+- **Synthetic `{id, deleted: true}` body on 204**: the server replies with no body, but json consumers expect *something* to parse. The CLI fabricates a minimal envelope so output stays uniform across formats.

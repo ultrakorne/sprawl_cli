@@ -179,22 +179,21 @@ server won't change its mind.
 
 ## Output formats
 
-`--format` is a persistent flag: `text | json | toon` (default `toon`).
+`--format` is a persistent flag: `text | json` (default `json`).
 `SPRAWL_OUTPUT` sets a session default.
 
-**Default to omitting `--format` for your own reads.** Toon is 30–60 % fewer
-tokens than json and lossless, so when the output is just coming back into
-your context for you to eyeball (list, task, item, queue, search), let it
-default. Passing `--format=json` to read a task list is pure token waste.
+**Omit `--format` for reads you only eyeball.** The default is already `json`,
+so a list / task / item / queue / search you're just pulling into your context
+needs no flag.
 
-Only override when you have a specific reason:
+Pass it explicitly when it matters:
 
-- `--format=json` — only when you're actually piping to `jq` or another
-  parser. Not for "I want to read it myself".
+- `--format=json` — in scripts and pipelines, so the command doesn't inherit
+  a `SPRAWL_OUTPUT=text` from the caller's environment.
 - `--format=text` — when you're showing the output to the user (tabwriter
   tables, multi-line detail views).
 
-Errors in `json` / `toon` come as a structured envelope:
+Errors in `json` come as a structured envelope:
 
 ```json
 {"status": "error", "error": "<message>", "http_status": 403}
@@ -242,7 +241,7 @@ All `/api/v1/*` commands honour `--format` and the credential model above.
 
 ### Discovery (reads)
 
-Omit `--format` — default toon is what you want here (see [Output formats](#output-formats)).
+Omit `--format` — the default `json` is what you want here (see [Output formats](#output-formats)).
 
 ```bash
 sprawl task list
@@ -290,9 +289,14 @@ sprawl item 203 --format=json | jq -r '.checklist_item.notes' > note.md
 # Wrong — the table rendering leaks into the variable (columns, "note:" label):
 body=$(sprawl item 203 --format=text)
 
-# Wrong — the toon envelope leaks in instead:
+# Wrong — the whole json envelope leaks in instead of just the note:
 body=$(sprawl item 203)
 ```
+
+`--format=json` is explicit here even though it's the default: `SPRAWL_OUTPUT`
+may be set to `text` in the environment you're running in, and a pipeline that
+silently depends on the caller's env is a pipeline that breaks on someone
+else's machine.
 
 An item with no note gives `null` from `jq -r` — check for it rather than
 writing the four characters into a file.
@@ -358,7 +362,7 @@ Use `check` / `uncheck` for completion — `update` doesn't mutate it. The split
 avoids a GET-then-PATCH race when you don't know current state.
 
 Every write prints a one-line `✓ …` confirmation in `text` mode and the
-`{"checklist_item": {…}}` envelope in `json` / `toon`.
+`{"checklist_item": {…}}` envelope in `json`.
 
 ### Writes — item state and PR number
 

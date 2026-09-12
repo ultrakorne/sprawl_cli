@@ -1,6 +1,6 @@
 # sprawl — CLI for the sprawl API
 
-HTTP client. Single static Go binary (two variants from one codebase), JSON on the wire, TOON / JSON / text on stdout. Used by the human owner and by AI agents. The server is live; the CLI wraps its endpoints.
+HTTP client. Single static Go binary (two variants from one codebase), JSON on the wire, JSON / text on stdout. Used by the human owner and by AI agents. The server is live; the CLI wraps its endpoints.
 
 ## Documentation
 
@@ -11,7 +11,7 @@ Feature-level docs live under [`docs/`](docs/INDEX.md) and are discovered increm
 - **CLI framework**: `github.com/spf13/cobra`
 - **HTTP**: stdlib `net/http` + `encoding/json` — no extra client deps
 - **Config**: TOML via `github.com/BurntSushi/toml`
-- **Output**: TOON via `github.com/alpkeskin/gotoon` (default), JSON, plain text fallback
+- **Output**: JSON (default), plain text fallback
 - **Releases**: `goreleaser`
 
 ## Two-binary build pattern (critical)
@@ -62,7 +62,7 @@ theme write that carries a project key.
 
 ## Invariants (don't break these)
 
-1. Every structured-output subcommand honours `--format=text|json|toon` (persistent flag on root). Default is `toon`; session-wide override via `SPRAWL_OUTPUT`. `-h` / `--human` is a shorthand for `--format=text` (an explicit `--format` wins). Login is interactive and stays plain text regardless. **Styling is text-only:** human (`text`) output is color-styled with lipgloss using the terminal's own ANSI palette, and only when stdout is a real TTY. `json` / `toon` are machine formats and are never styled; piped / redirected / `$NO_COLOR` output degrades to plain text identical to the unstyled rendering.
+1. Every structured-output subcommand honours `--format=text|json` (persistent flag on root). Default is `json`; session-wide override via `SPRAWL_OUTPUT`. `-h` / `--human` is a shorthand for `--format=text` (an explicit `--format` wins). Login is interactive and stays plain text regardless. **Styling is text-only:** human (`text`) output is color-styled with lipgloss using the terminal's own ANSI palette, and only when stdout is a real TTY. `json` is a machine format and is never styled; piped / redirected / `$NO_COLOR` output degrades to plain text identical to the unstyled rendering.
 2. No command writes `agent_secret` or `project_key` to any file, log, or flag default.
 3. No command prints the `token` or `agent_secret` to stdout / stderr. (The project key is *not* a credential and may be shown — `whoami` and the TUI header do.)
 4. URL is never read from config; only baked-in or `SPRAWL_API_URL` env override.

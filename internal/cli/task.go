@@ -378,9 +378,9 @@ func renderTaskList(out io.Writer, tasks []*client.Task, opts *runtimeOpts) erro
 }
 
 // taskMap mirrors the server's task_json shape but as a `map[string]any` so
-// renderPayload can hand it to either the json encoder or gotoon. Pointer
+// renderPayload can hand it to the json encoder. Pointer
 // fields (project, created_by, last_actor) become literal `nil` map values,
-// which both encoders emit as JSON null / TOON null.
+// which the encoder emits as JSON null.
 //
 // The envelope keeps EVERY task field — title, description, status, due_date,
 // project, checklist_progress, created_by, last_actor. `task <id> -h` shows only
@@ -470,7 +470,7 @@ func actorMap(a *client.Actor) any {
 }
 
 // taskListText is the `--format=text` fallback for list/search. Agents read
-// json/toon; this view is for humans, so tabwriter alignment is worth the
+// json; this view is for humans, so tabwriter alignment is worth the
 // stdlib cost.
 func taskListText(tasks []*client.Task) string {
 	if len(tasks) == 0 {
@@ -481,7 +481,7 @@ func taskListText(tasks []*client.Task) string {
 
 // STATUS is intentionally absent from the human list view: the PROGRESS column
 // (done/total, green once complete) already conveys it. Status still rides in
-// the json/toon payload (taskMap) and the single-task detail view for agents
+// the json payload (taskMap) and the single-task detail view for agents
 // and full reads.
 var taskListHeader = []string{"ID", "DUE", "PROGRESS", "PROJECT", "TITLE"}
 
