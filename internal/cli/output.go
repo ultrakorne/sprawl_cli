@@ -38,12 +38,6 @@ func resolveFormat(opts *runtimeOpts) (Format, error) {
 	switch Format(v) {
 	case FormatText, FormatJSON:
 		return Format(v), nil
-	case "toon":
-		// TOON was the default until it was removed. It is NOT accepted as an
-		// alias — a silent remap would hand back a different shape than the
-		// caller asked for — but a pinned `SPRAWL_OUTPUT=toon` in an .envrc or
-		// CI job is the one wrong value we can name a fix for.
-		return "", fmt.Errorf("format %q was removed; use json (the new default) or text", v)
 	default:
 		return "", fmt.Errorf("invalid format %q (want: text|json)", v)
 	}

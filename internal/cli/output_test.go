@@ -49,35 +49,22 @@ func TestResolveFormat_DefaultIsJSON(t *testing.T) {
 	}
 }
 
-// TOON was the default format once. It must now be rejected rather than
-// silently remapped to json — a caller asking for toon and getting a
-// different shape back is worse than a clear failure. The env path is the one
-// that actually bites (a pinned SPRAWL_OUTPUT in an .envrc or CI job), so it
-// is covered alongside the flag.
-func TestResolveFormat_TOONRejected(t *testing.T) {
-	for _, tc := range []struct{ name, flag, env string }{
-		{"flag", "toon", ""},
-		{"env", "", "toon"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SPRAWL_OUTPUT", tc.env)
-			_, err := resolveFormat(optsWith(tc.flag))
-			if err == nil {
-				t.Fatal("expected error for removed toon format")
-			}
-			// The message must name the replacement: this is the one wrong
-			// value we can tell the user how to fix.
-			if !strings.Contains(err.Error(), "json") {
-				t.Fatalf("error should point at json, got %q", err)
-			}
-		})
-	}
-}
-
+// Both entry points reject an unusable value — the env path matters because a
+// pinned SPRAWL_OUTPUT in an .envrc or CI job affects every command at once,
+// with no flag on the command line to point at.
 func TestResolveFormat_Invalid(t *testing.T) {
-	if _, err := resolveFormat(optsWith("yaml")); err == nil {
-		t.Fatal("expected error for invalid format")
-	}
+	t.Run("flag", func(t *testing.T) {
+		t.Setenv("SPRAWL_OUTPUT", "")
+		if _, err := resolveFormat(optsWith("yaml")); err == nil {
+			t.Fatal("expected error for invalid format")
+		}
+	})
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("SPRAWL_OUTPUT", "yaml")
+		if _, err := resolveFormat(optsWith("")); err == nil {
+			t.Fatal("expected error for invalid format")
+		}
+	})
 }
 
 func TestRenderPayload_Text(t *testing.T) {

@@ -2,9 +2,6 @@
 
 **Status:** executed. Written 2026-08-03 from a design interview; every decision below was made explicitly by the repo owner, not inferred.
 
-> **Partly superseded (2026-09-12):** TOON output was removed and `json` is now the
-> default format. Read every `json / toon` below as `json`. The rest of the plan stands.
-
 **Goal.** The CLI grew five separate renderings of a checklist item (`checklist` table, `checklist --full` blocks, `task --full` card+section, `queue` table, `note show` blob) and two command namespaces (`checklist`, `note`) for one concept. Collapse to **two nouns — `task` and `item`** — plus `queue`, with **one** row renderer behind all of them.
 
 **Prerequisite.** This plan depends on a new backend endpoint. See [`backend-api-changes.md`](backend-api-changes.md) — do that first, or `item <id>` cannot be built.
@@ -118,7 +115,7 @@ One row of the same table, note always expanded. **No task header of any kind** 
                                       retry after 2026-08-05
 ```
 
-The `task` stub still rides in the **json/toon** payload (§3) — it's free, the endpoint returns it, and `pr_url` is resolved from the project inside it. It is simply not rendered in `-h`.
+The `task` stub still rides in the **json** payload (§3) — it's free, the endpoint returns it, and `pr_url` is resolved from the project inside it. It is simply not rendered in `-h`.
 
 ### `sprawl queue -h`
 
@@ -151,7 +148,7 @@ Match `internal/tui/update.go`'s existing `✓ …` transient vocabulary so the 
 
 ---
 
-## 3. Machine (`json` / `toon`) shapes
+## 3. Machine (`json`) shapes
 
 ### `task <id>`
 
@@ -191,7 +188,7 @@ Envelope stays `{"task": {…}}` and **keeps every task field** — `title`, `de
 4. **`notes` rides only on `--full`** for `task <id>` and `queue`; **always present** on `item <id>`.
 5. **`has_notes` is always present**, `--full` or not — it's what drives the `NOTES` column.
 
-This breaks the README's claim that json/toon "return the server envelope unchanged." That sentence must be rewritten: the CLI now normalizes state vocabulary and resolves `pr_url`. It was already partly untrue (`queue` added `pr_url`, empty strings became `null`).
+This breaks the README's claim that json "returns the server envelope unchanged." That sentence must be rewritten: the CLI now normalizes state vocabulary and resolves `pr_url`. It was already partly untrue (`queue` added `pr_url`, empty strings became `null`).
 
 ---
 

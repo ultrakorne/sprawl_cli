@@ -75,33 +75,25 @@ func TestTextArgs_PassesThroughWhenValid(t *testing.T) {
 // and still exited non-zero — indistinguishable, to a caller that retries on
 // failure, from a write that never happened.
 func TestRootCmd_InvalidFormatIsLoudAndPreHTTP(t *testing.T) {
-	for _, tc := range []struct{ name, format, wantMsg string }{
-		// toon was the default until it was removed; it gets a migration hint.
-		{"removed toon", "toon", "was removed"},
-		{"never valid", "yaml", "invalid format"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				t.Fatalf("request escaped before format validation: %s %s", r.Method, r.URL.Path)
-			}))
-			t.Cleanup(srv.Close)
-			t.Setenv("SPRAWL_API_URL", srv.URL)
-			t.Setenv("SPRAWL_TOKEN", "the-token")
-			t.Setenv("SPRAWL_AGENT_SECRET", "the-secret")
-			t.Setenv("SPRAWL_NO_UPDATE_CHECK", "1")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("request escaped before format validation: %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("SPRAWL_API_URL", srv.URL)
+	t.Setenv("SPRAWL_TOKEN", "the-token")
+	t.Setenv("SPRAWL_AGENT_SECRET", "the-secret")
+	t.Setenv("SPRAWL_NO_UPDATE_CHECK", "1")
 
-			root := NewRootCmd()
-			var stdout, stderr bytes.Buffer
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"whoami", "--format=" + tc.format})
+	root := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"whoami", "--format=yaml"})
 
-			if err := root.Execute(); err == nil {
-				t.Fatal("expected a non-zero exit for an invalid format")
-			}
-			if !strings.Contains(stderr.String(), tc.wantMsg) {
-				t.Fatalf("stderr should explain the bad format, got %q", stderr.String())
-			}
-		})
+	if err := root.Execute(); err == nil {
+		t.Fatal("expected a non-zero exit for an invalid format")
+	}
+	if !strings.Contains(stderr.String(), "invalid format") {
+		t.Fatalf("stderr should explain the bad format, got %q", stderr.String())
 	}
 }
