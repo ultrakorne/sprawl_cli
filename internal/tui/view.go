@@ -88,11 +88,28 @@ func hintsFor(s screen) string {
 	case screenList:
 		return "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · w workspace · r refresh · ? help · q quit"
 	case screenChecklist:
-		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · n add · e title · E desc · d delete · esc back · ? help"
+		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · / search · c copy · n add · e title · E desc · d delete · esc back · ? help"
 	case screenNote:
 		return "e edit · c copy · o open pr · ↑↓ scroll · esc back · ? help"
 	}
 	return ""
+}
+
+// searchHints replace a screen's hints while a `/` query is being typed: every
+// printable key goes to the query then, so the usual bindings don't apply.
+const searchHints = "type to filter · ↑↓ move · enter keep · esc clear"
+
+// searchAwareHints is a list or checklist screen's hints given its search
+// state: the typing hints while a query is open, the usual ones led by how to
+// drop a kept filter, or just the usual ones.
+func searchAwareHints(s screen, typing bool, filter string) string {
+	switch {
+	case typing:
+		return searchHints
+	case filter != "":
+		return "esc clear filter · " + hintsFor(s)
+	}
+	return hintsFor(s)
 }
 
 // hintLines packs the hints into as few rows as fit: one line whenever the
@@ -209,12 +226,25 @@ func (m *Model) frame(title string, body []string, hints string) string {
 // cells have nothing to show. On a terminal too narrow to wrap sensibly the
 // title is left on the first line for frame() to clip.
 func rowLines(prefix string, prefixW, width int, title string, style func(...string) string) []string {
-	apply := func(s string) string {
+	return rowLinesMarked(prefix, prefixW, width, title, nil, func(seg string, _ uint8) string {
 		if style == nil {
-			return s
+			return seg
 		}
-		return style(s)
-	}
+		return style(seg)
+	})
+}
+
+// Per-rune marks on a row title, set by a `/` search.
+const (
+	markNone    uint8 = iota
+	markMatch         // a character the query matched
+	markFlagHit       // the 🗒 flag, when the query matched the note behind it
+)
+
+// rowLinesMarked is rowLines for a title whose runes carry marks: each run of
+// equally marked runes is drawn by render(run, mark). nil marks draws every
+// line whole with markNone.
+func rowLinesMarked(prefix string, prefixW, width int, title string, marks []uint8, render func(string, uint8) string) []string {
 	segs := []string{title}
 	if avail := width - prefixW; avail >= 8 {
 		if wrapped := wrapLines(title, avail); len(wrapped) > 0 {
@@ -222,15 +252,105 @@ func rowLines(prefix string, prefixW, width int, title string, style func(...str
 		}
 	}
 	indent := strings.Repeat(" ", prefixW)
+	orig := []rune(title)
+	at := 0
 	out := make([]string, 0, len(segs))
 	for i, seg := range segs {
+		line := renderMarked(seg, orig, &at, marks, render)
 		if i == 0 {
-			out = append(out, prefix+apply(seg))
+			out = append(out, prefix+line)
 		} else {
-			out = append(out, indent+apply(seg))
+			out = append(out, indent+line)
 		}
 	}
 	return out
+}
+
+// renderMarked draws one wrapped segment of orig, run by run. Wrapping only
+// drops whitespace at the breaks, so the segment's runes are a subsequence of
+// orig from *at on; walking the two in step recovers each rune's mark.
+func renderMarked(seg string, orig []rune, at *int, marks []uint8, render func(string, uint8) string) string {
+	if marks == nil {
+		return render(seg, markNone)
+	}
+	var b strings.Builder
+	var run []rune
+	cur := markNone
+	flush := func() {
+		if len(run) > 0 {
+			b.WriteString(render(string(run), cur))
+			run = run[:0]
+		}
+	}
+	for _, r := range seg {
+		mk := markNone
+		for *at < len(orig) && orig[*at] != r {
+			*at++
+		}
+		if *at < len(orig) {
+			if *at < len(marks) {
+				mk = marks[*at]
+			}
+			*at++
+		}
+		if mk != cur {
+			flush()
+			cur = mk
+		}
+		run = append(run, r)
+	}
+	flush()
+	return b.String()
+}
+
+// markLine draws a single unwrapped line with its marks.
+func markLine(text string, marks []uint8, render func(string, uint8) string) string {
+	at := 0
+	return renderMarked(text, []rune(text), &at, marks, render)
+}
+
+// markedTitle is a row title as drawn: the text, then the 🗒 flag when the
+// row has a note (or description) behind it. marks highlight the runes the
+// query matched and the flag when the query matched its note; nil when
+// nothing is marked.
+func markedTitle(title string, matched []int, flag, flagHit bool) (string, []uint8) {
+	var marks []uint8
+	if len(matched) > 0 || (flag && flagHit) {
+		marks = make([]uint8, len([]rune(title)))
+		for _, p := range matched {
+			if p >= 0 && p < len(marks) {
+				marks[p] = markMatch
+			}
+		}
+	}
+	if flag {
+		title += " 🗒"
+		if marks != nil {
+			hit := markNone
+			if flagHit {
+				hit = markFlagHit
+			}
+			marks = append(marks, markNone, hit)
+		}
+	}
+	return title, marks
+}
+
+// markRenderer draws marked runs: search hits in the match color, a hit note
+// flag on the hit background, everything else with base (nil = as is).
+func (m *Model) markRenderer(base func(...string) string) func(string, uint8) string {
+	return func(seg string, mk uint8) string {
+		switch mk {
+		case markMatch:
+			return m.styles.match.Render(seg)
+		case markFlagHit:
+			return m.styles.hitBg.Render(seg)
+		}
+		if base == nil {
+			return seg
+		}
+		return base(seg)
+	}
 }
 
 // wrapAndWindow flattens per-item display-line groups (each 1+ wrapped lines)
@@ -289,35 +409,44 @@ func (m *Model) viewList() string {
 	if m.projectKey != "" {
 		title += " · " + m.projectKey
 	}
+	matches := m.listMatches()
+	count := fmt.Sprintf("(%d of %d)", len(matches), len(m.tasks))
 	if m.searching {
-		title = "search: " + m.searchInput.render()
-	} else if m.searchLabel != "" {
-		title = fmt.Sprintf("sprawl · search %q (%d)", m.searchLabel, len(m.tasks))
+		title = "search: " + m.searchInput.render() + "  " + count
+		if m.indexing {
+			title += " · loading checklists…"
+		}
+	} else if m.listFilter != "" {
+		title += " · /" + m.listFilter + " " + count
 	}
 
-	hints := hintsFor(screenList)
-	vis := m.visibleTasks()
+	hints := searchAwareHints(screenList, m.searching, m.listFilter)
 	var body []string
 	switch {
-	case m.loading && len(vis) == 0:
+	case m.loading && len(matches) == 0:
 		body = []string{m.styles.faint.Render("loading…")}
-	case len(vis) == 0:
-		if m.searching || m.searchLabel != "" {
+	case len(matches) == 0:
+		if m.listQuery() != "" {
 			body = []string{m.styles.faint.Render("(no matches)")}
 		} else {
 			body = []string{m.styles.faint.Render("(no tasks) — n to create")}
 		}
 	default:
-		body = m.listRows(vis, m.bodyHeight(hints))
+		body = m.listRows(matches, m.bodyHeight(hints))
 	}
 
 	return m.frame(m.heading(title), body, hints)
 }
 
-func (m *Model) listRows(vis []*client.Task, bodyH int) []string {
+// maxItemHits caps the matched checklist items listed under a task row, so a
+// short query that hits every item doesn't bury the tasks.
+const maxItemHits = 3
+
+func (m *Model) listRows(vis []taskMatch, bodyH int) []string {
 	// Column widths from the visible set for stable alignment.
 	idW, progW := 2, 3
-	for _, t := range vis {
+	for _, tm := range vis {
+		t := tm.task
 		if l := len("#" + itoa(t.ID)); l > idW {
 			idW = l
 		}
@@ -329,7 +458,8 @@ func (m *Model) listRows(vis []*client.Task, bodyH int) []string {
 	w := m.effWidth()
 
 	groups := make([][]string, len(vis))
-	for i, t := range vis {
+	for i, tm := range vis {
+		t := tm.task
 		id := padRight("#"+itoa(t.ID), idW)
 		prog := fmt.Sprintf("%d/%d", t.ChecklistProgress.Done, t.ChecklistProgress.Total)
 		project := projectLabel(t.Project)
@@ -342,10 +472,7 @@ func (m *Model) listRows(vis []*client.Task, bodyH int) []string {
 
 		// A task with a description carries the same 🗒 flag as an item with a
 		// note, riding at the end of the title so it wraps with it.
-		title := t.Title
-		if hasDescription(t) {
-			title += " 🗒"
-		}
+		title, marks := markedTitle(t.Title, tm.title, hasDescription(t), tm.desc)
 
 		var group []string
 		if i == m.listSel {
@@ -353,25 +480,39 @@ func (m *Model) listRows(vis []*client.Task, bodyH int) []string {
 			// Styled here rather than by rowLines, which now only styles the title.
 			cursorPrefix := m.styles.sel.Render(
 				fmt.Sprintf("› %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project))
-			group = rowLines(cursorPrefix, prefixW, w, title, m.styles.sel.Render)
+			group = rowLinesMarked(cursorPrefix, prefixW, w, title, marks, m.markRenderer(m.styles.sel.Render))
 		} else {
 			progStyled := m.styles.progress(t.ChecklistProgress.Done, t.ChecklistProgress.Total).Render(padRight(prog, progW))
 			displayPrefix := fmt.Sprintf("  %s  %s  %s  %s  ",
 				m.styles.faint.Render(id), progStyled, m.styles.faint.Render(padRight(due, 10)), project)
-			group = rowLines(displayPrefix, prefixW, w, title, nil)
+			group = rowLinesMarked(displayPrefix, prefixW, w, title, marks, m.markRenderer(nil))
 		}
-		// Search-result annotation: surface matched checklist-item titles on their
-		// own indented line under the task.
-		if m.searchLabel != "" && len(t.MatchedChecklistItems) > 0 {
-			var names []string
-			for _, it := range t.MatchedChecklistItems {
-				names = append(names, it.Title)
-			}
-			group = append(group, "      "+m.styles.faint.Render("↳ "+strings.Join(names, ", ")))
+		// Items are listed only for a task found through them: a short query
+		// hits some item in nearly every checklist, and listing those under
+		// tasks that matched anyway would push the list off the screen.
+		if tm.tier == 2 {
+			group = append(group, m.itemHitLines(tm.items)...)
 		}
 		groups[i] = group
 	}
 	return wrapAndWindow(groups, m.listSel, bodyH)
+}
+
+// itemHitLines lists, under a task row, the checklist items a search reached
+// it through: one line each, hits highlighted, at most maxItemHits of them.
+func (m *Model) itemHitLines(items []itemMatch) []string {
+	const indent = "      "
+	render := m.markRenderer(m.styles.faint.Render)
+	var out []string
+	for i, im := range items {
+		if i == maxItemHits {
+			out = append(out, indent+m.styles.faint.Render(fmt.Sprintf("↳ +%d more", len(items)-maxItemHits)))
+			break
+		}
+		title, marks := markedTitle(im.item.Title, im.title, im.item.HasNotes, im.note)
+		out = append(out, indent+m.styles.faint.Render("↳ ")+markLine(title, marks, render))
+	}
+	return out
 }
 
 // -- checklist screen -------------------------------------------------------
@@ -390,15 +531,37 @@ func (m *Model) viewChecklist() string {
 		t.ID, t.Title, m.styles.progress(t.ChecklistProgress.Done, t.ChecklistProgress.Total).Render(prog),
 		due, projectLabel(t.Project))
 
-	hints := hintsFor(screenChecklist)
+	hints := searchAwareHints(screenChecklist, m.itemSearching, m.itemFilter)
 	bodyH := m.bodyHeight(hints)
-	body := m.descriptionBlock(t.Description, bodyH)
-	if len(t.ChecklistItems) == 0 {
+	matches := m.itemMatches()
+	var body []string
+	if line := m.itemSearchLine(len(matches)); line != "" {
+		body = append(body, line)
+	}
+	body = append(body, m.descriptionBlock(t.Description, bodyH-len(body))...)
+	switch {
+	case len(t.ChecklistItems) == 0:
 		body = append(body, m.styles.faint.Render("(no checklist items) — n to add"))
-	} else {
-		body = append(body, m.checklistRows(t.ChecklistItems, bodyH-len(body))...)
+	case len(matches) == 0:
+		body = append(body, m.styles.faint.Render("(no matching items)"))
+	default:
+		body = append(body, m.checklistRows(matches, bodyH-len(body))...)
 	}
 	return m.frame(m.heading(title), body, hints)
+}
+
+// itemSearchLine is the checklist's `/` query, above the description: the
+// input while typing, the kept filter after enter, "" when there is neither.
+// The task header stays put, so the search never hides which task this is.
+func (m *Model) itemSearchLine(shown int) string {
+	count := m.styles.faint.Render(fmt.Sprintf("  (%d of %d)", shown, len(m.detail.ChecklistItems)))
+	switch {
+	case m.itemSearching:
+		return "  " + m.styles.accent.Render("/ ") + m.itemSearchInput.render() + count
+	case m.itemFilter != "":
+		return "  " + m.styles.accent.Render("/ ") + m.itemFilter + count
+	}
+	return ""
 }
 
 // descPreviewMax caps how many lines the task description may take above the
@@ -445,10 +608,11 @@ func (m *Model) descriptionBlock(desc string, bodyH int) []string {
 	return append(out, "")
 }
 
-func (m *Model) checklistRows(items []*client.ChecklistItem, bodyH int) []string {
+func (m *Model) checklistRows(items []itemMatch, bodyH int) []string {
 	idW := 2
 	prW := prColMinW
-	for _, it := range items {
+	for _, im := range items {
+		it := im.item
 		if l := len("#" + itoa(it.ID)); l > idW {
 			idW = l
 		}
@@ -457,7 +621,8 @@ func (m *Model) checklistRows(items []*client.ChecklistItem, bodyH int) []string
 	w := m.effWidth()
 
 	groups := make([][]string, len(items))
-	for i, it := range items {
+	for i, im := range items {
+		it := im.item
 		box := mdCheckbox(it.Completed)
 		id := padRight("#"+itoa(it.ID), idW)
 		// State and PR are their own fixed columns between the id and the title,
@@ -469,11 +634,9 @@ func (m *Model) checklistRows(items []*client.ChecklistItem, bodyH int) []string
 		selPR := padVis(m.prField(prCell(it.PRNumber), it.PRNumber, true), prW)
 		rowPR := padVis(m.prField(prCell(it.PRNumber), it.PRNumber, false), prW)
 		// The note flag rides at the end of the title so it wraps with it; the 🗒
-		// emoji renders in its own color, so no separate faint styling is needed.
-		title := it.Title
-		if it.HasNotes {
-			title += " 🗒"
-		}
+		// emoji renders in its own color, so no separate faint styling is needed
+		// — a search hit in the note puts a background behind it instead.
+		title, marks := markedTitle(it.Title, im.title, it.HasNotes, im.note)
 		// Measured from plain text: the styled cells carry escapes, and the PR
 		// cell a hyperlink, none of which occupy columns.
 		prefixW := lipgloss.Width(fmt.Sprintf("  %s %s  %s  %s  ",
@@ -483,14 +646,14 @@ func (m *Model) checklistRows(items []*client.ChecklistItem, bodyH int) []string
 			// hyperlink stays outside anything lipgloss renders.
 			sel := m.styles.sel.Render
 			cursorPrefix := sel(fmt.Sprintf("› %s %s  %s  ", box, id, icon)) + selPR + sel("  ")
-			groups[i] = rowLines(cursorPrefix, prefixW, w, title, sel)
+			groups[i] = rowLinesMarked(cursorPrefix, prefixW, w, title, marks, m.markRenderer(sel))
 		} else {
 			displayPrefix := fmt.Sprintf("  %s %s  %s  %s  ",
 				m.styles.checkbox(it.Completed).Render(box),
 				m.styles.faint.Render(id),
 				m.styles.state(it.State).Render(icon),
 				rowPR)
-			groups[i] = rowLines(displayPrefix, prefixW, w, title, nil)
+			groups[i] = rowLinesMarked(displayPrefix, prefixW, w, title, marks, m.markRenderer(nil))
 		}
 	}
 	return wrapAndWindow(groups, m.itemSel, bodyH)
@@ -651,6 +814,13 @@ func (m *Model) viewNote() string {
 		} else {
 			lines = nil
 		}
+		// Under a checklist filter, the words it found are highlighted here too.
+		if terms := searchTerms(m.itemFilter); terms != nil {
+			render := m.markRenderer(nil)
+			for i, ln := range lines {
+				lines[i] = markLine(ln, runeMarks(ln, termPositions(terms, ln)), render)
+			}
+		}
 		body = lines
 	}
 	return m.frame(title, body, hintsFor(screenNote))
@@ -671,6 +841,35 @@ func wrapLines(text string, width int) []string {
 		out = append(out, strings.Split(wrapped, "\n")...)
 	}
 	return out
+}
+
+// runeMarks turns matched rune positions into marks for markLine; nil when
+// nothing matched.
+func runeMarks(text string, pos []int) []uint8 {
+	if len(pos) == 0 {
+		return nil
+	}
+	marks := make([]uint8, len([]rune(text)))
+	for _, p := range pos {
+		marks[p] = markMatch
+	}
+	return marks
+}
+
+// firstHitLine is the first wrapped line of the selected item's note holding a
+// word of the checklist filter, or -1 — where the note opens under a filter.
+func (m *Model) firstHitLine() int {
+	it := m.selectedItem()
+	terms := searchTerms(m.itemFilter)
+	if it == nil || it.Notes == nil || terms == nil {
+		return -1
+	}
+	for i, ln := range wrapLines(*it.Notes, m.effWidth()) {
+		if len(termPositions(terms, ln)) > 0 {
+			return i
+		}
+	}
+	return -1
 }
 
 // noteMaxOff is the largest valid scroll offset for the currently selected
@@ -785,13 +984,17 @@ func helpLines(s styles) []string {
 		{"List", "↑↓/jk move · g/G top/bottom · enter open · / search · q quit"},
 		{"", "c copy task · n new · e title · E description · t due · d delete"},
 		{"", "w switch workspace (ids are per workspace; a project key pins it)"},
-		{"Checklist", "↑↓/jk move · g/G top/bottom · space/x toggle · enter note"},
+		{"Checklist", "↑↓/jk move · g/G top/bottom · space/x toggle · enter note · / search"},
 		{"", "c copy item · n add · e title · E description · d delete · esc back"},
 		{"", "s cycle state (ready → progress → review → none) · p set PR number"},
 		{"", "o open the PR in a browser (copies the link if it can't)"},
 		{"", "PR numbers are clickable in terminals that support hyperlinks"},
 		{"", "setting a state un-completes the item — the two are exclusive"},
 		{"Note", "e edit (in $EDITOR) · c copy item · o open PR · ↑↓ scroll · esc back"},
+		{"Search", "/ filters as you type · enter keeps the filter · esc clears it"},
+		{"", "titles match fuzzily; descriptions and notes need every word typed"},
+		{"", "the list also searches every task's checklist items and notes"},
+		{"", "a highlighted 🗒 means the match is in the note or description"},
 	}
 	out := []string{""}
 	for _, r := range rows {

@@ -28,6 +28,8 @@ type styles struct {
 	danger lipgloss.Style // error / danger (red)
 	plain  lipgloss.Style // no-op
 	link   lipgloss.Style // clickable text (PR numbers): accent + underline
+	match  lipgloss.Style // characters a `/` search matched: bold magenta
+	hitBg  lipgloss.Style // a 🗒 flag whose note/description the search matched
 
 	icons icons.Set // item-state glyphs, shared with the CLI; see internal/icons
 }
@@ -50,6 +52,12 @@ func newStyles() styles {
 		// promise that clicking does something — a PR number on a project with no
 		// repo stays faint like any other inert field.
 		link: ns().Foreground(lipgloss.Color("6")).Underline(true),
+		// Magenta is the one palette color nothing else in the UI uses, so a
+		// search hit reads as a hit on a selected (cyan) row too.
+		match: ns().Bold(true).Foreground(lipgloss.Color("5")),
+		// The 🗒 flag is usually drawn by a color emoji font that ignores the
+		// foreground, so a matched note is marked with a background instead.
+		hitBg: ns().Background(lipgloss.Color("5")),
 	}
 }
 

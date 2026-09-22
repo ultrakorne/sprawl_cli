@@ -323,9 +323,9 @@ func TestWorkspace_StaleListDroppedAfterSwitch(t *testing.T) {
 	if len(m.tasks) != 0 {
 		t.Fatalf("stale list applied: %+v", m.tasks)
 	}
-	m.send(searchResultMsg{tasks: []*client.Task{{ID: 43}}, query: "x", from: old})
-	if len(m.tasks) != 0 || m.searchLabel != "" {
-		t.Fatalf("stale search applied: %+v %q", m.tasks, m.searchLabel)
+	m.send(indexLoadedMsg{tasks: []*client.Task{{ID: 43, ChecklistItems: []*client.ChecklistItem{}}}, gen: m.indexGen, from: old})
+	if m.index[43] != nil {
+		t.Fatalf("stale search index applied: %+v", m.index)
 	}
 	m.send(whoamiLoadedMsg{who: &client.Whoami{Workspace: &client.Workspace{ID: 1, Name: "Default"}}, from: old, openPicker: true})
 	if m.overlay != ovNone || m.wsCurrent.ID != 9 {

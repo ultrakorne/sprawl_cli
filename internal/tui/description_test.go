@@ -19,7 +19,7 @@ func TestListRows_FlagTaskWithDescription(t *testing.T) {
 	})
 	m.width, m.height = 100, 20
 
-	rows := m.listRows(m.visibleTasks(), m.bodyHeight(hintsFor(screenList)))
+	rows := m.listRows(m.listMatches(), m.bodyHeight(hintsFor(screenList)))
 	if len(rows) != 3 {
 		t.Fatalf("want 3 rows, got %d:\n%s", len(rows), strings.Join(rows, "\n"))
 	}

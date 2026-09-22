@@ -104,9 +104,8 @@ type Model struct {
 	stack []screen
 
 	// list data
-	tasks       []*client.Task
-	listSel     int
-	searchLabel string // non-empty when the current list is a server-search result
+	tasks   []*client.Task
+	listSel int
 
 	// checklist detail (full task with items + notes)
 	detail  *client.Task
@@ -118,6 +117,11 @@ type Model struct {
 
 	// note screen scroll offset (lines)
 	noteOff int
+	// noteItemID is the item the note screen shows. It is pinned by id rather
+	// than read through itemSel: under a checklist filter, editing the note can
+	// drop the item out of the filtered rows, and the screen must not slide
+	// onto whichever item takes its place.
+	noteItemID int64
 
 	loading bool
 
@@ -128,9 +132,29 @@ type Model struct {
 	credErr     string
 	credBusy    bool
 
-	// live search (list screen)
+	// `/` search on the list: searching is true while the query is being typed;
+	// listFilter is the query kept after enter. Either filters the list live.
 	searching   bool
 	searchInput textInput
+	listFilter  string
+
+	// `/` search on the checklist, same shape as the list's. Reset whenever a
+	// task is opened from the list.
+	itemSearching   bool
+	itemSearchInput textInput
+	itemFilter      string
+
+	// index holds full tasks (items + notes) by id, so the list search can
+	// reach checklist items and notes the list payload doesn't carry. Filled
+	// on `/` by indexTasksCmd and by every drill-in; dropped by refresh and a
+	// workspace switch. indexGen invalidates an in-flight fill that a reset
+	// has overtaken; indexFailed stops a task that won't load from being
+	// re-requested until the next reset.
+	index       map[int64]*client.Task
+	indexFailed map[int64]bool
+	indexing    bool
+	indexGen    int
+	indexCancel context.CancelFunc // aborts the running fill's requests
 
 	// overlays
 	overlay          overlayKind
@@ -227,19 +251,59 @@ func (m *Model) popTo(s screen) {
 
 // -- selection helpers ------------------------------------------------------
 
-func (m *Model) visibleTasks() []*client.Task {
+// listQuery is the query filtering the list: the one being typed, else the
+// one kept after enter.
+func (m *Model) listQuery() string {
 	if m.searching {
-		return filterTasksByTitle(m.tasks, m.searchInput.String())
+		return m.searchInput.String()
 	}
-	return m.tasks
+	return m.listFilter
 }
 
-func (m *Model) itemCount() int {
-	if m.detail == nil {
-		return 0
+// itemQuery is listQuery for the checklist.
+func (m *Model) itemQuery() string {
+	if m.itemSearching {
+		return m.itemSearchInput.String()
 	}
-	return len(m.detail.ChecklistItems)
+	return m.itemFilter
 }
+
+// listMatches is the list as the screen shows it: filtered and ranked by the
+// query, with what matched in each row.
+func (m *Model) listMatches() []taskMatch {
+	return filterTasks(searchTerms(m.listQuery()), m.tasks, m.index)
+}
+
+func (m *Model) visibleTasks() []*client.Task {
+	ms := m.listMatches()
+	out := make([]*client.Task, len(ms))
+	for i, tm := range ms {
+		out[i] = tm.task
+	}
+	return out
+}
+
+// itemMatches is the open task's checklist as the screen shows it: filtered by
+// the query, in checklist order.
+func (m *Model) itemMatches() []itemMatch {
+	if m.detail == nil {
+		return nil
+	}
+	return filterItems(searchTerms(m.itemQuery()), m.detail.ChecklistItems)
+}
+
+// visibleItems is the checklist rows on screen; itemSel indexes into it, so
+// every item action works on the filtered rows.
+func (m *Model) visibleItems() []*client.ChecklistItem {
+	ms := m.itemMatches()
+	out := make([]*client.ChecklistItem, len(ms))
+	for i, im := range ms {
+		out[i] = im.item
+	}
+	return out
+}
+
+func (m *Model) itemCount() int { return len(m.visibleItems()) }
 
 func (m *Model) selectedTask() *client.Task {
 	vis := m.visibleTasks()
@@ -258,11 +322,26 @@ func (m *Model) descriptionTask() *client.Task {
 	return m.selectedTask()
 }
 
+// selectedItem is the item actions apply to: the highlighted row on the
+// checklist, the pinned item on the note screen (ids are positive, so an unset
+// pin falls back to the highlighted row).
 func (m *Model) selectedItem() *client.ChecklistItem {
-	if m.detail == nil || m.itemSel < 0 || m.itemSel >= len(m.detail.ChecklistItems) {
+	if m.current() == screenNote && m.noteItemID != 0 {
+		if m.detail == nil {
+			return nil
+		}
+		for _, it := range m.detail.ChecklistItems {
+			if it.ID == m.noteItemID {
+				return it
+			}
+		}
 		return nil
 	}
-	return m.detail.ChecklistItems[m.itemSel]
+	vis := m.visibleItems()
+	if m.itemSel < 0 || m.itemSel >= len(vis) {
+		return nil
+	}
+	return vis[m.itemSel]
 }
 
 func (m *Model) clampListSel() {
@@ -273,6 +352,89 @@ func (m *Model) clampListSel() {
 func (m *Model) clampItemSel() {
 	n := m.itemCount()
 	m.itemSel = clamp(m.itemSel, 0, maxInt(0, n-1))
+}
+
+// selectTask puts the list cursor on task id if it is visible, else clamps —
+// so clearing a filter leaves the cursor on the task that was found.
+func (m *Model) selectTask(id int64) {
+	for i, t := range m.visibleTasks() {
+		if t.ID == id {
+			m.listSel = i
+			return
+		}
+	}
+	m.clampListSel()
+}
+
+// selectItem is selectTask for the checklist.
+func (m *Model) selectItem(id int64) {
+	for i, it := range m.visibleItems() {
+		if it.ID == id {
+			m.itemSel = i
+			return
+		}
+	}
+	m.clampItemSel()
+}
+
+// -- search index -----------------------------------------------------------
+
+// ensureIndex fetches, in the background, the full copy of every listed task
+// the index doesn't hold yet. nil when there is nothing to fetch or a fill is
+// already running (its arrival calls back in here for anything it missed).
+func (m *Model) ensureIndex() tea.Cmd {
+	if m.indexing || m.client == nil {
+		return nil
+	}
+	var ids []int64
+	for _, t := range m.tasks {
+		if m.index[t.ID] == nil && !m.indexFailed[t.ID] {
+			ids = append(ids, t.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	m.indexing = true
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.indexCancel = cancel
+	return indexTasksCmd(ctx, m.client, ids, m.indexGen)
+}
+
+// indexTask records a full task. While a task is open it is kept as the very
+// pointer on screen, so edits made on the checklist (toggles, titles, notes,
+// new items) are what the list search sees without a refetch. m.detail
+// outlives the screen, so once back on the list a fetched copy wins over it.
+func (m *Model) indexTask(t *client.Task) {
+	if t == nil || t.ChecklistItems == nil {
+		return
+	}
+	onTask := m.current() == screenChecklist || m.current() == screenNote
+	if onTask && m.detail != nil && m.detail.ID == t.ID {
+		t = m.detail
+	}
+	if m.index == nil {
+		m.index = map[int64]*client.Task{}
+	}
+	m.index[t.ID] = t
+}
+
+// resetIndex forgets every full task — on refresh, so the search sees what the
+// server has now, and on a workspace switch, where the ids mean other tasks.
+func (m *Model) resetIndex() {
+	m.stopIndexing()
+	m.index = nil
+	m.indexFailed = nil
+	m.indexGen++
+}
+
+// stopIndexing ends the running fill, if any, cancelling its requests.
+func (m *Model) stopIndexing() {
+	if m.indexCancel != nil {
+		m.indexCancel()
+		m.indexCancel = nil
+	}
+	m.indexing = false
 }
 
 // -- status -----------------------------------------------------------------
@@ -469,24 +631,6 @@ func workspacePickerItems(list []client.Workspace, current *client.Workspace) []
 			label += "  (current)"
 		}
 		out = append(out, pickerItem{label: label, value: itoa(ws.ID)})
-	}
-	return out
-}
-
-// -- pure search filter -----------------------------------------------------
-
-// filterTasksByTitle keeps tasks whose title contains query (case-insensitive).
-// An empty/blank query returns the slice unchanged. Pure and unit-tested.
-func filterTasksByTitle(tasks []*client.Task, query string) []*client.Task {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return tasks
-	}
-	out := make([]*client.Task, 0, len(tasks))
-	for _, t := range tasks {
-		if strings.Contains(strings.ToLower(t.Title), q) {
-			out = append(out, t)
-		}
 	}
 	return out
 }

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -52,8 +53,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = whoamiCmd(m.ctx, m.client, false)
 		}
 		m.tasks = msg.tasks
-		m.searchLabel = ""
 		m.clampListSel()
+		// A filter that outlives a reload (refresh, a new task) keeps reaching
+		// into checklists: fill the index for whatever is new.
+		if m.searching || m.listFilter != "" {
+			cmd = tea.Batch(cmd, m.ensureIndex())
+		}
 		return m, cmd
 
 	case whoamiLoadedMsg:
@@ -70,14 +75,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case searchResultMsg:
-		if m.stale(msg.from) {
+	case indexLoadedMsg:
+		if m.stale(msg.from) || msg.gen != m.indexGen {
 			return m, nil
 		}
-		m.loading = false
-		m.tasks = msg.tasks
-		m.searchLabel = msg.query
-		m.listSel = 0
+		m.stopIndexing()
+		if msg.auth != nil {
+			return m.Update(msg.auth)
+		}
+		for _, t := range msg.tasks {
+			// An entry already there arrived after this fill started (a
+			// drill-in, a copy) and is the newer copy — a reset would have
+			// cleared it, and the fill only asked for missing ids.
+			if m.index[t.ID] == nil {
+				m.indexTask(t)
+			}
+		}
+		if len(msg.failed) > 0 {
+			if m.indexFailed == nil {
+				m.indexFailed = map[int64]bool{}
+			}
+			for _, id := range msg.failed {
+				m.indexFailed[id] = true
+			}
+			m.setError("search items", fmt.Errorf("%d task(s) not searchable: %w", len(msg.failed), msg.err))
+		}
+		m.clampListSel()
+		// Tasks listed while this fill ran aren't in it; fetch those too.
+		if m.searching || m.listFilter != "" {
+			return m, m.ensureIndex()
+		}
 		return m, nil
 
 	case taskLoadedMsg:
@@ -86,6 +113,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.task == nil {
 				m.setError("copy task", errEmptyTask)
 				return m, nil
+			}
+			if !m.stale(msg.from) {
+				m.indexTask(msg.task)
 			}
 			md := taskMarkdown(msg.task)
 			return m, tea.Batch(tea.SetClipboard(md), m.setTransient("✓ copied task #"+itoa(msg.task.ID)))
@@ -105,6 +135,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.detail = msg.task
+		m.indexTask(msg.task)
 		m.clampItemSel()
 		return m, nil
 
@@ -140,6 +171,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskDeletedMsg:
 		m.removeTask(msg.id)
+		delete(m.index, msg.id)
 		if m.detail != nil && m.detail.ID == msg.id {
 			m.popTo(screenList)
 			m.detail = nil
@@ -236,6 +268,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.secret = ""
 		m.client = nil
 		m.detail = nil
+		m.resetIndex()
 		m.secretInput.reset()
 		m.keyInput.setValue(m.projectKey)
 		m.credErr = "credentials rejected — try again"
@@ -275,6 +308,8 @@ func (m *Model) onTaskMutated(msg taskMutatedMsg) (tea.Model, tea.Cmd) {
 		)
 	}
 	m.upsertTask(msg.task)
+	// The edit may move the task in the ranked list, or out of a kept filter.
+	m.selectTask(msg.task.ID)
 	if m.detail != nil && m.detail.ID == msg.task.ID {
 		m.detail.Title = msg.task.Title
 		m.detail.Description = msg.task.Description
@@ -333,6 +368,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.handleSearchKey(key)
 		}
 		return m.handleBaseKey(key)
+	case screenChecklist:
+		if m.itemSearching {
+			return m.handleItemSearchKey(key)
+		}
+		return m.handleBaseKey(key)
 	default:
 		return m.handleBaseKey(key)
 	}
@@ -354,7 +394,10 @@ func (m *Model) handlePaste(s string) {
 		}
 	case m.current() == screenList && m.searching:
 		m.searchInput.insertString(s)
-		m.clampListSel()
+		m.listSel = 0
+	case m.current() == screenChecklist && m.itemSearching:
+		m.itemSearchInput.insertString(s)
+		m.itemSel = 0
 	}
 }
 
@@ -397,40 +440,116 @@ func (m *Model) handleCredsKey(key string) (tea.Model, tea.Cmd) {
 	}
 }
 
+// handleSearchKey drives the list while a `/` query is being typed. The list
+// filters on every keystroke with the best match on top; enter keeps the query
+// as the list's filter, esc drops it. Either way the cursor stays on the task
+// it was on, so a search is also a way to find a task in the full list.
 func (m *Model) handleSearchKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
-	case "esc":
+	case "esc", "enter":
+		sel := m.selectedTask()
 		m.searching = false
-		m.searchInput.reset()
-		if m.searchLabel != "" {
-			// A server search had replaced the list — restore the full list.
-			m.searchLabel = ""
-			m.loading = true
-			return m, listTasksCmd(m.ctx, m.client)
+		m.listFilter = ""
+		if key == "enter" {
+			m.listFilter = strings.TrimSpace(m.searchInput.String())
 		}
-		m.clampListSel()
-		return m, nil
-	case "enter":
-		q := strings.TrimSpace(m.searchInput.String())
-		m.searching = false
 		m.searchInput.reset()
-		if q == "" {
+		if sel != nil {
+			m.selectTask(sel.ID)
+		} else {
 			m.clampListSel()
-			return m, nil
 		}
-		m.loading = true
-		return m, searchTasksCmd(m.ctx, m.client, q)
-	case "up":
+		return m, nil
+	case "up", "ctrl+p":
 		m.moveSel(-1)
 		return m, nil
-	case "down":
+	case "down", "ctrl+n":
 		m.moveSel(1)
 		return m, nil
 	default:
+		before := m.searchInput.String()
 		m.searchInput.handleKey(key)
-		m.clampListSel()
+		// Only a changed query re-ranks; moving the text cursor doesn't.
+		if m.searchInput.String() != before {
+			m.listSel = 0
+		}
 		return m, nil
 	}
+}
+
+// handleItemSearchKey is handleSearchKey for the checklist.
+func (m *Model) handleItemSearchKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc", "enter":
+		sel := m.selectedItem()
+		m.itemSearching = false
+		m.itemFilter = ""
+		if key == "enter" {
+			m.itemFilter = strings.TrimSpace(m.itemSearchInput.String())
+		}
+		m.itemSearchInput.reset()
+		if sel != nil {
+			m.selectItem(sel.ID)
+		} else {
+			m.clampItemSel()
+		}
+		return m, nil
+	case "up", "ctrl+p":
+		m.moveSel(-1)
+		return m, nil
+	case "down", "ctrl+n":
+		m.moveSel(1)
+		return m, nil
+	default:
+		before := m.itemSearchInput.String()
+		m.itemSearchInput.handleKey(key)
+		if m.itemSearchInput.String() != before {
+			m.itemSel = 0
+		}
+		return m, nil
+	}
+}
+
+// startSearch is `/`: open the query line, seeded with the filter already in
+// place so it can be refined (ctrl+u starts over). On the list it also starts
+// fetching the checklists the search reaches into.
+func (m *Model) startSearch() tea.Cmd {
+	switch m.current() {
+	case screenList:
+		m.searching = true
+		m.searchInput.setValue(m.listFilter)
+		return m.ensureIndex()
+	case screenChecklist:
+		// Nothing to filter (and no line to type into) until the task lands.
+		if m.detail == nil {
+			return nil
+		}
+		m.itemSearching = true
+		m.itemSearchInput.setValue(m.itemFilter)
+	}
+	return nil
+}
+
+// clearFilter drops a kept `/` filter on the current screen, leaving the
+// cursor on the row it was on. false when there was none — esc then pops.
+func (m *Model) clearFilter() bool {
+	switch {
+	case m.current() == screenList && m.listFilter != "":
+		sel := m.selectedTask()
+		m.listFilter = ""
+		if sel != nil {
+			m.selectTask(sel.ID)
+		}
+		return true
+	case m.current() == screenChecklist && m.itemFilter != "":
+		sel := m.selectedItem()
+		m.itemFilter = ""
+		if sel != nil {
+			m.selectItem(sel.ID)
+		}
+		return true
+	}
+	return false
 }
 
 // handleBaseKey dispatches a key on the list / checklist / note screens.
@@ -440,14 +559,21 @@ func (m *Model) handleBaseKey(key string) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case actBack:
-		// esc on the list clears an active server-search (reloads the full list)
-		// before it would pop — matching the spec's "esc clears" for search.
-		if m.current() == screenList && m.searchLabel != "" {
-			m.searchLabel = ""
-			m.loading = true
-			return m, listTasksCmd(m.ctx, m.client)
+		// esc clears a kept search filter before it would pop.
+		if m.clearFilter() {
+			return m, nil
 		}
 		m.pop()
+		// What changed on the screen just left (an edit, a refresh) may have
+		// moved rows in or out of this screen's filter.
+		switch m.current() {
+		case screenList:
+			m.clampListSel()
+		case screenChecklist:
+			if m.detail != nil {
+				m.selectItem(m.noteItemID)
+			}
+		}
 		return m, nil
 	case actHelp:
 		m.overlay = ovHelp
@@ -471,9 +597,7 @@ func (m *Model) handleBaseKey(key string) (tea.Model, tea.Cmd) {
 	case actToggle:
 		return m.toggle()
 	case actSearch:
-		m.searching = true
-		m.searchInput.reset()
-		return m, nil
+		return m, m.startSearch()
 	case actCopy:
 		return m.copy()
 	case actNewTask:
@@ -558,7 +682,10 @@ func (m *Model) switchWorkspace(id string) (tea.Model, tea.Cmd) {
 	m.pendingTaskID = 0
 	m.listSel = 0
 	m.searching = false
-	m.searchLabel = ""
+	m.listFilter = ""
+	m.itemSearching = false
+	m.itemFilter = ""
+	m.resetIndex()
 	m.stack = []screen{screenList}
 	m.loading = true
 	status := "✓ switched to " + wsName(target)
@@ -618,9 +745,9 @@ func (m *Model) refresh() (tea.Model, tea.Cmd) {
 	switch m.current() {
 	case screenList:
 		m.loading = true
-		if m.searchLabel != "" {
-			return m, searchTasksCmd(m.ctx, m.client, m.searchLabel)
-		}
+		// The search's copies of every checklist may be as stale as the list;
+		// a kept filter refills them when the list lands.
+		m.resetIndex()
 		return m, listTasksCmd(m.ctx, m.client)
 	case screenChecklist, screenNote:
 		if m.detail == nil {
@@ -642,16 +769,25 @@ func (m *Model) open() (tea.Model, tea.Cmd) {
 		}
 		m.detail = nil
 		m.itemSel = 0
+		m.itemSearching = false
+		m.itemFilter = ""
 		m.loading = true
 		m.pendingTaskID = t.ID
 		m.push(screenChecklist)
 		return m, getTaskCmd(m.ctx, m.client, t.ID, false)
 	case screenChecklist:
-		if m.selectedItem() == nil {
+		it := m.selectedItem()
+		if it == nil {
 			return m, nil
 		}
 		m.noteOff = 0
+		m.noteItemID = it.ID
 		m.push(screenNote)
+		// Under a filter that hit the note, open it scrolled to the first hit
+		// when that isn't already on screen.
+		if i := m.firstHitLine(); i >= m.bodyHeight(hintsFor(screenNote)) {
+			m.noteOff = clamp(i-1, 0, m.noteMaxOff())
+		}
 		return m, nil
 	}
 	return m, nil

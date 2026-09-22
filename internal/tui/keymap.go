@@ -18,7 +18,7 @@ const (
 	actBottom            // G
 	actOpen              // enter — drill in (list→checklist, checklist→note)
 	actToggle            // space / x — toggle item completion
-	actSearch            // / — enter search mode
+	actSearch            // / — open the search query (list, checklist)
 	actCopy              // c — copy Markdown to clipboard
 	actNewTask           // n
 	actEditTitle         // e — edit task title (list) / item title (checklist)
@@ -107,6 +107,8 @@ func checklistAction(key string) action {
 		return actToggle
 	case "enter":
 		return actOpen
+	case "/":
+		return actSearch
 	case "esc":
 		return actBack
 	case "c":

@@ -164,14 +164,14 @@ func titleCol(t *testing.T, row, title string) int {
 func TestChecklistRows_ColumnsDoNotShift(t *testing.T) {
 	task := demoTask()
 	m := newChecklistModel(&fakeClient{}, task)
-	before := m.checklistRows(task.ChecklistItems, m.bodyHeight(hintsFor(screenChecklist)))
+	before := m.checklistRows(m.itemMatches(), m.bodyHeight(hintsFor(screenChecklist)))
 	wantCol := titleCol(t, before[0], "add the migration")
 	wantNeighbour := titleCol(t, before[1], "write the tests")
 
 	// Same rows, now with a state and a PR on the first item.
 	task.ChecklistItems[0].State = client.StateInProgress
 	task.ChecklistItems[0].PRNumber = 412
-	after := m.checklistRows(task.ChecklistItems, m.bodyHeight(hintsFor(screenChecklist)))
+	after := m.checklistRows(m.itemMatches(), m.bodyHeight(hintsFor(screenChecklist)))
 
 	if got := titleCol(t, after[0], "add the migration"); got != wantCol {
 		t.Errorf("title column moved %d → %d when a state+PR were set:\n%q\n%q",
@@ -188,7 +188,7 @@ func TestChecklistRows_WidePRKeepsRowsAligned(t *testing.T) {
 	task := demoTask()
 	task.ChecklistItems[0].PRNumber = 1234567
 	m := newChecklistModel(&fakeClient{}, task)
-	rows := m.checklistRows(task.ChecklistItems, m.bodyHeight(hintsFor(screenChecklist)))
+	rows := m.checklistRows(m.itemMatches(), m.bodyHeight(hintsFor(screenChecklist)))
 	a := titleCol(t, rows[0], "add the migration")
 	b := titleCol(t, rows[1], "write the tests")
 	if a != b {
@@ -580,7 +580,7 @@ func TestPRField_KeepsUnderlineWhenSelected(t *testing.T) {
 	}
 
 	// And it's actually rendered that way in the selected row.
-	rows := m.checklistRows(task.ChecklistItems, m.bodyHeight(hintsFor(screenChecklist)))
+	rows := m.checklistRows(m.itemMatches(), m.bodyHeight(hintsFor(screenChecklist)))
 	if !strings.Contains(rows[0], "\x1b]8;;") {
 		t.Errorf("selected row lost the link: %q", rows[0])
 	}

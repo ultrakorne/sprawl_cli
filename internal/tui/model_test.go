@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,12 +17,13 @@ import (
 // -- fake client ------------------------------------------------------------
 
 type fakeClient struct {
-	listResp   []*client.Task
-	listErr    error
-	getResp    *client.Task
-	getErr     error
-	searchResp []*client.Task
-	searchErr  error
+	listResp []*client.Task
+	listErr  error
+	getResp  *client.Task
+	getErr   error
+	// getByID, when set, answers GetTask per id instead of getResp — the
+	// search index fetches every listed task. A missing id is a 404.
+	getByID    map[string]*client.Task
 	toggleResp *client.ChecklistItem
 	toggleErr  error
 	createResp *client.Task
@@ -49,6 +51,7 @@ type fakeClient struct {
 	dueArgSet       bool
 	notesArg        string
 	calls           []string
+	mu              sync.Mutex // GetTask runs concurrently during an index fill
 }
 
 func (f *fakeClient) SetChecklistItemState(_ context.Context, id string, attrs map[string]any) (*client.ChecklistItem, error) {
@@ -66,12 +69,16 @@ func (f *fakeClient) ListTasks(context.Context) ([]*client.Task, error) {
 	return f.listResp, f.listErr
 }
 func (f *fakeClient) GetTask(_ context.Context, id string, _ bool) (*client.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, "GetTask:"+id)
+	if f.getByID != nil {
+		if t, ok := f.getByID[id]; ok {
+			return t, nil
+		}
+		return nil, &client.APIError{Status: 404, Code: "not_found"}
+	}
 	return f.getResp, f.getErr
-}
-func (f *fakeClient) SearchTasks(_ context.Context, q string) ([]*client.Task, error) {
-	f.calls = append(f.calls, "SearchTasks:"+q)
-	return f.searchResp, f.searchErr
 }
 func (f *fakeClient) SetChecklistItemCompleted(_ context.Context, id string, _ bool) (*client.ChecklistItem, error) {
 	f.calls = append(f.calls, "SetCompleted:"+id)
@@ -259,24 +266,6 @@ func TestBackStack_PushPopCurrent(t *testing.T) {
 	}
 }
 
-func TestFilterTasksByTitle(t *testing.T) {
-	tasks := []*client.Task{
-		{ID: 1, Title: "Apple pie"},
-		{ID: 2, Title: "Banana bread"},
-		{ID: 3, Title: "Grape jam"},
-	}
-	if got := filterTasksByTitle(tasks, ""); len(got) != 3 {
-		t.Fatalf("empty query should pass all through, got %d", len(got))
-	}
-	got := filterTasksByTitle(tasks, "AN") // case-insensitive
-	if len(got) != 1 || got[0].ID != 2 {
-		t.Fatalf("query AN should match Banana only, got %+v", got)
-	}
-	if got := filterTasksByTitle(tasks, "zzz"); len(got) != 0 {
-		t.Fatalf("no match expected, got %d", len(got))
-	}
-}
-
 func TestRecomputeProgress(t *testing.T) {
 	items := []*client.ChecklistItem{
 		{Completed: true}, {Completed: false}, {Completed: true},
@@ -443,51 +432,6 @@ func TestOpenTask_LoadsDetail(t *testing.T) {
 }
 
 // -- search -----------------------------------------------------------------
-
-func TestSearch_LiveFilterThenServer(t *testing.T) {
-	fc := &fakeClient{
-		searchResp: []*client.Task{{ID: 2, Title: "Banana", MatchedChecklistItems: []client.MatchedChecklistItem{{ID: 9, Title: "peel"}}}},
-	}
-	tasks := []*client.Task{
-		{ID: 1, Title: "Apple"}, {ID: 2, Title: "Banana"}, {ID: 3, Title: "Grape"},
-	}
-	m := newListModel(fc, tasks)
-
-	m.press("/")
-	if !m.searching {
-		t.Fatal("/ should enter search mode")
-	}
-	// live client-side filter as you type
-	m.press("a")
-	m.press("n")
-	if got := m.searchInput.String(); got != "an" {
-		t.Fatalf("search buffer = %q, want an", got)
-	}
-	if vis := m.visibleTasks(); len(vis) != 1 || vis[0].ID != 2 {
-		t.Fatalf("live filter should show Banana only, got %+v", vis)
-	}
-
-	// Enter runs the server search
-	cmd := m.press("enter")
-	if m.searching {
-		t.Fatal("enter should exit typing mode")
-	}
-	for _, msg := range runCmd(cmd) {
-		m.send(msg)
-	}
-	if m.searchLabel != "an" || len(m.tasks) != 1 {
-		t.Fatalf("server search results not applied: label=%q tasks=%d", m.searchLabel, len(m.tasks))
-	}
-	// esc clears the server search and reloads the full list
-	fc.listResp = tasks
-	cmd = m.press("esc")
-	for _, msg := range runCmd(cmd) {
-		m.send(msg)
-	}
-	if m.searchLabel != "" || len(m.tasks) != 3 {
-		t.Fatalf("esc should clear search and restore full list: label=%q tasks=%d", m.searchLabel, len(m.tasks))
-	}
-}
 
 // -- delete + create --------------------------------------------------------
 

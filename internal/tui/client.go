@@ -17,7 +17,6 @@ type Client interface {
 	Whoami(ctx context.Context) (*client.Whoami, error)
 	ListTasks(ctx context.Context) ([]*client.Task, error)
 	GetTask(ctx context.Context, id string, full bool) (*client.Task, error)
-	SearchTasks(ctx context.Context, query string) ([]*client.Task, error)
 	SetChecklistItemCompleted(ctx context.Context, itemID string, completed bool) (*client.ChecklistItem, error)
 	CreateTask(ctx context.Context, attrs map[string]any) (*client.Task, error)
 	UpdateTask(ctx context.Context, id string, attrs map[string]any) (*client.Task, error)

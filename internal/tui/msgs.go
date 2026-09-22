@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,11 +22,18 @@ type tasksLoadedMsg struct {
 	from      Client // the client that answered; stale once the session re-pins
 }
 
-// searchResultMsg carries server-side search results (title + item matches).
-type searchResultMsg struct {
-	tasks []*client.Task
-	query string
-	from  Client
+// indexLoadedMsg carries the full tasks fetched for the list search. gen is
+// the index generation the fill was started under; a reset since then makes it
+// stale. failed lists the ids that didn't load, err the first reason.
+type indexLoadedMsg struct {
+	tasks  []*client.Task
+	failed []int64
+	err    error
+	gen    int
+	from   Client
+	// auth is set, instead of the rest, when a fetch failed on the session's
+	// credentials or workspace — the reducer routes it like any other call's.
+	auth tea.Msg
 }
 
 // taskLoadedMsg carries a single full task (checklist + notes). forCopy routes
@@ -36,6 +44,7 @@ type taskLoadedMsg struct {
 	task    *client.Task
 	wantID  int64
 	forCopy bool
+	from    Client
 }
 
 // itemToggledMsg is the server's confirmation of a completion toggle. prev is
@@ -259,13 +268,48 @@ func listTasksCmd(ctx context.Context, c Client) tea.Cmd {
 	}
 }
 
-func searchTasksCmd(ctx context.Context, c Client, query string) tea.Cmd {
+// indexWorkers bounds the concurrent full-task fetches of an index fill, so a
+// long list doesn't open a request per task at once.
+const indexWorkers = 6
+
+// indexTasksCmd fetches the full copy (items + notes) of every task in ids, a
+// few at a time, and reports them in one message. A task that fails is listed
+// rather than failing the fill: the search still works on everything else.
+func indexTasksCmd(ctx context.Context, c Client, ids []int64, gen int) tea.Cmd {
 	return func() tea.Msg {
-		tasks, err := c.SearchTasks(ctx, query)
-		if err != nil {
-			return opErrMsg(err, "search")
+		tasks := make([]*client.Task, len(ids))
+		errs := make([]error, len(ids))
+		sem := make(chan struct{}, indexWorkers)
+		var wg sync.WaitGroup
+		for i, id := range ids {
+			wg.Go(func() {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				tasks[i], errs[i] = c.GetTask(ctx, itoa(id), true)
+			})
 		}
-		return searchResultMsg{tasks: tasks, query: query, from: c}
+		wg.Wait()
+		msg := indexLoadedMsg{gen: gen, from: c}
+		for i, t := range tasks {
+			err := errs[i]
+			if err == nil && (t == nil || t.ChecklistItems == nil) {
+				// A 2xx without a full task can't be indexed; counting it as
+				// failed stops the fill from asking for it again and again.
+				err = errEmptyTask
+			}
+			if err != nil {
+				if isSecretAuthErr(err) || workspaceErr(err) != nil {
+					return indexLoadedMsg{gen: gen, from: c, auth: opErrMsg(err, "search items")}
+				}
+				msg.failed = append(msg.failed, ids[i])
+				if msg.err == nil {
+					msg.err = err
+				}
+				continue
+			}
+			msg.tasks = append(msg.tasks, t)
+		}
+		return msg
 	}
 }
 
@@ -275,7 +319,7 @@ func getTaskCmd(ctx context.Context, c Client, id int64, forCopy bool) tea.Cmd {
 		if err != nil {
 			return opErrMsg(err, "open task")
 		}
-		return taskLoadedMsg{task: task, wantID: id, forCopy: forCopy}
+		return taskLoadedMsg{task: task, wantID: id, forCopy: forCopy, from: c}
 	}
 }
 

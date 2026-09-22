@@ -39,7 +39,7 @@ Its `workspace` block is always the default for the factors. Both `whoami` and `
 
 ### The TUI treats workspace 403s as errors, not credential failures
 
-`workspace_mismatch` and `workspace_required` are 403s the credentials prompt cannot fix (it has no workspace field), so `validationErrMsg` / `opErrMsg` turn them into a footer error naming the selector instead of bouncing to the prompt. Responses also remember the client that issued them: after a switch (or a re-auth) replaces the client, a list, search or whoami answer from the old one is dropped rather than rendered under the new workspace's header, and a picker requested on the list is not opened once the user has drilled into a task.
+`workspace_mismatch` and `workspace_required` are 403s the credentials prompt cannot fix (it has no workspace field), so `validationErrMsg` / `opErrMsg` turn them into a footer error naming the selector instead of bouncing to the prompt. Responses also remember the client that issued them: after a switch (or a re-auth) replaces the client, a list, search-index or whoami answer from the old one is dropped rather than rendered under the new workspace's header, and a picker requested on the list is not opened once the user has drilled into a task.
 
 ### Ids are per workspace
 
