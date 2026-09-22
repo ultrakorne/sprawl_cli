@@ -249,6 +249,15 @@ func (m *Model) selectedTask() *client.Task {
 	return vis[m.listSel]
 }
 
+// descriptionTask is the task E edits: the open one on the checklist, the
+// highlighted row on the list.
+func (m *Model) descriptionTask() *client.Task {
+	if m.current() == screenChecklist {
+		return m.detail
+	}
+	return m.selectedTask()
+}
+
 func (m *Model) selectedItem() *client.ChecklistItem {
 	if m.detail == nil || m.itemSel < 0 || m.itemSel >= len(m.detail.ChecklistItems) {
 		return nil

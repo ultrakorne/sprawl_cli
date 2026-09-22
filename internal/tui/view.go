@@ -88,7 +88,7 @@ func hintsFor(s screen) string {
 	case screenList:
 		return "↑↓ move · enter open · / search · c copy · n new · e title · E desc · t due · d delete · w workspace · r refresh · ? help · q quit"
 	case screenChecklist:
-		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · n add · e title · d delete · esc back · ? help"
+		return "↑↓ move · space/x toggle · s state · p pr · o open pr · enter note · c copy · n add · e title · E desc · d delete · esc back · ? help"
 	case screenNote:
 		return "e edit · c copy · o open pr · ↑↓ scroll · esc back · ? help"
 	}
@@ -340,18 +340,25 @@ func (m *Model) listRows(vis []*client.Task, bodyH int) []string {
 		plainPrefix := fmt.Sprintf("  %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project)
 		prefixW := lipgloss.Width(plainPrefix)
 
+		// A task with a description carries the same 🗒 flag as an item with a
+		// note, riding at the end of the title so it wraps with it.
+		title := t.Title
+		if hasDescription(t) {
+			title += " 🗒"
+		}
+
 		var group []string
 		if i == m.listSel {
 			// Selected: cursor + whole row bold+cyan (spec's selection style).
 			// Styled here rather than by rowLines, which now only styles the title.
 			cursorPrefix := m.styles.sel.Render(
 				fmt.Sprintf("› %s  %s  %s  %s  ", id, padRight(prog, progW), padRight(due, 10), project))
-			group = rowLines(cursorPrefix, prefixW, w, t.Title, m.styles.sel.Render)
+			group = rowLines(cursorPrefix, prefixW, w, title, m.styles.sel.Render)
 		} else {
 			progStyled := m.styles.progress(t.ChecklistProgress.Done, t.ChecklistProgress.Total).Render(padRight(prog, progW))
 			displayPrefix := fmt.Sprintf("  %s  %s  %s  %s  ",
 				m.styles.faint.Render(id), progStyled, m.styles.faint.Render(padRight(due, 10)), project)
-			group = rowLines(displayPrefix, prefixW, w, t.Title, nil)
+			group = rowLines(displayPrefix, prefixW, w, title, nil)
 		}
 		// Search-result annotation: surface matched checklist-item titles on their
 		// own indented line under the task.
@@ -384,13 +391,58 @@ func (m *Model) viewChecklist() string {
 		due, projectLabel(t.Project))
 
 	hints := hintsFor(screenChecklist)
-	var body []string
+	bodyH := m.bodyHeight(hints)
+	body := m.descriptionBlock(t.Description, bodyH)
 	if len(t.ChecklistItems) == 0 {
-		body = []string{m.styles.faint.Render("(no checklist items) — n to add")}
+		body = append(body, m.styles.faint.Render("(no checklist items) — n to add"))
 	} else {
-		body = m.checklistRows(t.ChecklistItems, m.bodyHeight(hints))
+		body = append(body, m.checklistRows(t.ChecklistItems, bodyH-len(body))...)
 	}
 	return m.frame(m.heading(title), body, hints)
+}
+
+// descPreviewMax caps how many lines the task description may take above the
+// checklist. The checklist is what the screen is for; the description is
+// context, and E opens it in full.
+const descPreviewMax = 3
+
+// hasDescription reports whether a task carries a description worth flagging —
+// whitespace alone doesn't count.
+func hasDescription(t *client.Task) bool {
+	return strings.TrimSpace(t.Description) != ""
+}
+
+// descriptionBlock renders the task description as a faint, indented preview
+// above the checklist, followed by a blank separator line. It is capped at
+// descPreviewMax lines and at under half of bodyH, so a long description never
+// crowds the checklist off a short window; a cut preview ends on a line saying
+// how much is hidden and how to see it. Empty when there is no description or
+// no room for one.
+func (m *Model) descriptionBlock(desc string, bodyH int) []string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return nil
+	}
+	const indent = "  "
+	maxLines := min(descPreviewMax, (bodyH-1)/2)
+	if maxLines < 1 {
+		return nil
+	}
+	lines := wrapLines(desc, m.effWidth()-len(indent))
+	switch {
+	case len(lines) <= maxLines:
+	case maxLines == 1:
+		// No room for a hint line as well: a hint alone would show no text.
+		lines = []string{lines[0] + " …"}
+	default:
+		hidden := len(lines) - (maxLines - 1)
+		lines = append(lines[:maxLines-1:maxLines-1], fmt.Sprintf("… +%d more lines — E to open", hidden))
+	}
+	out := make([]string, 0, len(lines)+1)
+	for _, ln := range lines {
+		out = append(out, indent+m.styles.faint.Render(ln))
+	}
+	return append(out, "")
 }
 
 func (m *Model) checklistRows(items []*client.ChecklistItem, bodyH int) []string {
@@ -734,7 +786,7 @@ func helpLines(s styles) []string {
 		{"", "c copy task · n new · e title · E description · t due · d delete"},
 		{"", "w switch workspace (ids are per workspace; a project key pins it)"},
 		{"Checklist", "↑↓/jk move · g/G top/bottom · space/x toggle · enter note"},
-		{"", "c copy item · n add · e title · d delete · esc back"},
+		{"", "c copy item · n add · e title · E description · d delete · esc back"},
 		{"", "s cycle state (ready → progress → review → none) · p set PR number"},
 		{"", "o open the PR in a browser (copies the link if it can't)"},
 		{"", "PR numbers are clickable in terminals that support hyperlinks"},

@@ -28,8 +28,8 @@ Both binaries get the TUI from the shared code.
 Screens form a back stack; `esc` pops one. Overlays (delete confirm, single-line input, pickers, help) render over the current screen.
 
 1. **Credentials prompt** / **Not logged in** — conditional first screens.
-2. **Task list** — one row per task: id, progress (traffic-light), due, project, title. Empty: `(no tasks) — n to create`.
-3. **Checklist** — header with the task's title, progress, due and project; rows `[ ]`/`[x] · id · state icon · PR · title`, with a note flag. The state and PR columns are **always reserved**, so toggling a state never shifts the rows around it.
+2. **Task list** — one row per task: id, progress (traffic-light), due, project, title, with the same 🗒 flag as a noted item when the task has a description. Empty: `(no tasks) — n to create`.
+3. **Checklist** — header with the task's title, progress, due and project; a faint preview of the task description, capped so it never crowds out the items (a cut preview ends on `… +N more lines — E to open`); rows `[ ]`/`[x] · id · state icon · PR · title`, with a note flag. The state and PR columns are **always reserved**, so toggling a state never shifts the rows around it.
 4. **Note** — the selected item's note, scrollable, under a header that spells the state out (`󱌣 In progress · PR #412`). Empty: `(no notes) — e to add`.
 
 ## Flows
@@ -38,7 +38,7 @@ Screens form a back stack; `esc` pops one. Overlays (delete confirm, single-line
 - **Work a checklist** — `space` / `x` toggles the highlighted item **optimistically**: it flips at once, the task's progress updates locally, and a rejection reverts both. Completing an item drops its state icon on the spot (the server clears state on completion); the PR number stays.
 - **Flag state** — `s` advances one step through none → ready → progress → review → none. Setting a state un-completes the item, mirrored immediately. A rejected write re-reads the task rather than reverting.
 - **Link and open a PR** — `p` prompts for a number (prefilled; empty clears; non-positive refused inline). `o` opens the resolved URL in the browser, or copies it when there is no browser (SSH). PR numbers are also OSC 8 hyperlinks, colored only when the link resolves; the mouse is never captured, so terminal text selection keeps working.
-- **Create / edit** — `n` new task (inline title, optional `$EDITOR` description, optional project picker built from projects already in the list); `e` inline title; `E` task description in `$EDITOR`; `t` due-date picker; `d` delete with confirm. On the checklist `n` adds an item and `e` edits its title; on the note screen `e` edits the note in `$EDITOR`.
+- **Create / edit** — `n` new task (inline title, optional `$EDITOR` description, optional project picker built from projects already in the list); `e` inline title; `E` task description in `$EDITOR`; `t` due-date picker; `d` delete with confirm. On the checklist `n` adds an item, `e` edits its title and `E` edits the open task's description; on the note screen `e` edits the note in `$EDITOR`.
 - **Search** — `/` filters the list live by title; `enter` runs a server search that also matches item titles (shown under the row); `esc` clears.
 - **Switch workspace** — `w` opens a picker of reachable workspaces (role and level shown, current marked); choosing one re-pins the session and refetches the list. Under a project key the footer says the key pins the workspace instead. See [workspaces](../workspaces/INDEX.md).
 - **Refresh / errors** — `r` refetches; API errors land on the footer and never crash the UI; `?` shows the keymap.
@@ -49,7 +49,7 @@ Screens form a back stack; `esc` pops one. Overlays (delete confirm, single-line
 Creds     tab / ↑↓ switch field · enter submit · esc quit
 Global    ? help · r refresh · esc back · ctrl+c quit
 List      ↑↓ j k · g/G · enter open · / search · c copy · n new · e title · E desc · t due · d delete · w workspace · q quit
-Checklist ↑↓ j k · g/G · space/x toggle · enter note · c copy · n add · e title · d delete · s state · p PR · o open PR
+Checklist ↑↓ j k · g/G · space/x toggle · enter note · c copy · n add · e title · E desc · d delete · s state · p PR · o open PR
 Note      ↑↓ scroll · e edit · c copy · o open PR
 ```
 
@@ -62,4 +62,5 @@ There is no "mark whole task done" key: a task's done-ness is derived from its i
 - **Optimistic toggle, resync-on-failure state** — toggling is the highest-frequency action and must feel instant; state interacts with completion server-side, so after a rejection the server's copy is the only trustworthy one.
 - **Hand-rolled single-line input** — a few dozen lines beat a dependency.
 - **Project picker only reuses seen projects** — there is no list-projects endpoint, so creation offers what the loaded list already shows, or none.
+- **Description is context, the checklist is the screen** — the preview is a few faint lines at most and `E` opens the full text, so a long description never pushes the items off a short window.
 - **Workspace switch is memory-only** — same rule as the CLI: nothing about scope is persisted by sprawl.

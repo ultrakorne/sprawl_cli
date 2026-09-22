@@ -22,7 +22,7 @@ const (
 	actCopy              // c — copy Markdown to clipboard
 	actNewTask           // n
 	actEditTitle         // e — edit task title (list) / item title (checklist)
-	actEditDesc          // E — edit task description in $EDITOR (list)
+	actEditDesc          // E — edit task description in $EDITOR (list, checklist)
 	actSetDue            // t — set due date
 	actDelete            // d — delete (with confirm)
 	actAddItem           // n — add checklist item
@@ -115,6 +115,8 @@ func checklistAction(key string) action {
 		return actAddItem
 	case "e":
 		return actEditTitle
+	case "E":
+		return actEditDesc
 	case "d":
 		return actDelete
 	case "s":

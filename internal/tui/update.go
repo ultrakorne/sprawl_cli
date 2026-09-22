@@ -783,7 +783,7 @@ func (m *Model) editTitle() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) editDescription() (tea.Model, tea.Cmd) {
-	t := m.selectedTask()
+	t := m.descriptionTask()
 	if t == nil {
 		return m, nil
 	}

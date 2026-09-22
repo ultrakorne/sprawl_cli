@@ -36,8 +36,10 @@ func TestDispatch_ChecklistScreen(t *testing.T) {
 		"space": actToggle, "x": actToggle, "enter": actOpen,
 		"n": actAddItem, "e": actEditTitle, "d": actDelete,
 		"c": actCopy, "g": actTop, "G": actBottom, "esc": actBack,
+		// E edits the open task's description, shown above the checklist
+		"E": actEditDesc,
 		// list-only keys must not leak onto the checklist
-		"a": actNone, "E": actNone, "t": actNone, "/": actNone,
+		"a": actNone, "t": actNone, "/": actNone,
 	}
 	for key, want := range cases {
 		if got := dispatch(screenChecklist, key); got != want {

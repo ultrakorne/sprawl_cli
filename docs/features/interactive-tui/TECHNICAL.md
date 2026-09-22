@@ -59,6 +59,10 @@ The state column is `icons.Width` cells and the PR column has a floor that only 
 
 Hints pack backwards from the last binding into at most two rows, breaking on separators; `bodyHeight(hints)` is the one source of truth for how many body lines fit, shared by the renderers and the scroll clamp so they cannot disagree.
 
+### The description preview borrows from the checklist's height
+
+On the checklist screen the description block is rendered first and the item rows get `bodyHeight` minus its length, so selection scrolling stays correct. The preview is at most three lines (two of text plus the `E to open` hint), capped at `(bodyH-1)/2`, then a blank separator, so the checklist always keeps at least half the body; and whitespace-only descriptions count as none on both the preview and the list-row flag. `E` targets the open task on the checklist and the highlighted row on the list (`descriptionTask`).
+
 ### Clipboard Markdown matches the server's export
 
 State and PR ride on the checklist line as a trailing `<!-- state: … pr: … -->` comment, byte-identical to the server's Markdown export so a pasted file round-trips through import. The whole-task copy names the repo once in its header; the single-item copy carries the resolved PR URL, since a bare number would have nothing to resolve against.

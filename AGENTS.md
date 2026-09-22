@@ -91,7 +91,6 @@ internal/client/     stdlib net/http client
 internal/config/     XDG-aware config.toml Load/Save
 internal/updater/    `sprawl update` + once-per-day version notice
 skills/sprawl/       agent-skills bundle (installed via `gh skill install`)
-agents/              sprawl-bookkeeper sub-agent (one file per host; manual install)
 docs/                feature-level documentation (start at docs/INDEX.md)
 Makefile             build / build-dev / build-all / run-dev / test / clean
 .goreleaser.yaml     release config (stub)
