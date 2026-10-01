@@ -117,6 +117,11 @@ func explainAPIError(err error, opts *runtimeOpts) (apiGuidance, bool) {
 	key := resolveProjectKey(opts)
 	workspace, _ := resolveWorkspace(opts)
 	switch apiErr.Code {
+	case "invalid_assignee":
+		return apiGuidance{
+			headline: "the assignee is malformed or no longer eligible in this workspace",
+			remedy:   fmt.Sprintf("refresh `%s workspace actors` in the same workspace and use a returned user:<id> or agent_key:<id>", build.AppName),
+		}, true
 	case "workspace_mismatch":
 		// Documented as project-key-specific, but the wording shouldn't fall
 		// apart if a future server raises it for another binding.

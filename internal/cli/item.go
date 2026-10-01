@@ -22,11 +22,11 @@ import (
 func newItemCmd(opts *runtimeOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "item <id>",
-		Short: "Show an item with its note, or manage items (add, update, check, uncheck, state, pr, delete)",
+		Short: "Show or manage items (add, update, assign, unassign, check, uncheck, state, pr, delete)",
 		Long: "With just an item id, fetches that item and its note " +
 			"(GET /api/v1/checklist_items/:id) — the detail view, so the note is always " +
 			"expanded and there is no --full. Use the `add`, `update`, `check`, `uncheck`, " +
-			"`state`, `pr` and `delete` subcommands to mutate items.\n\n" +
+			"`assign`, `unassign`, `state`, `pr` and `delete` subcommands to mutate items.\n\n" +
 			"The human view shows the item alone, with no parent-task context — an item id " +
 			"is what you asked about, so an item is what you get. --format=json " +
 			"additionally carries a `task` stub (id, title, project) if you need to get back " +
@@ -46,6 +46,8 @@ func newItemCmd(opts *runtimeOpts) *cobra.Command {
 	cmd.SilenceErrors = true
 	cmd.AddCommand(newItemAddCmd(opts))
 	cmd.AddCommand(newItemUpdateCmd(opts))
+	cmd.AddCommand(newItemAssignCmd(opts, false))
+	cmd.AddCommand(newItemAssignCmd(opts, true))
 	cmd.AddCommand(newItemCheckCmd(opts))
 	cmd.AddCommand(newItemUncheckCmd(opts))
 	cmd.AddCommand(newItemStateCmd(opts))
@@ -141,15 +143,19 @@ func itemDetailText(it *client.ItemDetail) string {
 // -- write ------------------------------------------------------------------
 
 // itemWriteFlags carries the flag state shared by `item add` and `item update`:
-// the two writable fields plus a --from-json escape hatch.
+// title, notes and assignment plus a --from-json escape hatch.
 type itemWriteFlags struct {
-	title    string
-	notes    string
-	fromJSON string
-	hasNotes bool
+	title       string
+	notes       string
+	fromJSON    string
+	hasNotes    bool
+	assignee    string
+	hasAssignee bool
+	unassign    bool
 }
 
 func bindItemWriteFlags(cmd *cobra.Command, f *itemWriteFlags) {
+	cmd.Flags().StringVar(&f.assignee, "assignee", "", "assign or reassign to user:<id> or agent_key:<id>; discover with workspace actors")
 	cmd.Flags().StringVar(&f.title, "title", "", "item title")
 	cmd.Flags().StringVar(&f.notes, "notes", "",
 		"the item's note; `-` reads the whole body from stdin, and \"\" clears it")
@@ -161,6 +167,9 @@ func bindItemWriteFlags(cmd *cobra.Command, f *itemWriteFlags) {
 // on conflict. `--notes -` reads the body from stdin, which is how a multi-line
 // or piped note is written now that `note set --stdin` is gone.
 func (f *itemWriteFlags) buildAttrs(stdin io.Reader) (map[string]any, error) {
+	if f.hasAssignee && f.unassign {
+		return nil, fmt.Errorf("--assignee and --unassign are mutually exclusive")
+	}
 	attrs := map[string]any{}
 	if f.fromJSON != "" {
 		loaded, err := loadJSONFromSource(f.fromJSON, stdin)
@@ -189,6 +198,9 @@ func (f *itemWriteFlags) buildAttrs(stdin io.Reader) (map[string]any, error) {
 		}
 		attrs["notes"] = notes
 	}
+	if err := mergeAssignment(attrs, f.assignee, f.hasAssignee, f.unassign); err != nil {
+		return nil, err
+	}
 	return attrs, nil
 }
 
@@ -201,13 +213,15 @@ func newItemAddCmd(opts *runtimeOpts) *cobra.Command {
 		Use:   "add <task_id>",
 		Short: "Add an item to a task (POST /api/v1/tasks/:task_id/checklist)",
 		Long: "Add a checklist item under a task. Provide --title (required server-side) and " +
-			"an optional --notes, or pipe a JSON object via `--from-json -`. Position is " +
+			"optional --notes and --assignee user:<id>|agent_key:<id>, or pipe a JSON object via `--from-json -`. " +
+			"Discover eligible assignees with `workspace actors` in the same workspace. Position is " +
 			"assigned by the server (appended at the end).\n\n" +
 			"Note the argument is a TASK id — this is the one item verb that takes one, " +
 			"because the item doesn't exist yet.",
 		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.hasNotes = cmd.Flags().Changed("notes")
+			f.hasAssignee = cmd.Flags().Changed("assignee")
 			attrs, err := f.buildAttrs(cmd.InOrStdin())
 			if err != nil {
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
@@ -227,18 +241,22 @@ func newItemUpdateCmd(opts *runtimeOpts) *cobra.Command {
 	var f itemWriteFlags
 	cmd := &cobra.Command{
 		Use:   "update <id>",
-		Short: "Update an item's title or note (PATCH /api/v1/checklist_items/:id)",
-		Long: "Update a checklist item's title and/or its note. This is the ONLY way to write " +
+		Short: "Update an item's title, note or assignment (PATCH /api/v1/checklist_items/:id)",
+		Long: "Update a checklist item's title, note or assignment. Use --assignee user:<id> or " +
+			"agent_key:<id> to assign/reassign, or --unassign to clear. Discover targets with " +
+			"`workspace actors` in the same workspace. Explicit assignment flags override --from-json. " +
+			"Omitting assignment preserves it; JSON null clears it. This is the ONLY way to write " +
 			"a note — there is no separate note command.\n\n" +
 			"  item update 203 --notes \"blocked on the backfill\"   set it\n" +
 			"  item update 203 --notes -                           read the body from stdin\n" +
 			"  item update 203 --notes \"\"                          clear it\n\n" +
 			"Completion isn't mutable here — use `item check` / `item uncheck`. State and PR " +
 			"number aren't either — use `item state` / `item pr`. The server requires at least " +
-			"one of title / notes and rejects an empty write with 422.",
+			"one of title / notes / assignee and rejects an empty write with 422.",
 		Args: textArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.hasNotes = cmd.Flags().Changed("notes")
+			f.hasAssignee = cmd.Flags().Changed("assignee")
 			attrs, err := f.buildAttrs(cmd.InOrStdin())
 			if err != nil {
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
@@ -250,6 +268,7 @@ func newItemUpdateCmd(opts *runtimeOpts) *cobra.Command {
 		},
 	}
 	bindItemWriteFlags(cmd, &f)
+	cmd.Flags().BoolVar(&f.unassign, "unassign", false, "clear the item's assignment (mutually exclusive with --assignee)")
 	cmd.SilenceErrors = true
 	return cmd
 }
@@ -458,7 +477,7 @@ func renderItemWrite(out io.Writer, item *client.ChecklistItem, withNotes bool, 
 	// A write response carries no task, so no project, so no pr_url — the number
 	// is there, the link isn't resolvable from this payload alone.
 	payload := map[string]any{"checklist_item": itemMap(item, nil, withNotes)}
-	return renderPayload(out, payload, summary, opts)
+	return renderPayload(out, payload, summary+"  assignee: "+assigneeText(item.Assignee), opts)
 }
 
 // itemWriteSummary is `✓ <verb> item <id>  <title>`, matching the TUI's transient

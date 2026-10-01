@@ -65,7 +65,7 @@ func itemTableHeader(c itemCols) []string {
 	if c.state {
 		h = append(h, "STATE")
 	}
-	h = append(h, "PR", "NOTES", "TITLE")
+	h = append(h, "PR", "NOTES", "ASSIGNEE", "TITLE")
 	return h
 }
 
@@ -84,6 +84,7 @@ func itemRow(v itemView, c itemCols) []col {
 	}
 	row = append(row, prCol(it.PRNumber, v.project))
 	row = append(row, plainCol(notesFlag(it.HasNotes)))
+	row = append(row, plainCol(assigneeText(it.Assignee)))
 	row = append(row, plainCol(it.Title))
 	return row
 }
@@ -234,6 +235,7 @@ func wrapLines(s string, width int) []string {
 // — it is what drives the NOTES column.
 func itemMap(it *client.ChecklistItem, project *client.Project, withNotes bool) map[string]any {
 	m := map[string]any{
+		"assignee":   assigneeMap(it.Assignee),
 		"id":         it.ID,
 		"title":      it.Title,
 		"completed":  it.Completed,

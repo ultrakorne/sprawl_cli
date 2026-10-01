@@ -35,3 +35,10 @@
 - `github.com/charmbracelet/colorprofile` — profile detection + escape stripping at write time (`writeHuman`).
 - `github.com/charmbracelet/x/term` — strict TTY check for the styling gate.
 - stdlib `encoding/json`.
+
+## Assignment output
+
+Every shared item map carries `assignee` as the stored typed pair or null.
+Text displays the typed ID without a roster lookup, keeping read-only keys
+usable. Actor labels and markers appear only in explicit `workspace actors`
+output; assignment errors retain their server code through the shared pipeline.

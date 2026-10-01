@@ -1,6 +1,6 @@
 # Workspaces
 
-A workspace is an independent canvas of tasks and projects — the user's own, or one shared with them. Every task, item, queue and activity call runs in exactly one workspace: by default the one the credentials resolve to, otherwise the one named by `--workspace` / `-w` / `SPRAWL_WORKSPACE`. The selector only picks the canvas; it never stands in for a project key or an agent secret. `workspace list` discovers ids, `whoami` names the workspace a session runs in, and the TUI's `w` key switches for the rest of a session.
+A workspace is an independent canvas of tasks and projects — the user's own, or one shared with them. Every task, item, queue and activity call runs in exactly one workspace: by default the one the credentials resolve to, otherwise the one named by `--workspace` / `-w` / `SPRAWL_WORKSPACE`. The selector only picks the canvas; it never stands in for a project key or an agent secret. `workspace list` discovers ids, `workspace actors [id]` discovers eligible item assignees, `whoami` names the workspace a session runs in, and the TUI's `w` key switches for the rest of a session.
 
 ## Documents
 

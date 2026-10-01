@@ -115,6 +115,7 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl login` | Runs the RFC 8628 device flow and saves the resulting token. |
 | `sprawl whoami` | Calls `GET /api/v1/whoami` to identify the calling agent, name the project you're confined to (when a project key is set) and the level you resolve to there, and list any project-scoped permissions that elevate the default. Also names the workspace this session's calls run in (`workspace:`, or `workspace (selected):` under `-w`) with your role and access there, plus every workspace you can reach; warns when a project key's workspace disagrees with a `-w` selection. Doubles as an auth-pipeline check. |
 | `sprawl workspace list` | Lists every workspace you can reach, with `›` on the one this session works in. Columns `ID NAME ROLE LEVEL` — `role` is your standing there (`owner` / `read` / `write` / `write_create`), `level` what the presented agent key actually resolves to (a workspace-bound key reads `none` everywhere but its own: lists there come back empty, writes 403). `LEVEL` is dropped under a project key. JSON: `{"status":"ok","current":{…},"workspaces":[{id,name,role,level}…]}`. See [Workspaces](#workspaces). |
+| `sprawl workspace actors [id]` | Discovers eligible assignees with type, id, label and marker. Requires write access. Uses the explicit workspace, selector, or `whoami` default; conflicting explicit/selected IDs fail locally. |
 | `sprawl theme get` | Fetches the currently active UI theme id (e.g. `tokyo-night`). |
 | `sprawl theme set <id>` | Sets the active theme by id. Ids are lowercase kebab-case (`tokyo-night`, `catppuccin-latte`, `gruvbox`); the server does no normalization, so an unknown id → 404. Owner-only, and the one command a project key can't authorize — a theme is user-level, so this always needs an agent secret. |
 | `sprawl task list` | Lists every task the caller can read. Non-owner agents see only tasks their key resolves `:read` / `:write` / `:write_create` on. |
@@ -124,8 +125,10 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl task update <id>` | Updates a task's `title` / `description`. Flags: `--title`, `--description`, `--from-json <path\|->`. Passing `--description ""` clears the field explicitly. |
 | `sprawl task delete <id>` | Soft-deletes a task. Server reflows neighbor cards on the canvas. A 404 (already deleted or never visible) is treated as success — the CLI is idempotent. There is no API to restore a soft-deleted task. |
 | `sprawl item <id>` | Fetches one item with its note — the detail view, so the note is always included and there is no `--full`. Human output is a single table row; `json` additionally carries a `task` stub (id, title, project). |
-| `sprawl item add <task_id>` | Adds an item to a task. Flags: `--title`, `--notes`, `--from-json <path\|->`. Server assigns position (appended). Note the argument is a **task** id — the one item verb that takes one. |
-| `sprawl item update <id>` | Updates an item's `title` and/or its note — the only way to write a note. Flags: `--title`, `--notes`, `--from-json <path\|->`. `--notes -` reads the body from stdin; `--notes ""` clears it. Use `check` / `uncheck` for completion. |
+| `sprawl item add <task_id>` | Adds an item to a task, optionally assigned. Flags: `--title`, `--notes`, `--assignee <user:id\|agent_key:id>`, `--from-json <path\|->`. Server assigns position (appended). Note the argument is a **task** id — the one item verb that takes one. |
+| `sprawl item update <id>` | Updates an item's title, note or assignment. Flags: `--title`, `--notes`, `--assignee`, `--unassign`, `--from-json <path\|->`. `--notes -` reads the body from stdin; `--notes ""` clears it. Use `check` / `uncheck` for completion. |
+| `sprawl item assign <id> <user:id\|agent_key:id>` | Assigns or reassigns an item to one eligible workspace actor; preserves completion, state, notes, and PR number. |
+| `sprawl item unassign <id>` | Clears the item's assignment. |
 | `sprawl item check <id>` | Marks the item completed (`{"completed": true}`). Idempotent — no-op on an already-completed item. |
 | `sprawl item uncheck <id>` | Marks the item not completed (`{"completed": false}`). Idempotent — no-op on an already-uncompleted item. |
 | `sprawl item state <id> <ready\|progress\|review\|none>` | Sets the item's hand-set state, or clears it with `none`. These short names are the vocabulary — they're what reads emit too. States are mutually exclusive, and setting one **un-completes** the item. Separate route from `item update`, which ignores the field. |
@@ -152,6 +155,7 @@ All commands honour the `--format` flag (and `-h` / `--human`, a shorthand for `
 
 - **`state` is short-form on output** — `ready` / `progress` / `review` / `null`, never the server's `ready_to_pickup` / `in_progress` / `in_review`. Input still accepts both. This is what keeps an item's state from colliding with a task's `status`, which really is `in_progress`.
 - **`pr_url` is added** — the assembled GitHub link, or `null` when the chain can't resolve (no PR number, no project, or no repo URL on it). None of those is an error.
+- **`assignee` is always a typed `{type, id}` pair or `null`.** Text views show the typed ID without fetching actor labels.
 - **`position` is dropped.** Array order already carries ordering; the server returns items in position order.
 - **`notes` rides only where the bodies were fetched** — `item <id>` always, `task <id>` / `queue` only under `--full`. `has_notes` is always present.
 
@@ -217,6 +221,34 @@ sprawl item update 203 --title "renamed"
 sprawl item check 203                          # idempotent
 sprawl item uncheck 203                        # idempotent
 ```
+
+### Assign / reassign / clear an item
+
+```bash
+sprawl workspace actors                        # discover in the current workspace
+sprawl item assign 203 user:3
+sprawl item assign 203 agent_key:7              # reassign
+sprawl item unassign 203
+sprawl item add 119 --title "Write docs" --assignee agent_key:7
+sprawl item update 203 --title "Review docs" --assignee user:3
+sprawl item update 203 --unassign
+sprawl --workspace 42 workspace actors
+sprawl --workspace 42 item assign 203 agent_key:7
+```
+
+Assignment belongs to an item, independently of state and audit identity.
+Use `user:<id>` or `agent_key:<id>` with a decimal ID from 1 to 2147483647.
+`--from-json` accepts `assignee` as a pair or null: omission preserves it
+(creates unassigned), null clears it, and a pair assigns one actor. Explicit
+flags override JSON; `--assignee` and `--unassign` conflict.
+
+Use the same workspace for discovery and writes. `workspace actors 42` only
+queries that roster; it does not select workspace 42 for subsequent commands.
+The server rechecks eligibility on each write. On `invalid_assignee`, refresh
+discovery; stale stored pairs remain visible in JSON and as typed IDs in text.
+Assigned creation requires a backend with create-time assignment support;
+verify the returned pair. For a local backend on port 4001, build with
+`make build-dev PORT=4001` or set `SPRAWL_API_URL=http://localhost:4001`.
 
 ### `item state <id>` / `pr` / `queue`
 

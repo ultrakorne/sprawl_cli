@@ -17,7 +17,7 @@ HTTP client for the sprawl task-management API, shipped as two binaries from one
 | [workspaces](features/workspaces/INDEX.md) | The `--workspace` selector, `workspace list`, and the TUI's `w` switch — which canvas a call runs in. |
 | [output-formats](features/output-formats/INDEX.md) | Uniform text / JSON rendering contract, item normalization, error envelope and hints. |
 | [tasks](features/tasks/INDEX.md) | `task <id> / list / search / create / update / due / delete`. |
-| [items](features/items/INDEX.md) | `item <id> / add / update / check / uncheck / delete` and the shared item table behind every item view; a note is a field of an item. |
+| [items](features/items/INDEX.md) | Item reads and writes, assignment and actor discovery, and the shared item table; a note is a field of an item. |
 | [item-state-and-pr](features/item-state-and-pr/INDEX.md) | Hand-set item state and GitHub PR number: `item state / pr`, the cross-task `queue`, the TUI's `s` / `p` / `o` keys. |
 | [theme](features/theme/INDEX.md) | `theme get / set` — the owner's web-app theme. |
 | [whoami](features/whoami/INDEX.md) | `whoami` — caller agent, workspace, confined project, permission levels. |

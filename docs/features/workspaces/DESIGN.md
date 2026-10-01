@@ -33,3 +33,12 @@ A selection is a per-request **path prefix**, not a header: `/api/v1/workspaces/
 - **Role and level are shown side by side.** A shared workspace where the user is a member but the presented key is bound elsewhere reads `role: write`, `level: none`; showing only one of the two would either hide why lists are empty or overstate what the key can do.
 - **`LEVEL` is hidden under a project key.** Confinement makes every workspace's level `none` by construction; printing that would read as "no access" when the project's own level is what matters.
 - **`workspace list` reads through `whoami`.** One call carries both the reachable list and the default, so the current workspace can be marked without a second request.
+
+## Actor discovery
+
+`workspace actors [id]` lists eligible item assignees with typed IDs, labels,
+and markers. It uses the positional ID, selector, or `whoami` default in that
+order; a positional ID conflicting with the selector fails locally. The
+positional ID queries a roster without changing later commands' workspace.
+Use the same selector on discovery and writes. Discovery requires write access,
+retains both configured factors, and does not reserve a target's eligibility.

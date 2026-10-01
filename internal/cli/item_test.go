@@ -217,7 +217,7 @@ func TestRunItemAdd_TextIsAOneLineSummary(t *testing.T) {
 		t.Fatalf("runItemAdd: %v", err)
 	}
 	got := strings.TrimSpace(stdout.String())
-	if got != "✓ added item 206  step" {
+	if got != "✓ added item 206  step  assignee: -" {
 		t.Errorf("summary = %q", got)
 	}
 	// No table, no card — a write says what it did and stops.
@@ -327,7 +327,7 @@ func TestRunItemSetCompleted_SendsBooleanAndSummarises(t *testing.T) {
 	for _, tc := range []struct {
 		completed bool
 		want      string
-	}{{true, "✓ checked item 206  step"}, {false, "✓ unchecked item 206  step"}} {
+	}{{true, "✓ checked item 206  step  assignee: -"}, {false, "✓ unchecked item 206  step  assignee: -"}} {
 		var gotBody []byte
 		fx := newAuthedFixture(t, "text", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/v1/checklist_items/206/completed" {

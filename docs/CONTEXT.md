@@ -58,6 +58,10 @@ _Avoid_: subtask, todo, step, entry
 Free-form text attached to one checklist item as a field of it; each item has at most one, and it is never a standalone object.
 _Avoid_: comment, description, notes (plural, as a name for one note)
 
+**Assignee**:
+The optional `{type, id}` pair on a checklist item naming one person (`user`) or agent key (`agent_key`), independently of item state and the last actor's audit identity.
+_Avoid_: task owner, last actor, agent (as an assignment type)
+
 **Item state**:
 The hand-set marker on a checklist item — **`ready`**, **`progress`**, **`review`**, or none — one vocabulary for reading and writing; an item carrying a state is incomplete by construction.
 _Avoid_: item status, stage, phase, column, `ready_to_pickup` / `in_progress` / `in_review` (server-internal spellings)
@@ -92,6 +96,6 @@ _Avoid_: theme (alone), UI theme (in code)
 
 - A request carries the **token** plus at least one **narrowing factor**; the **workspace selector** rides on top and picks the canvas.
 - A **workspace** contains projects and **tasks**; a **project key** pins its project's workspace.
-- A **task** owns ordered **checklist items**; a **checklist item** owns at most one **note**, at most one **item state**, and at most one **PR number**.
+- A **task** owns ordered **checklist items**; a **checklist item** owns at most one **note**, **assignee**, **item state**, and **PR number**.
 - A **task** belongs to at most one project; that project supplies the **repo URL** that turns an item's **PR number** into a link.
 - A **queue** is every **checklist item** sharing one **item state**, across tasks in one **workspace**, grouped by task.
