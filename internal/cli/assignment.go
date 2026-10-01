@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -64,8 +65,8 @@ func mergeAssignment(attrs map[string]any, value string, present, clear bool) er
 	switch v := obj["id"].(type) {
 	case string:
 		id = v
-	case float64:
-		id = strconv.FormatFloat(v, 'f', -1, 64)
+	case json.Number:
+		id = v.String()
 	default:
 		return fmt.Errorf("assignee.id must be a decimal integer from 1 to 2147483647")
 	}

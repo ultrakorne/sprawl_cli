@@ -25,6 +25,8 @@ func loadJSONFromSource(source string, stdin io.Reader) (map[string]any, error) 
 	}
 	var raw any
 	dec := json.NewDecoder(reader)
+	// Preserve numeric text so bounded IDs can be validated before conversion.
+	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode json from %s: %w", source, err)
 	}

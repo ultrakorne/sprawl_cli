@@ -33,6 +33,8 @@ render typed IDs and never request write-only actor data.
 - Attribute-map key presence distinguishes omitted assignment from explicit
   null. Explicit flags override JSON before assignment validation, so a flag
   can replace an invalid JSON target. Numeric-string JSON IDs normalize to integers.
+  JSON numbers retain their text until validation, so fractional IDs cannot round
+  into valid actor IDs.
 - Assignment parsing checks shape and bounds locally; actor eligibility stays
   server-owned. Discovery is advisory and a refused write remains a failure.
 - Stored assignments survive roster revocation in responses. Machine output
