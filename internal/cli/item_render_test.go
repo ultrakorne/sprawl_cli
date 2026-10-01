@@ -27,7 +27,8 @@ func demoItem() *client.ChecklistItem {
 	return &client.ChecklistItem{
 		ID: 203, Title: "add the migration", Completed: true,
 		State: client.StateInReview, PRNumber: 412, HasNotes: true,
-		Notes: ptr("blocked on the backfill"),
+		Notes:    ptr("blocked on the backfill"),
+		Assignee: &client.Assignee{Type: "agent_key", ID: 7},
 	}
 }
 
@@ -71,12 +72,12 @@ func TestItemRow_IdenticalCellsAcrossViews(t *testing.T) {
 		out := map[string]col{}
 		for i, h := range header {
 			switch h {
-			case "ID", "PR", "NOTES", "TITLE":
+			case "ID", "PR", "NOTES", "ASSIGNEE", "TITLE":
 				out[h] = row[i]
 			}
 		}
-		if len(out) != 4 {
-			t.Fatalf("%s: expected 4 shared columns, got %d", name, len(out))
+		if len(out) != 5 {
+			t.Fatalf("%s: expected 5 shared columns, got %d", name, len(out))
 		}
 		return out
 	}
@@ -96,9 +97,9 @@ func TestItemTableHeader_ColumnSets(t *testing.T) {
 		want []string
 	}{
 		{"task <id> / item <id>", itemCols{checkbox: true, state: true},
-			[]string{"[x]", "ID", "STATE", "PR", "NOTES", "TITLE"}},
+			[]string{"[x]", "ID", "STATE", "PR", "NOTES", "ASSIGNEE", "TITLE"}},
 		{"queue", itemCols{},
-			[]string{"ID", "PR", "NOTES", "TITLE"}},
+			[]string{"ID", "PR", "NOTES", "ASSIGNEE", "TITLE"}},
 	} {
 		got := itemTableHeader(tc.cols)
 		if strings.Join(got, "|") != strings.Join(tc.want, "|") {

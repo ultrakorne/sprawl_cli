@@ -4,13 +4,13 @@ description: >
   Collaborate on shared tasks, items, and notes with the human and other
   agents via the sprawl CLI. Use this skill whenever the user asks you to look
   at "my tasks", "the backlog", "what's assigned to me", to pick up work that's
-  ready, check off an item, mark something in progress or in review,
+  ready, assign or reassign an item, clear an assignment, check off an item, mark something in progress or in review,
   attach a PR number, leave a note for another agent, create a task, or
   coordinate work with another agent — anything that reads or writes the sprawl
   task space.
 license: 'MIT'
 metadata:
-  version: 0.6.0
+  version: 0.7.0
 allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(printenv SPRAWL_WORKSPACE), Bash(test:*)
 ---
 
@@ -383,6 +383,10 @@ comparing the date against today / yesterday / the user's week-end.
 
 ### Writes — items
 
+For **assigning, reassigning, clearing, creating with an assignee, finding
+eligible targets, or finding assigned work**, read [ASSIGNMENT.md](ASSIGNMENT.md). Assignment is independent
+of state; moving an item to `progress` does not assign it.
+
 Wire body: `{"checklist_item": {...}}`. Server assigns `position` on add.
 Permission is checked on the **parent task**, not per item.
 
@@ -464,7 +468,7 @@ not your job. If they ask for it, tell them to run it themselves.
 
 These are the common shapes of work the skill exists for.
 
-### 1. Pick up assigned work
+### 1. Pick up ready work
 
 ```bash
 sprawl queue                   # items flagged ready to pick up, grouped by task
@@ -479,7 +483,8 @@ group. Fall back to `sprawl task list` when nothing is queued or you
 need the wider picture — your key already scopes both server-side.
 
 **Claim it, then work it.** The states are how the human and other agents see
-who's on what, live:
+which work is active, live. Check each item's `assignee` when choosing work;
+for assignment discovery and stale targets, read [ASSIGNMENT.md](ASSIGNMENT.md).
 
 ```bash
 sprawl item state 7 progress   # claiming it — do this before you start

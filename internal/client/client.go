@@ -246,6 +246,30 @@ func (c *Client) Whoami(ctx context.Context) (*Whoami, error) {
 	return &w, nil
 }
 
+// Assignee is a stored assignment, distinct from the last actor's audit identity.
+type Assignee struct {
+	Type string `json:"type"`
+	ID   int64  `json:"id"`
+}
+
+// WorkspaceActor is an eligible assignee with human-facing discovery metadata.
+type WorkspaceActor struct {
+	Assignee
+	Label  string `json:"label"`
+	Marker string `json:"marker"`
+}
+
+func (c *Client) ListWorkspaceActors(ctx context.Context, workspaceID string) ([]WorkspaceActor, error) {
+	var env struct {
+		Actors []WorkspaceActor `json:"actors"`
+	}
+	path := "/api/v1/workspaces/" + url.PathEscape(workspaceID) + "/actors"
+	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
+		return nil, err
+	}
+	return env.Actors, nil
+}
+
 // themeEnvelope matches the flat wire shape — `{"theme": "<id>"}` — used by
 // both GET and PATCH. IDs are lowercase kebab-case (e.g. `tokyo-night`).
 type themeEnvelope struct {
@@ -379,15 +403,16 @@ type Task struct {
 // Task.Status, which is derived from checked counts and happens to share the
 // string "in_progress".
 type ChecklistItem struct {
-	ID        int64   `json:"id"`
-	Title     string  `json:"title"`
-	Completed bool    `json:"completed"`
-	Position  int     `json:"position"`
-	State     string  `json:"state"`
-	PRNumber  int64   `json:"pr_number"`
-	HasNotes  bool    `json:"has_notes"`
-	Notes     *string `json:"notes,omitempty"`
-	LastActor *Actor  `json:"last_actor"`
+	Assignee  *Assignee `json:"assignee"`
+	ID        int64     `json:"id"`
+	Title     string    `json:"title"`
+	Completed bool      `json:"completed"`
+	Position  int       `json:"position"`
+	State     string    `json:"state"`
+	PRNumber  int64     `json:"pr_number"`
+	HasNotes  bool      `json:"has_notes"`
+	Notes     *string   `json:"notes,omitempty"`
+	LastActor *Actor    `json:"last_actor"`
 }
 
 // The three item states the server accepts. Anything else is a 422; clearing is

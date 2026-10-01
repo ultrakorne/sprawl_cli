@@ -36,6 +36,7 @@ func newWorkspaceCmd(opts *runtimeOpts) *cobra.Command {
 	}
 	cmd.SilenceErrors = true
 	cmd.AddCommand(newWorkspaceListCmd(opts))
+	cmd.AddCommand(newWorkspaceActorsCmd(opts))
 	return cmd
 }
 

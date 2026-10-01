@@ -13,6 +13,7 @@ The selector is resolved once per invocation (`--workspace` flag → `SPRAWL_WOR
 | `internal/cli/auth.go` | `resolveWorkspace` (flag → env, positive-integer check) and its wiring into `newAuthedClient`. |
 | `internal/cli/root.go` | Registers `-w` / `--workspace`; validates the selector in `PersistentPreRunE`. |
 | `internal/cli/workspace.go` | The `workspace` noun, `workspace list`, `effectiveWorkspace` (selection resolved against the reachable list), the table and json shapes. |
+| `internal/cli/workspace_actors.go` | Explicit actor discovery, default-workspace resolution, typed-ID text and actor JSON output. |
 | `internal/cli/whoami.go` | Workspace lines in the text view, `workspace` / `workspaces` keys in json, the project-key mismatch warning. |
 | `internal/cli/output.go` | Guidance for `workspace_mismatch`, `workspace_required`, and `not_found` under a selector. |
 | `internal/cli/interactive.go` | Hands the resolved selector to the TUI. |
@@ -60,3 +61,10 @@ A backend without workspaces answers `whoami` with neither `workspace` nor `work
 ## Testing
 
 `internal/cli/workspace_test.go` covers resolution and the pre-HTTP rejection, path prefixing from the command layer, the not-a-factor rule, `workspace list` and `whoami` under a selection, and the error guidance; `internal/client/workspace_test.go` pins exactly which routes are prefixed, that an empty selector is a no-op, that the narrowing headers survive, and `Whoami` decoding with and without the workspace keys; `internal/tui/workspace_test.go` drives the header, picker, switch, no-op, level-`none` footer, project-key pin, older-server case and survival across the credentials prompt. All run against `httptest`; no backend is required.
+
+### Actor discovery resolves without another workspace-list call
+
+An explicit or selected ID directly addresses the actor endpoint; only default
+resolution reads flat `whoami` first. Discovery does not need a reachable-list
+payload to resolve the default. The client keeps all narrowing headers and
+uses the endpoint's own workspace path, without adding another selector prefix.
