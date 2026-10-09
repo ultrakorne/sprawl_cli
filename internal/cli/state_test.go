@@ -256,7 +256,7 @@ func TestRunQueue_JSONPayloadAndPRURL(t *testing.T) {
 	})
 	var out, errOut bytes.Buffer
 
-	if err := runQueue(context.Background(), &out, &errOut, client.StateInReview, false, fx.Opts); err != nil {
+	if err := runQueue(context.Background(), &out, &errOut, client.QueueFilter{State: client.StateInReview, Full: false}, fx.Opts); err != nil {
 		t.Fatalf("runQueue: %v", err)
 	}
 	if gotState != client.StateInReview {
@@ -365,7 +365,7 @@ func TestRunQueue_FullSendsParamAndEmitsNotes(t *testing.T) {
 			})
 
 			var out, errOut bytes.Buffer
-			if err := runQueue(context.Background(), &out, &errOut, client.StateInReview, tc.full, fx.Opts); err != nil {
+			if err := runQueue(context.Background(), &out, &errOut, client.QueueFilter{State: client.StateInReview, Full: tc.full}, fx.Opts); err != nil {
 				t.Fatalf("runQueue: %v", err)
 			}
 			if gotFull != tc.wantParam {
@@ -440,13 +440,13 @@ func TestQueueCmd_RejectsNoneState(t *testing.T) {
 }
 
 func TestQueueText_EmptyAndRows(t *testing.T) {
-	if got := queueText(nil, client.StateReadyToPickup, false); !strings.Contains(got, "no items in ready") {
+	if got := queueText(nil, client.QueueFilter{State: client.StateReadyToPickup}); !strings.Contains(got, "no items in ready") {
 		t.Fatalf("empty = %q", got)
 	}
 	// A group whose task has no items in the state contributes nothing, and
 	// counts for nothing — the server never sends one, but an empty queue must
 	// not depend on that.
-	if got := queueText([]*client.QueueTask{{ID: 1, Title: "hollow"}}, client.StateReadyToPickup, false); !strings.Contains(got, "no items in ready") {
+	if got := queueText([]*client.QueueTask{{ID: 1, Title: "hollow"}}, client.QueueFilter{State: client.StateReadyToPickup}); !strings.Contains(got, "no items in ready") {
 		t.Fatalf("hollow group = %q", got)
 	}
 	items := []*client.QueueTask{{
@@ -461,7 +461,7 @@ func TestQueueText_EmptyAndRows(t *testing.T) {
 			{ID: 9, Title: "unlinked", State: client.StateInReview},
 		},
 	}}
-	got := queueText(items, client.StateInReview, false)
+	got := queueText(items, client.QueueFilter{State: client.StateInReview})
 	// The task id is bare here too — the `#` belongs to PR numbers only. The
 	// group header carries the task's title, description, project and due
 	// date, so none of them needs a column.
@@ -490,7 +490,7 @@ func TestQueueText_EmptyAndRows(t *testing.T) {
 	if strings.Contains(got, "note: the note") {
 		t.Errorf("non-full queue must not expand notes:\n%s", got)
 	}
-	if full := queueText(items, client.StateInReview, true); !strings.Contains(full, "note: the note") {
+	if full := queueText(items, client.QueueFilter{State: client.StateInReview, Full: true}); !strings.Contains(full, "note: the note") {
 		t.Errorf("--full should expand the note:\n%s", full)
 	}
 }

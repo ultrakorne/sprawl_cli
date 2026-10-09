@@ -122,6 +122,12 @@ func explainAPIError(err error, opts *runtimeOpts) (apiGuidance, bool) {
 			headline: "the assignee is malformed or no longer eligible in this workspace",
 			remedy:   fmt.Sprintf("refresh `%s workspace actors` in the same workspace and use a returned user:<id> or agent_key:<id>", build.AppName),
 		}, true
+	case "invalid_cursor":
+		return apiGuidance{
+			headline: "the events cursor is malformed or belongs to another agent key",
+			remedy: fmt.Sprintf("start over without --after (from now) and reconcile with `%s queue --assignee me`; "+
+				"a cursor only works with the agent secret or project key it was issued to", build.AppName),
+		}, true
 	case "workspace_mismatch":
 		// Documented as project-key-specific, but the wording shouldn't fall
 		// apart if a future server raises it for another binding.

@@ -79,8 +79,20 @@ A project's GitHub repository address (`github_url`), against which a PR number 
 _Avoid_: github link, repo link, remote
 
 **Queue**:
-The set of checklist items in one item state across every task the caller can read — a query, not a stored list, and the only item view that crosses tasks.
+The set of incomplete checklist items in one item state, or assigned to the caller, across every task the caller can read — a query, not a stored list, and the only item view that crosses tasks.
 _Avoid_: backlog, inbox, board
+
+**Inventory**:
+The queue of every incomplete item assigned to the calling agent key, in any state (`queue --assignee me`) — what a listener treats as the truth when it starts or its cursor expires.
+_Avoid_: my tasks, assignment list
+
+**Assignment event**:
+The server's immutable record that an item was assigned to an agent key (`assigned`) or taken off it (`removed`), carrying identifiers only; a key sees only its own.
+_Avoid_: notification, webhook, assignment (for the record of a change)
+
+**Cursor**:
+The opaque per-agent-key position in the assignment feed that `events watch` prints on every line and resumes from with `--after`; the consumer persists it, never sprawl.
+_Avoid_: offset, token, event id
 
 ## Presentation
 
@@ -98,4 +110,5 @@ _Avoid_: theme (alone), UI theme (in code)
 - A **workspace** contains projects and **tasks**; a **project key** pins its project's workspace.
 - A **task** owns ordered **checklist items**; a **checklist item** owns at most one **note**, **assignee**, **item state**, and **PR number**.
 - A **task** belongs to at most one project; that project supplies the **repo URL** that turns an item's **PR number** into a link.
-- A **queue** is every **checklist item** sharing one **item state**, across tasks in one **workspace**, grouped by task.
+- A **queue** is every **checklist item** sharing one **item state** (or assigned to the caller), across tasks in one **workspace**, grouped by task.
+- An **assignment event** names one **checklist item** and one agent key; a **cursor** marks a position in that key's events, and the **inventory** is what is assigned to it right now.

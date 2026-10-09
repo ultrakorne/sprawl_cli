@@ -91,7 +91,7 @@ func TestSetChecklistItemState_InvalidStateIsAPIError(t *testing.T) {
 	}
 }
 
-func TestListChecklistItemsByState(t *testing.T) {
+func TestListQueue(t *testing.T) {
 	var gotQuery string
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query().Get("state")
@@ -114,9 +114,9 @@ func TestListChecklistItemsByState(t *testing.T) {
 	})
 	c := NewAuthed("tok", "sec")
 
-	groups, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false)
+	groups, err := c.ListQueue(context.Background(), QueueFilter{State: StateReadyToPickup})
 	if err != nil {
-		t.Fatalf("ListChecklistItemsByState: %v", err)
+		t.Fatalf("ListQueue: %v", err)
 	}
 	if len(groups) != 1 {
 		t.Fatalf("len = %d", len(groups))
@@ -155,7 +155,7 @@ func TestListChecklistItemsByState(t *testing.T) {
 // The `full` param has to actually reach the wire, and the notes it buys have
 // to decode. Rendering-level tests can't catch a dropped query param — they'd
 // stay green while `queue --full` silently returned bodyless items.
-func TestListChecklistItemsByState_Full(t *testing.T) {
+func TestListQueue_Full(t *testing.T) {
 	var gotFull string
 	ts := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotFull = r.URL.Query().Get("full")
@@ -179,9 +179,9 @@ func TestListChecklistItemsByState_Full(t *testing.T) {
 	})
 	c := NewAuthed("tok", "sec")
 
-	groups, err := c.ListChecklistItemsByState(context.Background(), StateInReview, true)
+	groups, err := c.ListQueue(context.Background(), QueueFilter{State: StateInReview, Full: true})
 	if err != nil {
-		t.Fatalf("ListChecklistItemsByState: %v", err)
+		t.Fatalf("ListQueue: %v", err)
 	}
 	if gotFull != "true" {
 		t.Fatalf("full query = %q, want %q — the flag never reached the server", gotFull, "true")
@@ -207,15 +207,15 @@ func TestListChecklistItemsByState_Full(t *testing.T) {
 // Without the flag the param must be absent entirely, not `full=false` — the
 // server keys on presence, and sending it would ask for bodies on every queue
 // read.
-func TestListChecklistItemsByState_NonFullOmitsParam(t *testing.T) {
+func TestListQueue_NonFullOmitsParam(t *testing.T) {
 	var raw string
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		raw = r.URL.RawQuery
 		writeJSON(w, 200, map[string]any{"tasks": []any{}})
 	})
 	c := NewAuthed("tok", "sec")
-	if _, err := c.ListChecklistItemsByState(context.Background(), StateInReview, false); err != nil {
-		t.Fatalf("ListChecklistItemsByState: %v", err)
+	if _, err := c.ListQueue(context.Background(), QueueFilter{State: StateInReview}); err != nil {
+		t.Fatalf("ListQueue: %v", err)
 	}
 	if strings.Contains(raw, "full") {
 		t.Fatalf("query = %q, want no `full` key at all", raw)
@@ -226,7 +226,7 @@ func TestListChecklistItemsByState_NonFullOmitsParam(t *testing.T) {
 // `{"checklist_items": [...]}` envelope. That must surface as an error, not
 // decode to an empty queue — "nothing to pick up" is the wrong answer to
 // "wrong server".
-func TestListChecklistItemsByState_UngroupedShapeIsAnError(t *testing.T) {
+func TestListQueue_UngroupedShapeIsAnError(t *testing.T) {
 	newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"checklist_items": []any{
 			map[string]any{"id": 7, "title": "x", "state": "ready_to_pickup",
@@ -234,7 +234,7 @@ func TestListChecklistItemsByState_UngroupedShapeIsAnError(t *testing.T) {
 		}})
 	})
 	c := NewAuthed("tok", "sec")
-	if _, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false); !errors.Is(err, ErrUngroupedQueue) {
+	if _, err := c.ListQueue(context.Background(), QueueFilter{State: StateReadyToPickup}); !errors.Is(err, ErrUngroupedQueue) {
 		t.Fatalf("err = %v, want ErrUngroupedQueue", err)
 	}
 	// An empty flat envelope is the same wrong server, not an empty queue.
@@ -242,7 +242,7 @@ func TestListChecklistItemsByState_UngroupedShapeIsAnError(t *testing.T) {
 		writeJSON(w, 200, map[string]any{"checklist_items": []any{}})
 	})
 	c = NewAuthed("tok", "sec")
-	if _, err := c.ListChecklistItemsByState(context.Background(), StateReadyToPickup, false); !errors.Is(err, ErrUngroupedQueue) {
+	if _, err := c.ListQueue(context.Background(), QueueFilter{State: StateReadyToPickup}); !errors.Is(err, ErrUngroupedQueue) {
 		t.Fatalf("empty flat: err = %v, want ErrUngroupedQueue", err)
 	}
 }

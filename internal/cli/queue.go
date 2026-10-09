@@ -11,66 +11,89 @@ import (
 	"github.com/ultrakorne/sprawl_cli/internal/client"
 )
 
-// newQueueCmd wraps GET /api/v1/checklist_items?state=<state> — the one read
-// that crosses tasks. It's top-level rather than a `checklist` subcommand
-// because it isn't scoped to a task: it answers "what is in this state
-// anywhere I can see?", which is the question an agent asks before picking up
-// work.
+// newQueueCmd wraps GET /api/v1/checklist_items — the one read that crosses
+// tasks. It's top-level rather than an `item` subcommand because it isn't
+// scoped to a task: it answers "what is in this state anywhere I can see?" or,
+// with --assignee me, "what is assigned to me?", which are the questions an
+// agent asks before picking up work.
 func newQueueCmd(opts *runtimeOpts) *cobra.Command {
-	var state string
+	var state, assignee string
 	var full bool
 	cmd := &cobra.Command{
 		Use:   "queue",
-		Short: "List checklist items in a given state across every visible task, grouped by task (GET /api/v1/checklist_items?state=)",
-		Long: "List checklist items carrying a state, across every task the caller can read, in " +
-			"one call. Defaults to `ready_to_pickup` — the agent's \"what can I pick up?\" query.\n\n" +
-			"Accepts the short forms `ready` / `progress` / `review` as well as the wire values " +
-			"`ready_to_pickup` / `in_progress` / `in_review`. Results are confined by a project " +
-			"key like every other read.\n\n" +
-			"Every returned item is incomplete: completing an item clears its state, so no " +
-			"`completed` filter is needed. Items are grouped under their parent task, which " +
-			"carries its title, description, due date and project — so the context for picking " +
-			"an item up comes in the same call, and a PR number resolves to a full link without " +
-			"a second one.",
+		Short: "List incomplete items by state and/or assigned to you, across every visible task, grouped by task (GET /api/v1/checklist_items)",
+		Long: "List incomplete checklist items across every task the caller can read, in one " +
+			"call. Without flags it lists `ready` items — the agent's \"what can I pick up?\" query.\n\n" +
+			"--state picks the state: the short forms `ready` / `progress` / `review` or the wire " +
+			"values `ready_to_pickup` / `in_progress` / `in_review`.\n\n" +
+			"--assignee me lists every incomplete item assigned to the calling agent key, in any " +
+			"state — the assignment inventory to reconcile against after `events watch` starts or " +
+			"its cursor expires. --state is optional then and narrows it to one state.\n\n" +
+			"Results are confined by a project key like every other read. Items are grouped under " +
+			"their parent task, which carries its title, description, due date and project — so " +
+			"the context for picking an item up comes in the same call, and a PR number resolves " +
+			"to a full link without a second one.",
 		Args: textArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			wire, err := parseState(state)
+			f, err := queueFilterFromFlags(state, cmd.Flags().Changed("state"), assignee, full)
 			if err != nil {
 				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
 			}
-			// `none` is meaningful when *setting* a state but not when querying —
-			// the endpoint requires one of the three, and "items with no state" is
-			// just the ordinary checklist.
-			if wire == "" {
-				err := fmt.Errorf("--state must be one of ready|progress|review (there is no queue of stateless items)")
-				return reportErr(cmd.OutOrStdout(), cmd.ErrOrStderr(), err, opts)
-			}
-			return runQueue(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), wire, full, opts)
+			return runQueue(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), f, opts)
 		},
 	}
 	cmd.Flags().StringVar(&state, "state", "ready",
-		"state to list: ready|progress|review (the server's own spellings are accepted too)")
+		"state to list: ready|progress|review (the server's own spellings are accepted too); optional with --assignee")
+	cmd.Flags().StringVar(&assignee, "assignee", "",
+		"list only items assigned to `me` (the calling agent key), in any state unless --state is given")
 	cmd.Flags().BoolVar(&full, "full", false,
 		"expand each item's note under its row")
 	cmd.SilenceErrors = true
 	return cmd
 }
 
-func runQueue(ctx context.Context, stdout, stderr io.Writer, state string, full bool, opts *runtimeOpts) error {
+// queueFilterFromFlags turns the flags into the wire filter. --state defaults to
+// `ready` on its own but is dropped when --assignee is given without it: "what is
+// assigned to me" means every state, and the default would silently hide the
+// rest. `none` is refused either way — the endpoint has no "stateless" filter,
+// and "items with no state" is just the ordinary checklist.
+func queueFilterFromFlags(state string, stateSet bool, assignee string, full bool) (client.QueueFilter, error) {
+	f := client.QueueFilter{Full: full}
+	if assignee != "" {
+		if strings.ToLower(strings.TrimSpace(assignee)) != client.AssigneeMe {
+			return f, fmt.Errorf("invalid --assignee %q: only `me` (the calling agent key) is supported", assignee)
+		}
+		f.Assignee = client.AssigneeMe
+		if !stateSet {
+			return f, nil
+		}
+	}
+	wire, err := parseState(state)
+	if err != nil {
+		return f, err
+	}
+	if wire == "" {
+		return f, fmt.Errorf("--state must be one of ready|progress|review (there is no queue of stateless items)")
+	}
+	f.State = wire
+	return f, nil
+}
+
+func runQueue(ctx context.Context, stdout, stderr io.Writer, f client.QueueFilter, opts *runtimeOpts) error {
 	c, err := newAuthedClient(opts)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
-	groups, err := c.ListChecklistItemsByState(ctx, state, full)
+	groups, err := c.ListQueue(ctx, f)
 	if err != nil {
 		return reportErr(stdout, stderr, err, opts)
 	}
 	rows := make([]any, 0, len(groups))
 	for _, g := range groups {
-		rows = append(rows, queueTaskMap(g, full))
+		rows = append(rows, queueTaskMap(g, f.Full))
 	}
 	payload := map[string]any{"tasks": rows}
-	return renderPayload(stdout, payload, queueText(groups, state, full), opts)
+	return renderPayload(stdout, payload, queueText(groups, f), opts)
 }
 
 // queueTaskMap is the machine shape of one queue group: the trimmed task the
@@ -127,12 +150,13 @@ func queueGroupHeader(g *client.QueueTask) string {
 	return strings.Join(lines, "\n")
 }
 
-// queueText is the human view: a heading naming the state and the item count,
+// queueText is the human view: a heading naming the query and the item count,
 // then one block per task — its header and the same item table every other
-// item view renders, minus the checkbox and STATE columns. Both are constant
-// within one queue — every queued item is incomplete by construction, and the
-// state is the query, so it goes in the heading rather than repeating
-// identically down a column. The task and project are constant within a block,
+// item view renders, minus the checkbox column and, when the state is the
+// query, the STATE column. Both are then constant within one queue — every
+// queued item is incomplete by construction, and the state goes in the heading
+// rather than repeating identically down a column. An assignee-only queue keeps
+// STATE, because there it varies. The task and project are constant within a block,
 // so they live in its header rather than in columns.
 //
 // Each block is its own table — header, rule and widths — rather than one table
@@ -141,16 +165,19 @@ func queueGroupHeader(g *client.QueueTask) string {
 // block's columns size to its own titles instead of the longest title anywhere
 // in the queue. The cost is that columns don't line up across blocks; the
 // blank line between them is what keeps that from reading as misalignment.
-func queueText(groups []*client.QueueTask, state string, full bool) string {
+func queueText(groups []*client.QueueTask, f client.QueueFilter) string {
 	total := 0
 	for _, g := range groups {
 		total += len(g.ChecklistItems)
 	}
 	if total == 0 {
-		return sty.render(sty.faint, fmt.Sprintf("(no items in %s)", stateLabel(state)))
+		return sty.render(sty.faint, fmt.Sprintf("(no items %s)", queueSubject(f)))
 	}
+	// The STATE column is dropped only when the state is the query; an
+	// assignee-only queue spans every state, so there it varies per row.
+	cols := itemCols{state: f.State == ""}
 	var b strings.Builder
-	b.WriteString(sty.render(sty.bold, stateLabel(state)))
+	b.WriteString(sty.render(sty.bold, queueHeading(f)))
 	b.WriteString(sty.render(sty.faint, fmt.Sprintf("  (%d)", total)))
 	for _, g := range groups {
 		if len(g.ChecklistItems) == 0 {
@@ -162,7 +189,30 @@ func queueText(groups []*client.QueueTask, state string, full bool) string {
 		b.WriteString("\n\n")
 		b.WriteString(queueGroupHeader(g))
 		b.WriteString("\n")
-		b.WriteString(itemTable(queueViews(g), itemCols{}, full))
+		b.WriteString(itemTable(queueViews(g), cols, f.Full))
 	}
 	return b.String()
+}
+
+// queueHeading names what the queue is: the state, "assigned to me", or both.
+func queueHeading(f client.QueueFilter) string {
+	switch {
+	case f.Assignee != "" && f.State != "":
+		return "assigned to me · " + stateLabel(f.State)
+	case f.Assignee != "":
+		return "assigned to me"
+	}
+	return stateLabel(f.State)
+}
+
+// queueSubject is the empty-queue phrasing of queueHeading: "(no items in
+// review)", "(no items assigned to me)", "(no items assigned to me in review)".
+func queueSubject(f client.QueueFilter) string {
+	switch {
+	case f.Assignee != "" && f.State != "":
+		return "assigned to me in " + stateLabel(f.State)
+	case f.Assignee != "":
+		return "assigned to me"
+	}
+	return "in " + stateLabel(f.State)
 }

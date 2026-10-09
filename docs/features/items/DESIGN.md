@@ -45,6 +45,11 @@ an object assigns one actor. Explicit assignment flags override JSON, and
 `--assignee` conflicts with `--unassign`. IDs range from 1 to 2147483647.
 Assignment preserves completion, state, notes, and PR number.
 
+`queue --assignee me` lists the calling agent key's own incomplete assigned items across
+states, and `events watch` streams its assignment changes; see
+[assignment-events](../assignment-events/INDEX.md). Each item carries an
+`assignment_revision` that counts assignee changes.
+
 The server rechecks eligibility during writes. `invalid_assignee` is a failure
 with guidance to refresh discovery; assigned creation is atomic. A stored pair
 can be stale after actor revocation. JSON preserves it; text displays its typed

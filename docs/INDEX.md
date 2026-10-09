@@ -19,6 +19,7 @@ HTTP client for the sprawl task-management API, shipped as two binaries from one
 | [tasks](features/tasks/INDEX.md) | `task <id> / list / search / create / update / due / delete`. |
 | [items](features/items/INDEX.md) | Item reads and writes, assignment and actor discovery, and the shared item table; a note is a field of an item. |
 | [item-state-and-pr](features/item-state-and-pr/INDEX.md) | Hand-set item state and GitHub PR number: `item state / pr`, the cross-task `queue`, the TUI's `s` / `p` / `o` keys. |
+| [assignment-events](features/assignment-events/INDEX.md) | `events watch / show` and `queue --assignee me` — how an agent learns an item was assigned to it or taken off it. |
 | [theme](features/theme/INDEX.md) | `theme get / set` — the owner's web-app theme. |
 | [whoami](features/whoami/INDEX.md) | `whoami` — caller agent, workspace, confined project, permission levels. |
 | [activity](features/activity/INDEX.md) | `activity` — completed tasks and items for one day. |
@@ -27,6 +28,6 @@ HTTP client for the sprawl task-management API, shipped as two binaries from one
 
 ## Quick Links
 
-- [CONTEXT.md](CONTEXT.md) — glossary of shared terms (workspace, selector vs factor, role vs level, task vs item, note, item state vs task status, PR number, queue)
+- [CONTEXT.md](CONTEXT.md) — glossary of shared terms (workspace, selector vs factor, role vs level, task vs item, note, item state vs task status, PR number, queue, assignment event, cursor, inventory)
 - [README](../README.md) — install + usage
 - [RELEASING](RELEASING.md) — tag, build, and publish a new version with goreleaser

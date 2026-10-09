@@ -33,7 +33,7 @@ func NewRootCmd() *cobra.Command {
 			"Scope: every call needs the bearer from `login` plus at least one narrowing factor —\n" +
 			"a project key (--project-key / $SPRAWL_PROJECT_KEY) to work inside a single project,\n" +
 			"an agent secret (--agent-secret / $SPRAWL_AGENT_SECRET) to act as an agent key, or both.\n\n" +
-			"Workspace: task, item, queue and activity calls run in the workspace those factors resolve to\n" +
+			"Workspace: task, item, queue, events and activity calls run in the workspace those factors resolve to\n" +
 			"by default; pick another with --workspace <id> / $SPRAWL_WORKSPACE (ids from `workspace list`).",
 		SilenceUsage: true,
 		// PersistentPreRunE validates the output format and runs the daily
@@ -114,6 +114,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newTaskCmd(opts))
 	root.AddCommand(newItemCmd(opts))
 	root.AddCommand(newQueueCmd(opts))
+	root.AddCommand(newEventsCmd(opts))
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newTUICmd(opts))
 	return root

@@ -38,7 +38,8 @@
 
 ## Assignment output
 
-Every shared item map carries `assignee` as the stored typed pair or null.
+Every shared item map carries `assignee` as the stored typed pair or null, and
+`assignment_revision` as a number or null.
 Text displays the typed ID without a roster lookup, keeping read-only keys
 usable. Actor labels and markers appear only in explicit `workspace actors`
 output; assignment errors retain their server code through the shared pipeline.

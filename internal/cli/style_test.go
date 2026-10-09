@@ -66,8 +66,8 @@ func TestStyling_PreservesPlainLayout(t *testing.T) {
 		{"task list", func() string { return taskListText(tasks) }},
 		{"task show", func() string { return taskShowText(shown, false) }},
 		{"task show --full", func() string { return taskShowText(shown, true) }},
-		{"queue", func() string { return queueText(queue, client.StateInReview, false) }},
-		{"queue --full", func() string { return queueText(queue, client.StateInReview, true) }},
+		{"queue", func() string { return queueText(queue, client.QueueFilter{State: client.StateInReview}) }},
+		{"queue --full", func() string { return queueText(queue, client.QueueFilter{State: client.StateInReview, Full: true}) }},
 	} {
 		stylesEnabled = false
 		plain := tc.build()

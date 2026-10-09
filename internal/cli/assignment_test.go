@@ -196,7 +196,7 @@ func TestAssignmentOutputAcrossViews(t *testing.T) {
 					case "task":
 						err = runTaskShow(ctx, &out, &stderr, "119", true, fx.Opts)
 					case "queue":
-						err = runQueue(ctx, &out, &stderr, client.StateInReview, true, fx.Opts)
+						err = runQueue(ctx, &out, &stderr, client.QueueFilter{State: client.StateInReview, Full: true}, fx.Opts)
 					case "item":
 						err = runItemShow(ctx, &out, &stderr, "203", fx.Opts)
 					case "write":
