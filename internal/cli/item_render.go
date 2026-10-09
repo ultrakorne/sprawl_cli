@@ -235,15 +235,17 @@ func wrapLines(s string, width int) []string {
 // — it is what drives the NOTES column.
 func itemMap(it *client.ChecklistItem, project *client.Project, withNotes bool) map[string]any {
 	m := map[string]any{
-		"assignee":   assigneeMap(it.Assignee),
-		"id":         it.ID,
-		"title":      it.Title,
-		"completed":  it.Completed,
-		"state":      nilIfEmpty(stateLabel(it.State)),
-		"pr_number":  nilIfZero(it.PRNumber),
-		"pr_url":     nilIfEmpty(client.PRURL(project, it.PRNumber)),
-		"has_notes":  it.HasNotes,
-		"last_actor": actorMap(it.LastActor),
+		"assignee": assigneeMap(it.Assignee),
+		// A typed nil encodes as null: absent on a server older than the field.
+		"assignment_revision": it.AssignmentRevision,
+		"id":                  it.ID,
+		"title":               it.Title,
+		"completed":           it.Completed,
+		"state":               nilIfEmpty(stateLabel(it.State)),
+		"pr_number":           nilIfZero(it.PRNumber),
+		"pr_url":              nilIfEmpty(client.PRURL(project, it.PRNumber)),
+		"has_notes":           it.HasNotes,
+		"last_actor":          actorMap(it.LastActor),
 	}
 	if withNotes {
 		// Collapse empty ("" from a pre-rollout server, or null from a current

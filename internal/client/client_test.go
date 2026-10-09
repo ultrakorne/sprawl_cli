@@ -1231,8 +1231,8 @@ func TestHeaderInvariants(t *testing.T) {
 	if _, err := authed.GetChecklistItem(context.Background(), "1"); err != nil {
 		t.Fatalf("GetChecklistItem: %v", err)
 	}
-	if _, err := authed.ListChecklistItemsByState(context.Background(), StateInReview, false); err != nil {
-		t.Fatalf("ListChecklistItemsByState: %v", err)
+	if _, err := authed.ListQueue(context.Background(), QueueFilter{State: StateInReview}); err != nil {
+		t.Fatalf("ListQueue: %v", err)
 	}
 	if _, err := authed.CreateTask(context.Background(), map[string]any{"title": "t"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)

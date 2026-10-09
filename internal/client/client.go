@@ -402,17 +402,23 @@ type Task struct {
 // literal null. State is the hand-set item state — do NOT conflate it with
 // Task.Status, which is derived from checked counts and happens to share the
 // string "in_progress".
+//
+// AssignmentRevision counts the item's assignee changes (0 = never assigned).
+// An assignment event carries the revision it produced, so an event whose
+// revision is below the item's current one has been superseded. nil when the
+// server predates the field.
 type ChecklistItem struct {
-	Assignee  *Assignee `json:"assignee"`
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	Completed bool      `json:"completed"`
-	Position  int       `json:"position"`
-	State     string    `json:"state"`
-	PRNumber  int64     `json:"pr_number"`
-	HasNotes  bool      `json:"has_notes"`
-	Notes     *string   `json:"notes,omitempty"`
-	LastActor *Actor    `json:"last_actor"`
+	Assignee           *Assignee `json:"assignee"`
+	AssignmentRevision *int64    `json:"assignment_revision"`
+	ID                 int64     `json:"id"`
+	Title              string    `json:"title"`
+	Completed          bool      `json:"completed"`
+	Position           int       `json:"position"`
+	State              string    `json:"state"`
+	PRNumber           int64     `json:"pr_number"`
+	HasNotes           bool      `json:"has_notes"`
+	Notes              *string   `json:"notes,omitempty"`
+	LastActor          *Actor    `json:"last_actor"`
 }
 
 // The three item states the server accepts. Anything else is a 422; clearing is
@@ -680,7 +686,7 @@ type QueueTask struct {
 }
 
 // queueEnvelope also decodes the pre-grouping envelope's top-level
-// `checklist_items` key, only so ListChecklistItemsByState can tell "no groups"
+// `checklist_items` key, only so ListQueue can tell "no groups"
 // from "a server that still sends the flat shape". Without it the flat shape
 // decodes cleanly to an empty queue, and an agent asking "what can I pick up?"
 // is told "nothing" instead of "wrong server".
@@ -715,27 +721,53 @@ func (c *Client) GetChecklistItem(ctx context.Context, itemID string) (*ItemDeta
 	return env.Item, nil
 }
 
-// ListChecklistItemsByState issues GET /api/v1/checklist_items?state=<state>,
+// QueueFilter selects which incomplete items GET /api/v1/checklist_items
+// returns. At least one of State and Assignee must be set — the server answers
+// neither with 422 `state_required`.
+//
+//   - State is one of the three server states (else 422 `invalid_state`).
+//   - Assignee is `me` (else 422 `invalid_assignee_filter`): every incomplete,
+//     visible item assigned to the caller's own agent key, in any state. That
+//     is the assignment inventory a listener reconciles against.
+//   - Both narrow each other: my items in that state.
+//
+// Full asks for each item's notes inline, the same ?full=true the task read
+// sends. A server that doesn't implement it ignores the param and returns
+// items without notes, which renders as "no note to show" rather than an error.
+type QueueFilter struct {
+	State    string
+	Assignee string
+	Full     bool
+}
+
+// AssigneeMe is the one value QueueFilter.Assignee accepts: the caller's own
+// agent key, resolved server-side from the presented credentials.
+const AssigneeMe = "me"
+
+// ListQueue issues GET /api/v1/checklist_items with the filter's params,
 // returning matching items across every task the scope can read, grouped by
-// task (oldest task first, items in position order within each). state is
-// required and must be one of the three server states — anything else is a 422
-// invalid_state. Results honour project confinement and the same readability
-// cascade as every other list endpoint. A task with no item in the state is
-// not in the list, so every group has at least one item.
+// task (oldest task first, items in position order within each). Results
+// honour project confinement and the same readability cascade as every other
+// list endpoint. A task with no matching item is not in the list, so every
+// group has at least one item.
 //
-// No `completed` filter is needed: completing an item clears its state, so any
-// item carrying a state is by construction incomplete.
-//
-// full asks the server to include each item's notes inline, the same ?full=true
-// this CLI sends on the task read. A server that doesn't implement it simply
-// ignores the param and returns items without notes, which renders as "no note
-// to show" rather than as an error.
-func (c *Client) ListChecklistItemsByState(ctx context.Context, state string, full bool) ([]*QueueTask, error) {
-	params := url.Values{"state": []string{state}}
-	if full {
+// Every item is incomplete by construction: a state is cleared by completion,
+// and the assignee filter only ever returns incomplete items.
+func (c *Client) ListQueue(ctx context.Context, f QueueFilter) ([]*QueueTask, error) {
+	params := url.Values{}
+	if f.State != "" {
+		params.Set("state", f.State)
+	}
+	if f.Assignee != "" {
+		params.Set("assignee", f.Assignee)
+	}
+	if f.Full {
 		params.Set("full", "true")
 	}
-	path := c.scoped("/checklist_items") + "?" + params.Encode()
+	path := c.scoped("/checklist_items")
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
 	var env queueEnvelope
 	if err := c.do(ctx, http.MethodGet, path, nil, &env); err != nil {
 		return nil, err

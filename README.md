@@ -135,6 +135,9 @@ Prod works identically, just with the `sprawl` binary and `~/.config/sprawl/`.
 | `sprawl item pr <id> <number\|none>` | Attaches a GitHub PR number to the item, or clears it. Independent of state and completion — only an explicit `none` removes it. The link is built client-side from the project's repo URL; without one the number renders bare. |
 | `sprawl item delete <id>` | Hard-deletes an item. May flip the parent task's `completed_at`. A 404 is idempotent success like `task delete`; a **403** (the item exists but is outside your project key) is a real error. |
 | `sprawl queue` | Lists items in a given state across every visible task, **grouped by task** — the "what can I pick up?" query, and the only item view that crosses tasks. Each group carries the task's id, title, description, due date and project; the human view prints a header per task above its item table. Defaults to `--state ready`; also accepts `progress` / `review`. Every result is incomplete by construction (completing an item clears its state). `--full` expands each note. |
+| `sprawl queue --assignee me` | The inventory: every incomplete item assigned to the calling agent key, in any state (add `--state` to narrow), same grouped shape. Only `me` is accepted. |
+| `sprawl events watch` | Streams the calling agent key's assignment events (`assigned` / `removed`) as JSON lines — `start` (without `--after`), `assignment_event`, `cursor_expired` — each with a cursor to resume from via `--after`. Long-polls (`--wait`, default 25 s); retries network / 5xx with a 1–30 s backoff; exits non-zero on 401 / 403 / 404 / 422 and 0 on SIGINT / SIGTERM. Never stores the cursor. See [features/assignment-events](docs/features/assignment-events/INDEX.md). |
+| `sprawl events show <id>` | Reads one of the calling key's assignment events — the record of who assigned an item. 404 for another key's event. |
 | `sprawl update` | Downloads the latest GitHub release, verifies SHA256, and atomically replaces the running binary. Refuses on `sprawl_dev` and on local builds. Pass `--yes` to skip the confirmation prompt. See [features/auto-update](docs/features/auto-update/INDEX.md). |
 
 ## AI-tool integration
@@ -265,6 +268,19 @@ sprawl queue --state review                    # what's waiting on a human
 Setting a state on a **completed** item un-completes it — the two are mutually
 exclusive server-side. Conversely, `item check` clears the state and keeps
 the PR number.
+
+### `events watch` / `queue --assignee me`
+
+```sh
+sprawl events watch                            # {"type":"start","cursor":"…"} then one line per event
+sprawl queue --assignee me                     # reconcile: everything assigned to this key now
+sprawl events watch --after "$cursor"          # resume after the last line you handled
+sprawl events show 123                         # who assigned it, and when
+```
+
+Persist a line's `cursor` only after handling the line, and rerun the
+inventory after `start` and `cursor_expired` — events before those points are
+not replayed.
 
 ### Writing a note
 

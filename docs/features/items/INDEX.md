@@ -10,3 +10,4 @@ Checklist items are the actionable children of a task, each with one optional no
 | [TECHNICAL.md](TECHNICAL.md) | Request ownership, rendering, and field-presence contracts |
 | [Workspaces](../workspaces/INDEX.md) | Selection and actor discovery |
 | [Item state and PR](../item-state-and-pr/INDEX.md) | State, completion, PR number, and queue |
+| [Assignment events](../assignment-events/INDEX.md) | Assignment feed, event read, and `queue --assignee me` |

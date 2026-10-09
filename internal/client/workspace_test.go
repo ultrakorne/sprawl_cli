@@ -15,6 +15,7 @@ func TestWithWorkspace_PrefixesWorkspaceBoundRoutes(t *testing.T) {
 			"tasks": []any{}, "task": map[string]any{"id": 1}, "checklist_items": []any{},
 			"checklist_item": map[string]any{"id": 2}, "theme": "x", "status": "ok",
 			"date": "2026-01-01", "completed_tasks": []any{}, "completed_items": []any{},
+			"events": []any{}, "next_cursor": "c", "event": map[string]any{"id": 3},
 		})
 	})
 	c := NewAuthed("tok", "sek", WithWorkspace("42"))
@@ -38,8 +39,10 @@ func TestWithWorkspace_PrefixesWorkspaceBoundRoutes(t *testing.T) {
 		{"SetChecklistItemState", func() error { _, err := c.SetChecklistItemState(ctx, "9", map[string]any{"state": nil}); return err }, "/api/v1/workspaces/42/checklist_items/9/state"},
 		{"UpdateChecklistItem", func() error { _, err := c.UpdateChecklistItem(ctx, "9", map[string]any{"title": "i"}); return err }, "/api/v1/workspaces/42/checklist_items/9"},
 		{"DeleteChecklistItem", func() error { return c.DeleteChecklistItem(ctx, "9") }, "/api/v1/workspaces/42/checklist_items/9"},
-		{"ListChecklistItemsByState", func() error { _, err := c.ListChecklistItemsByState(ctx, "ready", false); return err }, "/api/v1/workspaces/42/checklist_items"},
+		{"ListQueue", func() error { _, err := c.ListQueue(ctx, QueueFilter{State: "ready"}); return err }, "/api/v1/workspaces/42/checklist_items"},
 		{"GetActivityLog", func() error { _, err := c.GetActivityLog(ctx, "", ""); return err }, "/api/v1/workspaces/42/activity_log"},
+		{"ListAssignmentEvents", func() error { _, err := c.ListAssignmentEvents(ctx, "c", 0); return err }, "/api/v1/workspaces/42/assignment_events"},
+		{"GetAssignmentEvent", func() error { _, err := c.GetAssignmentEvent(ctx, "3"); return err }, "/api/v1/workspaces/42/assignment_events/3"},
 		// User-level: never prefixed.
 		{"Whoami", func() error { _, err := c.Whoami(ctx); return err }, "/api/v1/whoami"},
 		{"GetTheme", func() error { _, err := c.GetTheme(ctx); return err }, "/api/v1/settings/theme"},

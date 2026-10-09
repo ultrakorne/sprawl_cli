@@ -4,13 +4,14 @@ description: >
   Collaborate on shared tasks, items, and notes with the human and other
   agents via the sprawl CLI. Use this skill whenever the user asks you to look
   at "my tasks", "the backlog", "what's assigned to me", to pick up work that's
-  ready, assign or reassign an item, clear an assignment, check off an item, mark something in progress or in review,
+  ready, assign or reassign an item, clear an assignment, watch for new
+  assignments, check off an item, mark something in progress or in review,
   attach a PR number, leave a note for another agent, create a task, or
   coordinate work with another agent — anything that reads or writes the sprawl
   task space.
 license: 'MIT'
 metadata:
-  version: 0.7.0
+  version: 0.8.0
 allowed-tools: Bash(sprawl:*), Bash(which:*), Bash(command:*), Bash(printenv SPRAWL_PROJECT_KEY), Bash(printenv SPRAWL_WORKSPACE), Bash(test:*)
 ---
 
@@ -289,6 +290,7 @@ sprawl item <id>                               # one item + its note (no --full;
 sprawl queue                                   # items ready to pick up, grouped by task
 sprawl queue --state progress|review           # what's being worked / awaiting review
 sprawl queue --full                            # …with each note expanded
+sprawl queue --assignee me                     # everything assigned to you, any state
 sprawl activity                                # completed tasks + items for today
 sprawl activity --days-ago 1                   # yesterday
 sprawl activity --date 2026-04-29              # specific day
@@ -384,7 +386,9 @@ comparing the date against today / yesterday / the user's week-end.
 ### Writes — items
 
 For **assigning, reassigning, clearing, creating with an assignee, finding
-eligible targets, or finding assigned work**, read [ASSIGNMENT.md](ASSIGNMENT.md). Assignment is independent
+eligible targets, or finding assigned work**, read [ASSIGNMENT.md](ASSIGNMENT.md).
+To **watch for assignments** (`events watch`, a listener, a cursor) or confirm
+who assigned an item, read [EVENTS.md](EVENTS.md). Assignment is independent
 of state; moving an item to `progress` does not assign it.
 
 Wire body: `{"checklist_item": {...}}`. Server assigns `position` on add.
