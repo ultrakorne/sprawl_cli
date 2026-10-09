@@ -297,6 +297,9 @@ sprawl activity --date 2026-04-29              # specific day
 sprawl workspace list                          # workspaces you can reach, › on the current one
 ```
 
+To **watch for assignments** (`events watch`, a listener, a cursor) or confirm
+who assigned an item, read [EVENTS.md](EVENTS.md).
+
 **Two nouns: `task` and `item`.** A task is the container; an item is the unit
 of work and the thing a note hangs off. Every single-item verb takes a bare
 **item** id — the one exception is `item add <task_id>`, because the item
@@ -386,10 +389,9 @@ comparing the date against today / yesterday / the user's week-end.
 ### Writes — items
 
 For **assigning, reassigning, clearing, creating with an assignee, finding
-eligible targets, or finding assigned work**, read [ASSIGNMENT.md](ASSIGNMENT.md).
-To **watch for assignments** (`events watch`, a listener, a cursor) or confirm
-who assigned an item, read [EVENTS.md](EVENTS.md). Assignment is independent
-of state; moving an item to `progress` does not assign it.
+eligible targets, or finding another actor's assigned work**, read
+[ASSIGNMENT.md](ASSIGNMENT.md). Assignment is independent of state; moving an
+item to `progress` does not assign it.
 
 Wire body: `{"checklist_item": {...}}`. Server assigns `position` on add.
 Permission is checked on the **parent task**, not per item.

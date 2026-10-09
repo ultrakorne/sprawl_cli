@@ -27,10 +27,8 @@ assignment (creates unassigned); null clears it; `{type, id}` assigns one actor.
 Explicit assignment flags override JSON; `--assignee` and `--unassign` conflict.
 IDs are decimal integers from 1 to 2147483647.
 
-Your own assigned work, in every state: `sprawl queue --assignee me`
-(`--state` narrows it). For another actor's, match both type and ID in item
-responses from `task <id>`. To be told when your assignments change, read
-[EVENTS.md](EVENTS.md).
+To find another actor's assigned work, match both type and ID in the item
+lists of `task <id>`; `queue --assignee` answers only for you.
 Read-only callers can inspect stored pairs without requesting the write-only roster.
 
 Assignment preserves completion, state, notes, and PR number. Reads show the
